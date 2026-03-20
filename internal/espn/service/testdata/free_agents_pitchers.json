@@ -1,0 +1,31 @@
+{
+  "players": [
+    {
+      "id": 1001,
+      "fullName": "Reese Olson",
+      "proTeamAbbrev": "DET",
+      "proTeamId": 6,
+      "defaultPositionId": 1,
+      "eligibleSlots": [1, 13],
+      "injuryStatus": "ACTIVE"
+    },
+    {
+      "id": 1002,
+      "fullName": "Tylor Megill",
+      "proTeamAbbrev": "NYM",
+      "proTeamId": 21,
+      "defaultPositionId": 1,
+      "eligibleSlots": [1, 13],
+      "injuryStatus": "ACTIVE"
+    },
+    {
+      "id": 1003,
+      "fullName": "Catcher Guy",
+      "proTeamAbbrev": "CHC",
+      "proTeamId": 16,
+      "defaultPositionId": 2,
+      "eligibleSlots": [2],
+      "injuryStatus": "ACTIVE"
+    }
+  ]
+}

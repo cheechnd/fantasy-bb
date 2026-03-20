@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -127,6 +128,71 @@ func TestSyncRosterDryRunDoesNotPersist(t *testing.T) {
 	}
 	if latest != nil {
 		t.Fatalf("expected no persisted sync run in dry-run")
+	}
+}
+
+func TestParseFreeAgentCandidatesPayload(t *testing.T) {
+	payload := mustReadFixture(t, "testdata/free_agents_pitchers.json")
+	rows, warnings := parseFreeAgentCandidatesPayload(payload, "", "", 25)
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 pitcher candidates, got %d", len(rows))
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings, got %d", len(warnings))
+	}
+	rows, _ = parseFreeAgentCandidatesPayload(payload, "megill", "", 25)
+	if len(rows) != 1 || rows[0].PlayerName != "Tylor Megill" {
+		t.Fatalf("search filter mismatch: %+v", rows)
+	}
+	rows, _ = parseFreeAgentCandidatesPayload(payload, "", "DET", 25)
+	if len(rows) != 1 || rows[0].MLBTeam != "DET" {
+		t.Fatalf("team filter mismatch: %+v", rows)
+	}
+}
+
+func TestSyncFreeAgentPitchersPersistsCandidates(t *testing.T) {
+	store := mustOpenStore(t)
+	defer store.Close()
+
+	leaguePayload := mustReadFixture(t, "testdata/league_roster.json")
+	faPayload := mustReadFixture(t, "testdata/free_agents_pitchers.json")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.RawQuery, "view=kona_player_info") {
+			_, _ = w.Write(faPayload)
+			return
+		}
+		_, _ = w.Write(leaguePayload)
+	}))
+	defer srv.Close()
+
+	svc := New(repository.New(store.DB()))
+	cfg := baseTestConfig(srv.URL)
+	cfg.Pickups.Pitchers.MaxCandidateLimit = 5
+	cfg.Pickups.Pitchers.DefaultCandidateLimit = 3
+	t.Setenv(cfg.Auth.ESPNS2Env, "cookie-s2")
+	t.Setenv(cfg.Auth.SWIDEnv, "{cookie-swid}")
+
+	_, err := svc.SyncRoster(context.Background(), cfg, SyncOptions{})
+	if err != nil {
+		t.Fatalf("SyncRoster: %v", err)
+	}
+	summary, err := svc.SyncFreeAgentPitchers(context.Background(), cfg, FreeAgentOptions{Limit: 50})
+	if err != nil {
+		t.Fatalf("SyncFreeAgentPitchers: %v", err)
+	}
+	if summary.CandidateRunID == nil {
+		t.Fatalf("expected candidate run id")
+	}
+	if summary.EffectiveLimit != 5 {
+		t.Fatalf("expected capped limit 5, got %d", summary.EffectiveLimit)
+	}
+	rows, err := svc.Candidates(context.Background(), summary.CandidateRunID, 100)
+	if err != nil {
+		t.Fatalf("Candidates: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 persisted candidates, got %d", len(rows))
 	}
 }
 

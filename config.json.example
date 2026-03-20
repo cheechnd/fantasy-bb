@@ -28,6 +28,16 @@
       "ambiguous_match_penalty": 5.0
     }
   },
+  "pickups": {
+    "pitchers": {
+      "default_candidate_limit": 25,
+      "max_candidate_limit": 50,
+      "min_streamer_total_fpts": 8.0,
+      "strong_upgrade_delta_fpts": 5.0,
+      "marginal_upgrade_delta_fpts": 1.5,
+      "risky_monitor_min_total_fpts": 6.0
+    }
+  },
   "execution": {
     "dry_run": true,
     "require_confirmation": true

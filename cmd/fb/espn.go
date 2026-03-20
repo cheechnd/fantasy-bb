@@ -19,6 +19,7 @@ func newESPNCmd(opts *cliOptions) *cobra.Command {
 	cmd := &cobra.Command{Use: "espn", Short: "Read-only ESPN ingestion and inspection"}
 	cmd.AddCommand(newESPNValidateCmd(opts))
 	cmd.AddCommand(newESPNSyncCmd(opts))
+	cmd.AddCommand(newESPNFreeAgentsCmd(opts))
 	cmd.AddCommand(newESPNShowCmd(opts))
 	cmd.AddCommand(newESPNSourceStatusCmd(opts))
 	cmd.AddCommand(newESPNWarningsCmd(opts))
@@ -68,6 +69,54 @@ func newESPNSyncCmd(opts *cliOptions) *cobra.Command {
 	return cmd
 }
 
+func newESPNFreeAgentsCmd(opts *cliOptions) *cobra.Command {
+	cmd := &cobra.Command{Use: "free-agents", Short: "Bounded read-only ESPN free-agent ingestion"}
+	cmd.AddCommand(newESPNFreeAgentsPitchersCmd(opts))
+	return cmd
+}
+
+func newESPNFreeAgentsPitchersCmd(opts *cliOptions) *cobra.Command {
+	var limit int
+	var search string
+	var team string
+	cmd := &cobra.Command{
+		Use:   "pitchers",
+		Short: "Fetch a bounded free-agent pitcher candidate pool",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			v, err := withESPNService(cmd.Context(), opts, func(_ context.Context, svc *espnsvc.Service, cfg loadedConfig) (any, error) {
+				return svc.SyncFreeAgentPitchers(cmd.Context(), cfg.Config, espnsvc.FreeAgentOptions{
+					Limit:  limit,
+					Search: search,
+					Team:   team,
+				})
+			})
+			if err != nil {
+				return err
+			}
+			summary := v.(espn.CandidateSummary)
+			if opts.OutputJSON {
+				return writeJSON(cmd, map[string]any{"ok": true, "summary": summary})
+			}
+			if summary.CandidateRunID != nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "Candidate run: %d\n", *summary.CandidateRunID)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Synced at: %s\n", summary.SyncedAt)
+			fmt.Fprintf(cmd.OutOrStdout(), "Query type: %s\n", summary.QueryType)
+			if summary.QueryText != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "Search text: %s\n", summary.QueryText)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Effective limit: %d\n", summary.EffectiveLimit)
+			fmt.Fprintf(cmd.OutOrStdout(), "Candidates fetched: %d\n", summary.CandidateCount)
+			fmt.Fprintf(cmd.OutOrStdout(), "Warnings: %d\n", summary.WarningCount)
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&limit, "limit", 0, "Candidate limit (bounded by config max)")
+	cmd.Flags().StringVar(&search, "search", "", "Optional case-insensitive name filter")
+	cmd.Flags().StringVar(&team, "team", "", "Optional MLB team filter (e.g. NYY)")
+	return cmd
+}
+
 func newESPNSyncRosterCmd(opts *cliOptions) *cobra.Command {
 	var dryRun bool
 	cmd := &cobra.Command{
@@ -112,6 +161,7 @@ func newESPNShowCmd(opts *cliOptions) *cobra.Command {
 	cmd := &cobra.Command{Use: "show", Short: "Show stored ESPN snapshots"}
 	cmd.AddCommand(newESPNShowRosterCmd(opts))
 	cmd.AddCommand(newESPNShowLeagueCmd(opts))
+	cmd.AddCommand(newESPNShowFreeAgentsCmd(opts))
 	return cmd
 }
 
@@ -182,6 +232,65 @@ func newESPNShowLeagueCmd(opts *cliOptions) *cobra.Command {
 		},
 	}
 	cmd.Flags().Int64Var(&syncRunID, "sync-run", 0, "Specific ESPN sync run ID (defaults to latest)")
+	return cmd
+}
+
+func newESPNShowFreeAgentsCmd(opts *cliOptions) *cobra.Command {
+	var candidateRunID int64
+	var limit int
+	cmd := &cobra.Command{
+		Use:   "free-agents",
+		Short: "Show latest or selected ESPN free-agent pitcher candidates",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			v, err := withESPNService(cmd.Context(), opts, func(_ context.Context, svc *espnsvc.Service, _ loadedConfig) (any, error) {
+				var run *espn.CandidateRun
+				if cmd.Flags().Changed("candidate-run") {
+					r, err := svc.CandidateRunByID(cmd.Context(), candidateRunID)
+					if err != nil {
+						return nil, err
+					}
+					run = r
+				} else {
+					r, err := svc.LatestCandidateRun(cmd.Context())
+					if err != nil {
+						return nil, err
+					}
+					run = r
+				}
+				if run == nil {
+					return map[string]any{"run": nil, "rows": []espn.FreeAgentCandidate{}}, nil
+				}
+				runID := run.ID
+				rows, err := svc.Candidates(cmd.Context(), &runID, limit)
+				if err != nil {
+					return nil, err
+				}
+				return map[string]any{"run": run, "rows": rows}, nil
+			})
+			if err != nil {
+				return err
+			}
+			payload := v.(map[string]any)
+			if opts.OutputJSON {
+				return writeJSON(cmd, payload)
+			}
+			run, _ := payload["run"].(*espn.CandidateRun)
+			if run == nil {
+				fmt.Fprintln(cmd.OutOrStdout(), "No ESPN candidate runs found. Run `fb espn free-agents pitchers --limit N` first.")
+				return nil
+			}
+			rows := payload["rows"].([]espn.FreeAgentCandidate)
+			fmt.Fprintf(cmd.OutOrStdout(), "Candidate run: %d\n", run.ID)
+			fmt.Fprintf(cmd.OutOrStdout(), "Started: %s\n", run.StartedAt.Format(time.RFC3339))
+			fmt.Fprintf(cmd.OutOrStdout(), "Status: %s\n", run.Status)
+			fmt.Fprintf(cmd.OutOrStdout(), "Candidates: %d\n", run.CandidateCount)
+			fmt.Fprintf(cmd.OutOrStdout(), "Warnings: %d\n\n", run.WarningCount)
+			printESPNFreeAgentsTable(cmd, rows)
+			return nil
+		},
+	}
+	cmd.Flags().Int64Var(&candidateRunID, "candidate-run", 0, "Specific ESPN candidate run ID (defaults to latest)")
+	cmd.Flags().IntVar(&limit, "limit", 100, "Maximum rows to show")
 	return cmd
 }
 
@@ -310,6 +419,23 @@ func printESPNSyncRuns(cmd *cobra.Command, rows []espn.SyncRun) {
 	fmt.Fprintln(w, "ID\tTYPE\tLEAGUE\tTEAM\tSEASON\tSTATUS\tWARNINGS\tCOMPLETED_AT")
 	for _, row := range rows {
 		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%d\t%s\t%d\t%s\n", row.ID, row.SyncType, row.LeagueID, row.TeamID, row.Season, row.Status, row.WarningCount, row.CompletedAt.Format(time.RFC3339))
+	}
+	w.Flush()
+}
+
+func printESPNFreeAgentsTable(cmd *cobra.Command, rows []espn.FreeAgentCandidate) {
+	if len(rows) == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), "No free-agent candidates found for this run.")
+		return
+	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "RUN\tPLAYER\tTEAM\tROLE\tPITCHER\tSTATUS")
+	for _, row := range rows {
+		pitcher := "no"
+		if row.IsPitcher {
+			pitcher = "yes"
+		}
+		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n", row.CandidateRunID, row.PlayerName, firstNonEmpty(row.MLBTeam, "-"), firstNonEmpty(row.Role, "-"), pitcher, firstNonEmpty(row.StatusTag, "-"))
 	}
 	w.Flush()
 }

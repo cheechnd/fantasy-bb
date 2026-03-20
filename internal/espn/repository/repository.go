@@ -32,6 +32,18 @@ type PersistSyncInput struct {
 	Warnings     []espn.ParseWarningInput
 }
 
+type PersistCandidateInput struct {
+	SyncRunID      *int64
+	QueryType      string
+	QueryText      string
+	Filters        map[string]any
+	Status         string
+	WarningCount   int
+	Summary        map[string]any
+	Payload        espn.RawPayload
+	Candidates     []espn.FreeAgentCandidate
+}
+
 func (r *Repository) PersistSync(ctx context.Context, input PersistSyncInput) (int64, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -128,6 +140,73 @@ func (r *Repository) PersistSync(ctx context.Context, input PersistSyncInput) (i
 		return 0, fmt.Errorf("commit espn sync tx: %w", err)
 	}
 	return syncRunID, nil
+}
+
+func (r *Repository) PersistCandidates(ctx context.Context, input PersistCandidateInput) (int64, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin espn candidate tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	filtersJSON := "{}"
+	if len(input.Filters) > 0 {
+		b, _ := json.Marshal(input.Filters)
+		filtersJSON = string(b)
+	}
+	summaryJSON := "{}"
+	if len(input.Summary) > 0 {
+		b, _ := json.Marshal(input.Summary)
+		summaryJSON = string(b)
+	}
+	res, err := tx.ExecContext(ctx, `
+		INSERT INTO espn_candidate_runs (
+			sync_run_id, query_type, query_text, filters_json,
+			started_at, completed_at, status, candidate_count, warning_count, summary_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, nullInt64(input.SyncRunID), input.QueryType, input.QueryText, filtersJSON, now, now, input.Status, len(input.Candidates), input.WarningCount, summaryJSON)
+	if err != nil {
+		return 0, fmt.Errorf("insert espn candidate run: %w", err)
+	}
+	candidateRunID, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("espn candidate run id: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO espn_raw_payloads (
+			sync_run_id, payload_type, source_endpoint, response_status, payload_json, created_at
+		) VALUES (?, ?, ?, ?, ?, ?)
+	`, nullInt64(input.SyncRunID), input.Payload.PayloadType, input.Payload.SourceEndpoint, input.Payload.ResponseStatus, input.Payload.PayloadJSON, now)
+	if err != nil {
+		return 0, fmt.Errorf("insert espn candidate raw payload: %w", err)
+	}
+
+	for _, c := range input.Candidates {
+		createdAt := c.CreatedAt
+		if createdAt.IsZero() {
+			createdAt = time.Now().UTC()
+		}
+		isPitcher := 0
+		if c.IsPitcher {
+			isPitcher = 1
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO espn_free_agent_candidates (
+				candidate_run_id, espn_player_id, player_name, normalized_name,
+				mlb_team, is_pitcher, role, status_tag, raw_player_json, created_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, candidateRunID, nullInt64(c.ESPNPlayerID), c.PlayerName, c.NormalizedName, c.MLBTeam, isPitcher, c.Role, c.StatusTag, c.RawPlayerJSON, createdAt.UTC().Format(time.RFC3339))
+		if err != nil {
+			return 0, fmt.Errorf("insert espn free agent candidate: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit espn candidate tx: %w", err)
+	}
+	return candidateRunID, nil
 }
 
 func (r *Repository) LatestSyncRun(ctx context.Context) (*espn.SyncRun, error) {
@@ -338,6 +417,101 @@ func (r *Repository) ListWarnings(ctx context.Context, syncRunID *int64, limit i
 		return nil, fmt.Errorf("iterate espn parse warnings: %w", err)
 	}
 	return out, nil
+}
+
+func (r *Repository) LatestCandidateRun(ctx context.Context) (*espn.CandidateRun, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, sync_run_id, query_type, COALESCE(query_text, ''), COALESCE(filters_json, '{}'),
+		       started_at, COALESCE(completed_at, started_at), status, candidate_count,
+		       warning_count, COALESCE(summary_json, '{}')
+		FROM espn_candidate_runs
+		ORDER BY id DESC
+		LIMIT 1
+	`)
+	return scanCandidateRunRow(row)
+}
+
+func (r *Repository) CandidateRunByID(ctx context.Context, candidateRunID int64) (*espn.CandidateRun, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, sync_run_id, query_type, COALESCE(query_text, ''), COALESCE(filters_json, '{}'),
+		       started_at, COALESCE(completed_at, started_at), status, candidate_count,
+		       warning_count, COALESCE(summary_json, '{}')
+		FROM espn_candidate_runs
+		WHERE id = ?
+	`, candidateRunID)
+	return scanCandidateRunRow(row)
+}
+
+func (r *Repository) ListCandidates(ctx context.Context, candidateRunID *int64, limit int) ([]espn.FreeAgentCandidate, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, candidate_run_id, espn_player_id, player_name, normalized_name,
+		       COALESCE(mlb_team, ''), is_pitcher, COALESCE(role, ''), COALESCE(status_tag, ''),
+		       COALESCE(raw_player_json, '{}'), created_at
+		FROM espn_free_agent_candidates
+		WHERE candidate_run_id = COALESCE(?, (SELECT id FROM espn_candidate_runs ORDER BY id DESC LIMIT 1))
+		ORDER BY player_name ASC
+		LIMIT ?
+	`, nullInt64(candidateRunID), limit)
+	if err != nil {
+		return nil, fmt.Errorf("query espn free agent candidates: %w", err)
+	}
+	defer rows.Close()
+
+	out := []espn.FreeAgentCandidate{}
+	for rows.Next() {
+		var c espn.FreeAgentCandidate
+		var playerID sql.NullInt64
+		var isPitcher int
+		var createdAtRaw string
+		if err := rows.Scan(&c.ID, &c.CandidateRunID, &playerID, &c.PlayerName, &c.NormalizedName, &c.MLBTeam, &isPitcher, &c.Role, &c.StatusTag, &c.RawPlayerJSON, &createdAtRaw); err != nil {
+			return nil, fmt.Errorf("scan espn free agent candidate: %w", err)
+		}
+		if playerID.Valid {
+			v := playerID.Int64
+			c.ESPNPlayerID = &v
+		}
+		c.IsPitcher = isPitcher == 1
+		tm, err := time.Parse(time.RFC3339, createdAtRaw)
+		if err != nil {
+			return nil, fmt.Errorf("parse espn free agent candidate created_at: %w", err)
+		}
+		c.CreatedAt = tm
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate espn free agent candidates: %w", err)
+	}
+	return out, nil
+}
+
+func scanCandidateRunRow(row *sql.Row) (*espn.CandidateRun, error) {
+	var out espn.CandidateRun
+	var syncRunID sql.NullInt64
+	var startedAtRaw, completedAtRaw string
+	if err := row.Scan(&out.ID, &syncRunID, &out.QueryType, &out.QueryText, &out.FiltersJSON, &startedAtRaw, &completedAtRaw, &out.Status, &out.CandidateCount, &out.WarningCount, &out.SummaryJSON); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("query espn candidate run: %w", err)
+	}
+	if syncRunID.Valid {
+		v := syncRunID.Int64
+		out.SyncRunID = &v
+	}
+	startedAt, err := time.Parse(time.RFC3339, startedAtRaw)
+	if err != nil {
+		return nil, fmt.Errorf("parse espn candidate run started_at: %w", err)
+	}
+	completedAt, err := time.Parse(time.RFC3339, completedAtRaw)
+	if err != nil {
+		return nil, fmt.Errorf("parse espn candidate run completed_at: %w", err)
+	}
+	out.StartedAt = startedAt
+	out.CompletedAt = completedAt
+	return &out, nil
 }
 
 func nullInt64(v *int64) any {

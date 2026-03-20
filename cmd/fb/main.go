@@ -67,6 +67,7 @@ func newRootCmd() *cobra.Command {
 		newForecasterCmd(opts),
 		newESPNCmd(opts),
 		newPitchersCmd(opts),
+		newPickupsCmd(opts),
 	)
 
 	return root
