@@ -33,6 +33,13 @@ type ShowRosterFilter struct {
 	PitchersOnly bool
 }
 
+type PitcherRosterSource struct {
+	SyncRunID int64
+	Source    string
+	Inputs    []pitchers.RosterInput
+	Snapshots []espn.RosterSnapshot
+}
+
 func (s *Service) Validate(ctx context.Context, cfg config.Config) (espn.ValidateReport, error) {
 	report := espn.ValidateReport{Checks: []map[string]any{}}
 
@@ -177,12 +184,20 @@ func (s *Service) LatestSync(ctx context.Context) (*espn.SyncRun, error) {
 }
 
 func (s *Service) RosterInputsForPitchers(ctx context.Context, syncRunID *int64) ([]pitchers.RosterInput, string, error) {
-	rows, err := s.repo.LatestRoster(ctx, syncRunID, true)
+	src, err := s.PitcherRosterSource(ctx, syncRunID)
 	if err != nil {
 		return nil, "", err
 	}
+	return src.Inputs, src.Source, nil
+}
+
+func (s *Service) PitcherRosterSource(ctx context.Context, syncRunID *int64) (PitcherRosterSource, error) {
+	rows, err := s.repo.LatestRoster(ctx, syncRunID, true)
+	if err != nil {
+		return PitcherRosterSource{}, err
+	}
 	if len(rows) == 0 {
-		return nil, "", fmt.Errorf("no ESPN roster snapshot found; run `fb espn sync roster` first")
+		return PitcherRosterSource{}, fmt.Errorf("no ESPN roster snapshot found; run `fb espn sync roster` first")
 	}
 	inputs := make([]pitchers.RosterInput, 0, len(rows))
 	var resolvedRunID int64
@@ -203,7 +218,12 @@ func (s *Service) RosterInputsForPitchers(ctx context.Context, syncRunID *int64)
 			Notes:      "source=espn",
 		})
 	}
-	return inputs, fmt.Sprintf("espn:sync_run:%d", resolvedRunID), nil
+	return PitcherRosterSource{
+		SyncRunID: resolvedRunID,
+		Source:    fmt.Sprintf("espn:sync_run:%d", resolvedRunID),
+		Inputs:    inputs,
+		Snapshots: rows,
+	}, nil
 }
 
 type parsedPayload struct {

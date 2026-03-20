@@ -8,7 +8,6 @@ import (
 
 	"fantasy-baseball/internal/forecaster"
 	"fantasy-baseball/internal/pitchers"
-	pinput "fantasy-baseball/internal/pitchers/input"
 	"fantasy-baseball/internal/pitchers/matching"
 	"fantasy-baseball/internal/pitchers/repository"
 )
@@ -54,46 +53,6 @@ func (s *Service) TwoStart(ctx context.Context, opts pitchers.AnalysisOptions) (
 	return s.analyzePlayers(ctx, players, opts, pitchers.AnalysisTypeTwoStart, "two_start_pitcher", true)
 }
 
-func (s *Service) Streamers(ctx context.Context, opts pitchers.AnalysisOptions) (pitchers.AnalysisReport, error) {
-	roster, err := s.loadRosterInputs(opts)
-	if err != nil {
-		return pitchers.AnalysisReport{}, err
-	}
-	pool, err := pinput.LoadFreeAgents(opts.PoolPath)
-	if err != nil {
-		return pitchers.AnalysisReport{}, err
-	}
-	rosterSet := map[string]struct{}{}
-	for _, r := range roster {
-		rosterSet[matching.NormalizeName(r.PlayerName)] = struct{}{}
-	}
-	players := make([]playerInput, 0, len(pool))
-	for _, p := range pool {
-		if _, ok := rosterSet[matching.NormalizeName(p.PlayerName)]; ok {
-			continue
-		}
-		players = append(players, playerInput{Name: p.PlayerName, Team: p.MLBTeam, Notes: p.Notes})
-	}
-
-	report, err := s.analyzePlayers(ctx, players, opts, pitchers.AnalysisTypeStreamers, "streamer", false)
-	if err != nil {
-		return pitchers.AnalysisReport{}, err
-	}
-	if opts.MinTotalFPTS != nil {
-		filtered := make([]pitchers.PitcherProjection, 0, len(report.RankedPitchers))
-		for _, p := range report.RankedPitchers {
-			if p.TotalProjectedFPTS >= *opts.MinTotalFPTS {
-				filtered = append(filtered, p)
-			}
-		}
-		report.RankedPitchers = filtered
-	}
-	if opts.TopN > 0 && len(report.RankedPitchers) > opts.TopN {
-		report.RankedPitchers = report.RankedPitchers[:opts.TopN]
-	}
-	return report, nil
-}
-
 func (s *Service) Report(ctx context.Context, opts pitchers.AnalysisOptions) (pitchers.AnalysisReport, error) {
 	rosterReport, err := s.AnalyzeWeek(ctx, opts)
 	if err != nil {
@@ -124,23 +83,7 @@ func (s *Service) loadRosterInputs(opts pitchers.AnalysisOptions) ([]pitchers.Ro
 	if len(opts.RosterInputs) > 0 {
 		return opts.RosterInputs, nil
 	}
-	roster, err := pinput.LoadRoster(opts.RosterPath)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]pitchers.RosterInput, 0, len(roster))
-	for _, p := range roster {
-		out = append(out, pitchers.RosterInput{
-			PlayerName: p.PlayerName,
-			MLBTeam:    p.MLBTeam,
-			Role:       p.Role,
-			Status:     p.Status,
-			Locked:     p.Locked,
-			MustHold:   p.MustHold,
-			Notes:      p.Notes,
-		})
-	}
-	return out, nil
+	return nil, fmt.Errorf("roster inputs are required; sync ESPN roster and run with ESPN source")
 }
 
 func (s *Service) LastReport(ctx context.Context) (*repository.AnalysisRunRow, []repository.AnalysisResultRow, error) {
@@ -273,22 +216,12 @@ func (s *Service) persistReport(ctx context.Context, report pitchers.AnalysisRep
 	return s.pitchRepo.SaveRun(ctx, repository.CreateRunInput{
 		AnalysisType: string(report.AnalysisType),
 		ImportRunID:  report.ImportRunID,
-		RosterPath:   firstNonEmpty(opts.RosterSource, opts.RosterPath),
-		PoolPath:     opts.PoolPath,
+		RosterPath:   opts.RosterSource,
 		WindowStart:  report.WindowStart,
 		WindowEnd:    report.WindowEnd,
 		Status:       "success",
 		Summary:      summary,
 	}, report.MatchResults, results)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if strings.TrimSpace(v) != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 func (s *Service) windowedStarts(ctx context.Context, opts pitchers.AnalysisOptions) ([]forecaster.ProbableStart, *int64, error) {

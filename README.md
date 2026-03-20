@@ -11,9 +11,9 @@ It ingests probable starter projections into SQLite, syncs your ESPN roster in r
 - stores imports, normalized starts, and parse warnings in SQLite
 - analyzes weekly pitcher decisions for your roster
 - detects two-start pitchers
-- ranks streamers from an optional free-agent pool
 - syncs ESPN league + roster snapshots (read-only)
 - saves analysis runs/results for later inspection
+- builds saved weekly pitcher plans with deterministic start/sit buckets
 
 ## What it does not do
 
@@ -46,49 +46,19 @@ export ESPN_SWID="{your-swid-cookie}"
 ./fb espn show roster --pitchers-only
 ```
 
-Run weekly pitcher report (manual JSON):
-
-```bash
-./fb pitchers report \
-  --roster ./samples/roster.json \
-  --from 2026-09-15 \
-  --to 2026-09-22
-```
-
 Run weekly pitcher report (ESPN roster source):
 
 ```bash
-./fb pitchers report --espn --from 2026-09-15 --to 2026-09-22
+./fb pitchers report --from 2026-09-15 --to 2026-09-22
 ```
 
-## Input files
+Build a weekly pitcher plan:
 
-### `roster.json`
-Required field per item:
-- `player_name`
-
-Optional:
-- `mlb_team`
-- `role` (`SP|RP|P|unknown`)
-- `status` (`active|injured|stash|unknown`)
-- `locked` (bool)
-- `must_hold` (bool)
-- `notes`
-
-Example: [samples/roster.json](/Users/jakebot/dev/fantasy-bb/samples/roster.json)
-
-### `free_agents.json`
-Required field per item:
-- `player_name`
-
-Optional:
-- `mlb_team`
-- `role` (`SP|RP|P|unknown`)
-- `watch` (bool)
-- `ownership_pct` (0-100)
-- `notes`
-
-Example: [samples/free_agents.json](/Users/jakebot/dev/fantasy-bb/samples/free_agents.json)
+```bash
+./fb pitchers plan --from 2026-09-15 --to 2026-09-22
+./fb pitchers start-sit --from 2026-09-15 --to 2026-09-22
+./fb pitchers plan-last
+```
 
 ## Core workflows
 
@@ -96,43 +66,35 @@ Example: [samples/free_agents.json](/Users/jakebot/dev/fantasy-bb/samples/free_a
 
 ```bash
 ./fb forecaster import --file ./tmp/table.html
-./fb forecaster source-status
+./fb forecaster status
 ./fb forecaster list --from 2026-09-15 --to 2026-09-22
 ./fb forecaster warnings --limit 25
 ```
 
-### 2. Analyze your roster
-
-```bash
-./fb pitchers analyze-week --roster ./samples/roster.json --from 2026-09-15 --to 2026-09-22
-./fb pitchers two-start --roster ./samples/roster.json --from 2026-09-15 --to 2026-09-22
-./fb pitchers explain-matches --roster ./samples/roster.json --from 2026-09-15 --to 2026-09-22
-```
-
-### 2b. Analyze from ESPN roster snapshots
+### 2. Analyze your ESPN roster
 
 ```bash
 ./fb espn sync roster
-./fb pitchers analyze-week --espn --from 2026-09-15 --to 2026-09-22
-./fb pitchers two-start --espn --from 2026-09-15 --to 2026-09-22
-./fb pitchers explain-matches --espn --from 2026-09-15 --to 2026-09-22
+./fb pitchers analyze-week --from 2026-09-15 --to 2026-09-22
+./fb pitchers two-start --from 2026-09-15 --to 2026-09-22
+./fb pitchers explain-matches --from 2026-09-15 --to 2026-09-22
 ```
 
-### 3. Rank streamers
-
-```bash
-./fb pitchers streamers \
-  --roster ./samples/roster.json \
-  --pool ./samples/free_agents.json \
-  --from 2026-09-15 \
-  --to 2026-09-22 \
-  --top 10
-```
-
-### 4. Re-open the latest saved analysis
+### 3. Re-open the latest saved analysis
 
 ```bash
 ./fb pitchers last-report
+```
+
+### 4. Generate a weekly pitcher plan (ESPN)
+
+```bash
+./fb espn sync roster
+./fb forecaster import --file ./tmp/forecaster_sample.html
+./fb pitchers plan
+./fb pitchers start-sit
+./fb pitchers plan-last
+./fb pitchers plan-show --plan-id 1
 ```
 
 ## Matching behavior
@@ -144,6 +106,18 @@ Matching is deterministic and inspectable:
 - use `mlb_team` as tie-breaker when available
 - output `matched`, `unmatched`, or `ambiguous_match`
 - use `pitchers explain-matches` for debug visibility
+
+## Pitcher planning buckets
+
+`fb pitchers plan` and `fb pitchers start-sit` assign each rostered pitcher to one bucket:
+
+- `auto_start`: strong projected value for the window
+- `likely_start`: solid projection but below auto-start threshold
+- `monitor`: uncertainty (for example `TBD`, missing projection, ambiguous/unmatched data)
+- `bench`: low projected value with a scheduled start
+- `no_start_scheduled`: matched pitcher but no projected starts in the window
+
+Thresholds and penalties are configurable under `planning.pitchers` in `config.json`.
 
 ## Command reference
 
@@ -174,18 +148,17 @@ Matching is deterministic and inspectable:
 - `fb espn warnings [--sync-run <id>] [--limit <n>]`
 
 ### Pitchers
-- `fb pitchers analyze-week --roster <path> ...`
-- `fb pitchers two-start --roster <path> ...`
-- `fb pitchers streamers --roster <path> --pool <path> ...`
-- `fb pitchers report --roster <path> ...`
-- `fb pitchers explain-matches --roster <path> ...`
+- `fb pitchers analyze-week [--sync-run <id>] ...`
+- `fb pitchers two-start [--sync-run <id>] ...`
+- `fb pitchers report [--sync-run <id>] ...`
+- `fb pitchers explain-matches [--sync-run <id>] ...`
 - `fb pitchers last-report`
+- `fb pitchers plan [--from YYYY-MM-DD --to YYYY-MM-DD --sync-run <id> --import-run <id>]`
+- `fb pitchers start-sit [--from YYYY-MM-DD --to YYYY-MM-DD --sync-run <id> --import-run <id>]`
+- `fb pitchers plan-last`
+- `fb pitchers plan-show --plan-id <id>`
 
-For `analyze-week`, `two-start`, `report`, and `explain-matches`, you can use either:
-- `--roster <path>` (manual JSON) or
-- `--espn` (latest ESPN snapshot), optionally `--sync-run <id>`
-
-In `--espn` mode, starter-focused analysis excludes clear RP-only roster players from report inputs.
+Pitcher analysis uses ESPN snapshots only. By default it uses the latest sync, or `--sync-run <id>` when provided.
 
 Global flags (all commands):
 - `--json`
@@ -204,6 +177,7 @@ SQLite is the system of record. Key tables:
 - forecaster imports: `forecaster_import_runs`, `probable_starts`, `parse_warnings`
 - pitcher analysis: `analysis_runs`, `analysis_results`, `player_match_results`
 - ESPN sync snapshots: `espn_sync_runs`, `espn_raw_payloads`, `espn_league_snapshots`, `espn_roster_snapshots`
+- saved planning artifacts: `pitcher_plans`, `pitcher_plan_items`
 
 ## ESPN credentials
 
@@ -220,6 +194,8 @@ export ESPN_SWID="{...}"
 ```
 
 `config.json.example` includes non-secret ESPN settings (`base_url`, `timeout_seconds`), but no cookie values.
+
+Planning thresholds are configurable under `planning.pitchers` in `config.json`. If omitted, defaults are used.
 
 ## Development
 

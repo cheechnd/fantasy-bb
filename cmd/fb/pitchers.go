@@ -2,16 +2,17 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"text/tabwriter"
 	"time"
 
+	"fantasy-baseball/internal/config"
 	esrepo "fantasy-baseball/internal/espn/repository"
 	essvc "fantasy-baseball/internal/espn/service"
 	"fantasy-baseball/internal/forecaster"
 	pitchers "fantasy-baseball/internal/pitchers"
+	"fantasy-baseball/internal/pitchers/planner"
 	pitchrepo "fantasy-baseball/internal/pitchers/repository"
 	pitchsvc "fantasy-baseball/internal/pitchers/service"
 	"fantasy-baseball/internal/store/sqlite"
@@ -20,33 +21,38 @@ import (
 )
 
 func newPitchersCmd(opts *cliOptions) *cobra.Command {
-	cmd := &cobra.Command{Use: "pitchers", Short: "Roster-aware pitcher analysis"}
+	cmd := &cobra.Command{Use: "pitchers", Short: "ESPN roster-aware pitcher analysis"}
 	cmd.AddCommand(newPitchersAnalyzeWeekCmd(opts))
 	cmd.AddCommand(newPitchersTwoStartCmd(opts))
-	cmd.AddCommand(newPitchersStreamersCmd(opts))
 	cmd.AddCommand(newPitchersReportCmd(opts))
 	cmd.AddCommand(newPitchersLastReportCmd(opts))
 	cmd.AddCommand(newPitchersExplainMatchesCmd(opts))
+	cmd.AddCommand(newPitchersPlanCmd(opts))
+	cmd.AddCommand(newPitchersStartSitCmd(opts))
+	cmd.AddCommand(newPitchersPlanLastCmd(opts))
+	cmd.AddCommand(newPitchersPlanShowCmd(opts))
 	return cmd
 }
 
 func newPitchersAnalyzeWeekCmd(opts *cliOptions) *cobra.Command {
-	var rosterPath, fromRaw, toRaw string
-	var useESPN bool
+	var fromRaw, toRaw string
 	var syncRunID int64
 	var importRunID int64
 	cmd := &cobra.Command{
-		Use:   "analyze-week (--roster <path> | --espn)",
-		Short: "Analyze weekly projected starts for rostered pitchers",
+		Use:   "analyze-week",
+		Short: "Analyze weekly projected starts for ESPN rostered pitchers",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			opts2, err := buildAnalysisOptions(cmd, rosterPath, "", fromRaw, toRaw, &importRunID)
+			opts2, err := buildAnalysisOptions(cmd, fromRaw, toRaw, &importRunID)
 			if err != nil {
 				return err
 			}
 			r, err := withPitchersServices(cmd.Context(), opts, func(_ context.Context, svc *pitchsvc.Service, es *essvc.Service) (any, error) {
-				if err := resolveRosterSource(cmd.Context(), cmd, es, useESPN, syncRunID, &opts2); err != nil {
+				src, err := resolveESPNPitcherSource(cmd.Context(), cmd, es, syncRunID)
+				if err != nil {
 					return nil, err
 				}
+				opts2.RosterInputs = src.Inputs
+				opts2.RosterSource = src.Source
 				return svc.AnalyzeWeek(cmd.Context(), opts2)
 			})
 			if err != nil {
@@ -60,9 +66,7 @@ func newPitchersAnalyzeWeekCmd(opts *cliOptions) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&rosterPath, "roster", "", "Path to roster JSON")
-	cmd.Flags().BoolVar(&useESPN, "espn", false, "Use latest ESPN roster snapshot instead of --roster")
-	cmd.Flags().Int64Var(&syncRunID, "sync-run", 0, "ESPN sync run ID (defaults to latest when --espn)")
+	cmd.Flags().Int64Var(&syncRunID, "sync-run", 0, "ESPN sync run ID (defaults to latest)")
 	cmd.Flags().StringVar(&fromRaw, "from", "", "Window start date (YYYY-MM-DD)")
 	cmd.Flags().StringVar(&toRaw, "to", "", "Window end date (YYYY-MM-DD)")
 	cmd.Flags().Int64Var(&importRunID, "import-run", 0, "Forecaster import run ID (defaults to latest)")
@@ -70,22 +74,24 @@ func newPitchersAnalyzeWeekCmd(opts *cliOptions) *cobra.Command {
 }
 
 func newPitchersTwoStartCmd(opts *cliOptions) *cobra.Command {
-	var rosterPath, fromRaw, toRaw string
-	var useESPN bool
+	var fromRaw, toRaw string
 	var syncRunID int64
 	var importRunID int64
 	cmd := &cobra.Command{
-		Use:   "two-start (--roster <path> | --espn)",
-		Short: "Show rostered pitchers with 2+ projected starts",
+		Use:   "two-start",
+		Short: "Show ESPN rostered pitchers with 2+ projected starts",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			opts2, err := buildAnalysisOptions(cmd, rosterPath, "", fromRaw, toRaw, &importRunID)
+			opts2, err := buildAnalysisOptions(cmd, fromRaw, toRaw, &importRunID)
 			if err != nil {
 				return err
 			}
 			r, err := withPitchersServices(cmd.Context(), opts, func(_ context.Context, svc *pitchsvc.Service, es *essvc.Service) (any, error) {
-				if err := resolveRosterSource(cmd.Context(), cmd, es, useESPN, syncRunID, &opts2); err != nil {
+				src, err := resolveESPNPitcherSource(cmd.Context(), cmd, es, syncRunID)
+				if err != nil {
 					return nil, err
 				}
+				opts2.RosterInputs = src.Inputs
+				opts2.RosterSource = src.Source
 				return svc.TwoStart(cmd.Context(), opts2)
 			})
 			if err != nil {
@@ -99,76 +105,32 @@ func newPitchersTwoStartCmd(opts *cliOptions) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&rosterPath, "roster", "", "Path to roster JSON")
-	cmd.Flags().BoolVar(&useESPN, "espn", false, "Use latest ESPN roster snapshot instead of --roster")
-	cmd.Flags().Int64Var(&syncRunID, "sync-run", 0, "ESPN sync run ID (defaults to latest when --espn)")
+	cmd.Flags().Int64Var(&syncRunID, "sync-run", 0, "ESPN sync run ID (defaults to latest)")
 	cmd.Flags().StringVar(&fromRaw, "from", "", "Window start date (YYYY-MM-DD)")
 	cmd.Flags().StringVar(&toRaw, "to", "", "Window end date (YYYY-MM-DD)")
 	cmd.Flags().Int64Var(&importRunID, "import-run", 0, "Forecaster import run ID (defaults to latest)")
-	return cmd
-}
-
-func newPitchersStreamersCmd(opts *cliOptions) *cobra.Command {
-	var rosterPath, poolPath, fromRaw, toRaw string
-	var importRunID int64
-	var topN int
-	var minTotal float64
-	cmd := &cobra.Command{
-		Use:   "streamers --roster <path> --pool <path>",
-		Short: "Rank streamer candidates from a free-agent pool",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if strings.TrimSpace(rosterPath) == "" || strings.TrimSpace(poolPath) == "" {
-				return fmt.Errorf("--roster and --pool are required")
-			}
-			opts2, err := buildAnalysisOptions(cmd, rosterPath, poolPath, fromRaw, toRaw, &importRunID)
-			if err != nil {
-				return err
-			}
-			opts2.TopN = topN
-			if cmd.Flags().Changed("min-total-fpts") {
-				opts2.MinTotalFPTS = &minTotal
-			}
-			r, err := withPitchersService(cmd.Context(), opts, func(_ context.Context, svc *pitchsvc.Service) (any, error) {
-				return svc.Streamers(cmd.Context(), opts2)
-			})
-			if err != nil {
-				return err
-			}
-			report := r.(pitchers.AnalysisReport)
-			if opts.OutputJSON {
-				return writeJSON(cmd, report)
-			}
-			printProjectionTable(cmd, report.RankedPitchers)
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&rosterPath, "roster", "", "Path to roster JSON")
-	cmd.Flags().StringVar(&poolPath, "pool", "", "Path to free_agents JSON")
-	cmd.Flags().StringVar(&fromRaw, "from", "", "Window start date (YYYY-MM-DD)")
-	cmd.Flags().StringVar(&toRaw, "to", "", "Window end date (YYYY-MM-DD)")
-	cmd.Flags().Int64Var(&importRunID, "import-run", 0, "Forecaster import run ID (defaults to latest)")
-	cmd.Flags().IntVar(&topN, "top", 10, "Top streamer rows")
-	cmd.Flags().Float64Var(&minTotal, "min-total-fpts", 0, "Minimum total projected FPTS")
 	return cmd
 }
 
 func newPitchersReportCmd(opts *cliOptions) *cobra.Command {
-	var rosterPath, fromRaw, toRaw string
-	var useESPN bool
+	var fromRaw, toRaw string
 	var syncRunID int64
 	var importRunID int64
 	cmd := &cobra.Command{
-		Use:   "report (--roster <path> | --espn)",
-		Short: "Produce combined weekly pitcher report",
+		Use:   "report",
+		Short: "Produce combined weekly pitcher report for ESPN roster",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			opts2, err := buildAnalysisOptions(cmd, rosterPath, "", fromRaw, toRaw, &importRunID)
+			opts2, err := buildAnalysisOptions(cmd, fromRaw, toRaw, &importRunID)
 			if err != nil {
 				return err
 			}
 			r, err := withPitchersServices(cmd.Context(), opts, func(_ context.Context, svc *pitchsvc.Service, es *essvc.Service) (any, error) {
-				if err := resolveRosterSource(cmd.Context(), cmd, es, useESPN, syncRunID, &opts2); err != nil {
+				src, err := resolveESPNPitcherSource(cmd.Context(), cmd, es, syncRunID)
+				if err != nil {
 					return nil, err
 				}
+				opts2.RosterInputs = src.Inputs
+				opts2.RosterSource = src.Source
 				return svc.Report(cmd.Context(), opts2)
 			})
 			if err != nil {
@@ -182,9 +144,7 @@ func newPitchersReportCmd(opts *cliOptions) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&rosterPath, "roster", "", "Path to roster JSON")
-	cmd.Flags().BoolVar(&useESPN, "espn", false, "Use latest ESPN roster snapshot instead of --roster")
-	cmd.Flags().Int64Var(&syncRunID, "sync-run", 0, "ESPN sync run ID (defaults to latest when --espn)")
+	cmd.Flags().Int64Var(&syncRunID, "sync-run", 0, "ESPN sync run ID (defaults to latest)")
 	cmd.Flags().StringVar(&fromRaw, "from", "", "Window start date (YYYY-MM-DD)")
 	cmd.Flags().StringVar(&toRaw, "to", "", "Window end date (YYYY-MM-DD)")
 	cmd.Flags().Int64Var(&importRunID, "import-run", 0, "Forecaster import run ID (defaults to latest)")
@@ -226,22 +186,24 @@ func newPitchersLastReportCmd(opts *cliOptions) *cobra.Command {
 }
 
 func newPitchersExplainMatchesCmd(opts *cliOptions) *cobra.Command {
-	var rosterPath, fromRaw, toRaw string
-	var useESPN bool
+	var fromRaw, toRaw string
 	var syncRunID int64
 	var importRunID int64
 	cmd := &cobra.Command{
-		Use:   "explain-matches (--roster <path> | --espn)",
-		Short: "Explain roster player matching against probable starts",
+		Use:   "explain-matches",
+		Short: "Explain ESPN roster player matching against probable starts",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			opts2, err := buildAnalysisOptions(cmd, rosterPath, "", fromRaw, toRaw, &importRunID)
+			opts2, err := buildAnalysisOptions(cmd, fromRaw, toRaw, &importRunID)
 			if err != nil {
 				return err
 			}
 			v, err := withPitchersServices(cmd.Context(), opts, func(_ context.Context, svc *pitchsvc.Service, es *essvc.Service) (any, error) {
-				if err := resolveRosterSource(cmd.Context(), cmd, es, useESPN, syncRunID, &opts2); err != nil {
+				src, err := resolveESPNPitcherSource(cmd.Context(), cmd, es, syncRunID)
+				if err != nil {
 					return nil, err
 				}
+				opts2.RosterInputs = src.Inputs
+				opts2.RosterSource = src.Source
 				return svc.ExplainMatches(cmd.Context(), opts2)
 			})
 			if err != nil {
@@ -255,12 +217,182 @@ func newPitchersExplainMatchesCmd(opts *cliOptions) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&rosterPath, "roster", "", "Path to roster JSON")
-	cmd.Flags().BoolVar(&useESPN, "espn", false, "Use latest ESPN roster snapshot instead of --roster")
-	cmd.Flags().Int64Var(&syncRunID, "sync-run", 0, "ESPN sync run ID (defaults to latest when --espn)")
+	cmd.Flags().Int64Var(&syncRunID, "sync-run", 0, "ESPN sync run ID (defaults to latest)")
 	cmd.Flags().StringVar(&fromRaw, "from", "", "Window start date (YYYY-MM-DD)")
 	cmd.Flags().StringVar(&toRaw, "to", "", "Window end date (YYYY-MM-DD)")
 	cmd.Flags().Int64Var(&importRunID, "import-run", 0, "Forecaster import run ID (defaults to latest)")
+	return cmd
+}
+
+func newPitchersPlanCmd(opts *cliOptions) *cobra.Command {
+	var fromRaw, toRaw string
+	var syncRunID int64
+	var importRunID int64
+	cmd := &cobra.Command{
+		Use:   "plan",
+		Short: "Build and save a read-only weekly pitcher plan",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			analysisOpts, err := buildAnalysisOptions(cmd, fromRaw, toRaw, &importRunID)
+			if err != nil {
+				return err
+			}
+			v, err := withPitchersPlannerServices(cmd.Context(), opts, func(ctx context.Context, cfg config.Config, svc *pitchsvc.Service, es *essvc.Service, ps *planner.Service) (any, error) {
+				src, err := resolveESPNPitcherSource(ctx, cmd, es, syncRunID)
+				if err != nil {
+					return nil, err
+				}
+				analysisOpts.RosterInputs = src.Inputs
+				analysisOpts.RosterSource = src.Source
+				report, err := svc.Report(ctx, analysisOpts)
+				if err != nil {
+					return nil, err
+				}
+				syncRun := src.SyncRunID
+				plan, err := ps.GenerateAndSave(ctx, planner.GenerateInput{
+					SyncRunID:       &syncRun,
+					ImportRunID:     report.ImportRunID,
+					AnalysisRunID:   &report.AnalysisRunID,
+					WindowStart:     report.WindowStart,
+					WindowEnd:       report.WindowEnd,
+					Rules:           planningRulesFromConfig(cfg),
+					Analysis:        report,
+					RosterSnapshots: src.Snapshots,
+				})
+				if err != nil {
+					return nil, err
+				}
+				return map[string]any{"plan": plan, "source": src, "analysis_run_id": report.AnalysisRunID}, nil
+			})
+			if err != nil {
+				return err
+			}
+			payload := v.(map[string]any)
+			plan := payload["plan"].(*planner.Plan)
+			if opts.OutputJSON {
+				return writeJSON(cmd, payload)
+			}
+			printPitcherPlan(cmd, plan, false)
+			return nil
+		},
+	}
+	cmd.Flags().Int64Var(&syncRunID, "sync-run", 0, "ESPN sync run ID (defaults to latest)")
+	cmd.Flags().StringVar(&fromRaw, "from", "", "Window start date (YYYY-MM-DD)")
+	cmd.Flags().StringVar(&toRaw, "to", "", "Window end date (YYYY-MM-DD)")
+	cmd.Flags().Int64Var(&importRunID, "import-run", 0, "Forecaster import run ID (defaults to latest)")
+	return cmd
+}
+
+func newPitchersStartSitCmd(opts *cliOptions) *cobra.Command {
+	var fromRaw, toRaw string
+	var syncRunID int64
+	var importRunID int64
+	cmd := &cobra.Command{
+		Use:   "start-sit",
+		Short: "Build and save a focused start/sit pitcher view",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			analysisOpts, err := buildAnalysisOptions(cmd, fromRaw, toRaw, &importRunID)
+			if err != nil {
+				return err
+			}
+			v, err := withPitchersPlannerServices(cmd.Context(), opts, func(ctx context.Context, cfg config.Config, svc *pitchsvc.Service, es *essvc.Service, ps *planner.Service) (any, error) {
+				src, err := resolveESPNPitcherSource(ctx, cmd, es, syncRunID)
+				if err != nil {
+					return nil, err
+				}
+				analysisOpts.RosterInputs = src.Inputs
+				analysisOpts.RosterSource = src.Source
+				report, err := svc.Report(ctx, analysisOpts)
+				if err != nil {
+					return nil, err
+				}
+				syncRun := src.SyncRunID
+				plan, err := ps.GenerateAndSave(ctx, planner.GenerateInput{
+					SyncRunID:       &syncRun,
+					ImportRunID:     report.ImportRunID,
+					AnalysisRunID:   &report.AnalysisRunID,
+					WindowStart:     report.WindowStart,
+					WindowEnd:       report.WindowEnd,
+					Rules:           planningRulesFromConfig(cfg),
+					Analysis:        report,
+					RosterSnapshots: src.Snapshots,
+				})
+				if err != nil {
+					return nil, err
+				}
+				return plan, nil
+			})
+			if err != nil {
+				return err
+			}
+			plan := v.(*planner.Plan)
+			if opts.OutputJSON {
+				return writeJSON(cmd, plan)
+			}
+			printPitcherPlan(cmd, plan, true)
+			return nil
+		},
+	}
+	cmd.Flags().Int64Var(&syncRunID, "sync-run", 0, "ESPN sync run ID (defaults to latest)")
+	cmd.Flags().StringVar(&fromRaw, "from", "", "Window start date (YYYY-MM-DD)")
+	cmd.Flags().StringVar(&toRaw, "to", "", "Window end date (YYYY-MM-DD)")
+	cmd.Flags().Int64Var(&importRunID, "import-run", 0, "Forecaster import run ID (defaults to latest)")
+	return cmd
+}
+
+func newPitchersPlanLastCmd(opts *cliOptions) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "plan-last",
+		Short: "Show latest saved pitcher plan",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			v, err := withPitchersPlannerServices(cmd.Context(), opts, func(ctx context.Context, _ config.Config, _ *pitchsvc.Service, _ *essvc.Service, ps *planner.Service) (any, error) {
+				return ps.Latest(ctx)
+			})
+			if err != nil {
+				return err
+			}
+			plan, _ := v.(*planner.Plan)
+			if opts.OutputJSON {
+				return writeJSON(cmd, map[string]any{"plan": plan})
+			}
+			if plan == nil {
+				fmt.Fprintln(cmd.OutOrStdout(), "No saved pitcher plans found.")
+				return nil
+			}
+			printPitcherPlan(cmd, plan, false)
+			return nil
+		},
+	}
+	return cmd
+}
+
+func newPitchersPlanShowCmd(opts *cliOptions) *cobra.Command {
+	var planID int64
+	cmd := &cobra.Command{
+		Use:   "plan-show --plan-id <id>",
+		Short: "Show a specific saved pitcher plan",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if planID <= 0 {
+				return fmt.Errorf("--plan-id must be > 0")
+			}
+			v, err := withPitchersPlannerServices(cmd.Context(), opts, func(ctx context.Context, _ config.Config, _ *pitchsvc.Service, _ *essvc.Service, ps *planner.Service) (any, error) {
+				return ps.ByID(ctx, planID)
+			})
+			if err != nil {
+				return err
+			}
+			plan, _ := v.(*planner.Plan)
+			if opts.OutputJSON {
+				return writeJSON(cmd, map[string]any{"plan": plan})
+			}
+			if plan == nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "Pitcher plan %d not found.\n", planID)
+				return nil
+			}
+			printPitcherPlan(cmd, plan, false)
+			return nil
+		},
+	}
+	cmd.Flags().Int64Var(&planID, "plan-id", 0, "Pitcher plan ID")
 	return cmd
 }
 
@@ -285,13 +417,44 @@ func withPitchersServices(ctx context.Context, opts *cliOptions, fn func(context
 	return fn(ctx, service, espnService)
 }
 
+func withPitchersPlannerServices(ctx context.Context, opts *cliOptions, fn func(context.Context, config.Config, *pitchsvc.Service, *essvc.Service, *planner.Service) (any, error)) (any, error) {
+	cfg, _, err := loadConfigWithOverrides(opts)
+	if err != nil {
+		return nil, err
+	}
+	s, err := sqlite.Open(cfg.DBPath)
+	if err != nil {
+		return nil, err
+	}
+	defer s.Close()
+	if _, err := s.Migrate(ctx); err != nil {
+		return nil, err
+	}
+	foreRepo := forecaster.NewRepository(s.DB())
+	pitchRepo := pitchrepo.New(s.DB())
+	espnRepo := esrepo.New(s.DB())
+	planRepo := planner.NewRepository(s.DB())
+	pitchService := pitchsvc.New(foreRepo, pitchRepo)
+	espnService := essvc.New(espnRepo)
+	planService := planner.NewService(planRepo)
+	return fn(ctx, cfg, pitchService, espnService, planService)
+}
+
 func withPitchersService(ctx context.Context, opts *cliOptions, fn func(context.Context, *pitchsvc.Service) (any, error)) (any, error) {
 	return withPitchersServices(ctx, opts, func(c context.Context, svc *pitchsvc.Service, _ *essvc.Service) (any, error) {
 		return fn(c, svc)
 	})
 }
 
-func buildAnalysisOptions(cmd *cobra.Command, rosterPath string, poolPath string, fromRaw string, toRaw string, importRunID *int64) (pitchers.AnalysisOptions, error) {
+func resolveESPNPitcherSource(ctx context.Context, cmd *cobra.Command, es *essvc.Service, syncRunID int64) (essvc.PitcherRosterSource, error) {
+	var runIDPtr *int64
+	if cmd.Flags().Changed("sync-run") {
+		runIDPtr = &syncRunID
+	}
+	return es.PitcherRosterSource(ctx, runIDPtr)
+}
+
+func buildAnalysisOptions(cmd *cobra.Command, fromRaw string, toRaw string, importRunID *int64) (pitchers.AnalysisOptions, error) {
 	from, to, err := parseWindow(fromRaw, toRaw)
 	if err != nil {
 		return pitchers.AnalysisOptions{}, err
@@ -301,30 +464,7 @@ func buildAnalysisOptions(cmd *cobra.Command, rosterPath string, poolPath string
 		v := *importRunID
 		runID = &v
 	}
-	return pitchers.AnalysisOptions{From: from, To: to, ImportRunID: runID, RosterPath: rosterPath, PoolPath: poolPath}, nil
-}
-
-func resolveRosterSource(ctx context.Context, cmd *cobra.Command, es *essvc.Service, useESPN bool, syncRunID int64, opts *pitchers.AnalysisOptions) error {
-	if useESPN && strings.TrimSpace(opts.RosterPath) != "" {
-		return fmt.Errorf("use either --roster or --espn, not both")
-	}
-	if !useESPN && strings.TrimSpace(opts.RosterPath) == "" {
-		return fmt.Errorf("either --roster or --espn is required")
-	}
-	if !useESPN {
-		return nil
-	}
-	var runIDPtr *int64
-	if cmd.Flags().Changed("sync-run") {
-		runIDPtr = &syncRunID
-	}
-	inputs, source, err := es.RosterInputsForPitchers(ctx, runIDPtr)
-	if err != nil {
-		return err
-	}
-	opts.RosterInputs = inputs
-	opts.RosterSource = source
-	return nil
+	return pitchers.AnalysisOptions{From: from, To: to, ImportRunID: runID}, nil
 }
 
 func parseWindow(fromRaw, toRaw string) (time.Time, time.Time, error) {
@@ -421,7 +561,98 @@ func printLastReportTable(cmd *cobra.Command, rows []pitchrepo.AnalysisResultRow
 	w.Flush()
 }
 
-func marshalAny(v any) string {
-	b, _ := json.Marshal(v)
-	return string(b)
+func planningRulesFromConfig(cfg config.Config) planner.RuleConfig {
+	return planner.RuleConfig{
+		AutoStartMinTotalFPTS:    cfg.Planning.Pitchers.AutoStartMinTotalFPTS,
+		LikelyStartMinTotalFPTS:  cfg.Planning.Pitchers.LikelyStartMinTotalFPTS,
+		MonitorMinTotalFPTS:      cfg.Planning.Pitchers.MonitorMinTotalFPTS,
+		TwoStartAutoStartBonus:   cfg.Planning.Pitchers.TwoStartAutoStartBonus,
+		TBDPenalty:               cfg.Planning.Pitchers.TBDPenalty,
+		MissingProjectionPenalty: cfg.Planning.Pitchers.MissingProjectionPenalty,
+		AmbiguousMatchPenalty:    cfg.Planning.Pitchers.AmbiguousMatchPenalty,
+	}
+}
+
+func printPitcherPlan(cmd *cobra.Command, plan *planner.Plan, startSitOnly bool) {
+	if plan == nil {
+		fmt.Fprintln(cmd.OutOrStdout(), "(no plan)")
+		return
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Pitcher Plan: %d\n", plan.ID)
+	fmt.Fprintf(cmd.OutOrStdout(), "Window: %s to %s\n", plan.WindowStart, plan.WindowEnd)
+	if plan.SyncRunID != nil {
+		fmt.Fprintf(cmd.OutOrStdout(), "ESPN sync run: %d\n", *plan.SyncRunID)
+	}
+	if plan.ImportRunID != nil {
+		fmt.Fprintf(cmd.OutOrStdout(), "Forecaster import run: %d\n", *plan.ImportRunID)
+	}
+	if plan.AnalysisRunID != nil {
+		fmt.Fprintf(cmd.OutOrStdout(), "Analysis run: %d\n", *plan.AnalysisRunID)
+	}
+	fmt.Fprintln(cmd.OutOrStdout())
+
+	groups := bucketGroups(plan.Items)
+	if startSitOnly {
+		fmt.Fprintln(cmd.OutOrStdout(), "Start Candidates")
+		printPlanItemsTable(cmd, append(groups[planner.BucketAutoStart], groups[planner.BucketLikelyStart]...))
+		fmt.Fprintln(cmd.OutOrStdout())
+		fmt.Fprintln(cmd.OutOrStdout(), "Monitor")
+		printPlanItemsTable(cmd, groups[planner.BucketMonitor])
+		fmt.Fprintln(cmd.OutOrStdout())
+		fmt.Fprintln(cmd.OutOrStdout(), "Sit Candidates")
+		printPlanItemsTable(cmd, append(groups[planner.BucketBench], groups[planner.BucketNoStartScheduled]...))
+		fmt.Fprintln(cmd.OutOrStdout())
+	} else {
+		order := []struct {
+			Name   string
+			Bucket planner.Bucket
+		}{
+			{Name: "Auto-start", Bucket: planner.BucketAutoStart},
+			{Name: "Likely start", Bucket: planner.BucketLikelyStart},
+			{Name: "Monitor", Bucket: planner.BucketMonitor},
+			{Name: "Bench", Bucket: planner.BucketBench},
+			{Name: "No start scheduled", Bucket: planner.BucketNoStartScheduled},
+		}
+		for i, entry := range order {
+			fmt.Fprintln(cmd.OutOrStdout(), entry.Name)
+			printPlanItemsTable(cmd, groups[entry.Bucket])
+			if i < len(order)-1 {
+				fmt.Fprintln(cmd.OutOrStdout())
+			}
+		}
+	}
+
+	fmt.Fprintln(cmd.OutOrStdout())
+	fmt.Fprintln(cmd.OutOrStdout(), "Summary")
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "BUCKET\tCOUNT")
+	for _, bucket := range []planner.Bucket{planner.BucketAutoStart, planner.BucketLikelyStart, planner.BucketMonitor, planner.BucketBench, planner.BucketNoStartScheduled} {
+		fmt.Fprintf(w, "%s\t%d\n", bucket, plan.Summary.Counts[bucket])
+	}
+	w.Flush()
+}
+
+func bucketGroups(items []planner.PlanItem) map[planner.Bucket][]planner.PlanItem {
+	out := map[planner.Bucket][]planner.PlanItem{}
+	for _, item := range items {
+		out[item.Bucket] = append(out[item.Bucket], item)
+	}
+	return out
+}
+
+func printPlanItemsTable(cmd *cobra.Command, rows []planner.PlanItem) {
+	if len(rows) == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), "(none)")
+		return
+	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "PLAYER\tTEAM\tMATCHED\tSTARTS\tTOTAL_FPTS\tFLAGS\tNOTES")
+	for _, r := range rows {
+		total := "-"
+		if r.TotalProjectedFPTS != nil {
+			total = fmt.Sprintf("%.1f", *r.TotalProjectedFPTS)
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\t%s\n", r.PlayerName, r.MLBTeam, r.MatchedPitcherName, r.ProjectedStartCount, total, strings.Join(r.Flags, ","), strings.Join(r.Notes, "; "))
+	}
+	w.Flush()
 }

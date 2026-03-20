@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -50,17 +49,19 @@ func setupService(t *testing.T) (*Service, int64) {
 
 func TestAnalyzeWeekAndTwoStart(t *testing.T) {
 	svc, importRunID := setupService(t)
-	rosterPath := filepath.Join(t.TempDir(), "roster.json")
-	if err := os.WriteFile(rosterPath, []byte(`[
-  {"player_name":"Gerrit Cole","mlb_team":"NYY","locked":true},
-  {"player_name":"Zack Wheeler","mlb_team":"PHI"},
-  {"player_name":"Missing Guy"}
-]`), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	from := time.Date(2026, 9, 15, 0, 0, 0, 0, time.Local)
 	to := from.AddDate(0, 0, 6)
-	report, err := svc.AnalyzeWeek(context.Background(), pitchers.AnalysisOptions{From: from, To: to, ImportRunID: &importRunID, RosterPath: rosterPath})
+	report, err := svc.AnalyzeWeek(context.Background(), pitchers.AnalysisOptions{
+		From:        from,
+		To:          to,
+		ImportRunID: &importRunID,
+		RosterInputs: []pitchers.RosterInput{
+			{PlayerName: "Gerrit Cole", MLBTeam: "NYY", Locked: true},
+			{PlayerName: "Zack Wheeler", MLBTeam: "PHI"},
+			{PlayerName: "Missing Guy"},
+		},
+		RosterSource: "espn:sync_run:55",
+	})
 	if err != nil {
 		t.Fatalf("AnalyzeWeek: %v", err)
 	}
@@ -77,7 +78,16 @@ func TestAnalyzeWeekAndTwoStart(t *testing.T) {
 		t.Fatalf("expected unmatched roster row, got %+v", report.UnmatchedPlayers)
 	}
 
-	twoStart, err := svc.TwoStart(context.Background(), pitchers.AnalysisOptions{From: from, To: to, ImportRunID: &importRunID, RosterPath: rosterPath})
+	twoStart, err := svc.TwoStart(context.Background(), pitchers.AnalysisOptions{
+		From:        from,
+		To:          to,
+		ImportRunID: &importRunID,
+		RosterInputs: []pitchers.RosterInput{
+			{PlayerName: "Gerrit Cole", MLBTeam: "NYY"},
+			{PlayerName: "Zack Wheeler", MLBTeam: "PHI"},
+		},
+		RosterSource: "espn:sync_run:55",
+	})
 	if err != nil {
 		t.Fatalf("TwoStart: %v", err)
 	}
@@ -115,24 +125,22 @@ func TestAnalyzeWeekWithRosterInputs(t *testing.T) {
 	}
 }
 
-func TestStreamersAndLastReportPersistence(t *testing.T) {
+func TestLastReportPersistence(t *testing.T) {
 	svc, importRunID := setupService(t)
-	base := t.TempDir()
-	rosterPath := filepath.Join(base, "roster.json")
-	poolPath := filepath.Join(base, "free_agents.json")
-	_ = os.WriteFile(rosterPath, []byte(`[ {"player_name":"Gerrit Cole","mlb_team":"NYY"} ]`), 0o644)
-	_ = os.WriteFile(poolPath, []byte(`[
-  {"player_name":"Jordan Wicks","mlb_team":"CHC"},
-  {"player_name":"No Match"}
-]`), 0o644)
 	from := time.Date(2026, 9, 15, 0, 0, 0, 0, time.Local)
 	to := from.AddDate(0, 0, 6)
-	report, err := svc.Streamers(context.Background(), pitchers.AnalysisOptions{From: from, To: to, ImportRunID: &importRunID, RosterPath: rosterPath, PoolPath: poolPath, TopN: 5})
+	_, err := svc.AnalyzeWeek(context.Background(), pitchers.AnalysisOptions{
+		From:        from,
+		To:          to,
+		ImportRunID: &importRunID,
+		RosterInputs: []pitchers.RosterInput{
+			{PlayerName: "Gerrit Cole", MLBTeam: "NYY"},
+			{PlayerName: "No Match"},
+		},
+		RosterSource: "espn:sync_run:99",
+	})
 	if err != nil {
-		t.Fatalf("Streamers: %v", err)
-	}
-	if len(report.RankedPitchers) != 1 || report.RankedPitchers[0].PlayerName != "Jordan Wicks" {
-		t.Fatalf("unexpected streamer ranking: %+v", report.RankedPitchers)
+		t.Fatalf("AnalyzeWeek: %v", err)
 	}
 
 	run, rows, err := svc.LastReport(context.Background())
@@ -141,6 +149,16 @@ func TestStreamersAndLastReportPersistence(t *testing.T) {
 	}
 	if run == nil || len(rows) == 0 {
 		t.Fatalf("expected persisted analysis run/results, got run=%v rows=%d", run, len(rows))
+	}
+}
+
+func TestAnalyzeWeekRequiresRosterInputs(t *testing.T) {
+	svc, importRunID := setupService(t)
+	from := time.Date(2026, 9, 15, 0, 0, 0, 0, time.Local)
+	to := from.AddDate(0, 0, 6)
+	_, err := svc.AnalyzeWeek(context.Background(), pitchers.AnalysisOptions{From: from, To: to, ImportRunID: &importRunID})
+	if err == nil || !strings.Contains(err.Error(), "roster inputs are required") {
+		t.Fatalf("expected roster inputs error, got %v", err)
 	}
 }
 

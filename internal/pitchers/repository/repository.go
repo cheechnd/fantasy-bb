@@ -23,7 +23,6 @@ type AnalysisRunRow struct {
 	AnalysisType string
 	ImportRunID  *int64
 	RosterPath   string
-	PoolPath     string
 	WindowStart  string
 	WindowEnd    string
 	CreatedAt    time.Time
@@ -35,7 +34,6 @@ type CreateRunInput struct {
 	AnalysisType string
 	ImportRunID  *int64
 	RosterPath   string
-	PoolPath     string
 	WindowStart  string
 	WindowEnd    string
 	Status       string
@@ -69,10 +67,10 @@ func (r *Repository) SaveRun(ctx context.Context, run CreateRunInput, matchResul
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := tx.ExecContext(ctx, `
 		INSERT INTO analysis_runs (
-			analysis_type, import_run_id, roster_source_path, pool_source_path,
+			analysis_type, import_run_id, roster_source_path,
 			window_start, window_end, created_at, status, summary_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, run.AnalysisType, run.ImportRunID, run.RosterPath, run.PoolPath, run.WindowStart, run.WindowEnd, now, run.Status, summaryJSON)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, run.AnalysisType, run.ImportRunID, run.RosterPath, run.WindowStart, run.WindowEnd, now, run.Status, summaryJSON)
 	if err != nil {
 		return 0, fmt.Errorf("insert analysis_run: %w", err)
 	}
@@ -122,14 +120,14 @@ func (r *Repository) SaveRun(ctx context.Context, run CreateRunInput, matchResul
 
 func (r *Repository) LatestRun(ctx context.Context) (*AnalysisRunRow, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, analysis_type, import_run_id, roster_source_path, pool_source_path,
+		SELECT id, analysis_type, import_run_id, roster_source_path,
 		       window_start, window_end, created_at, status, COALESCE(summary_json, '{}')
 		FROM analysis_runs ORDER BY id DESC LIMIT 1
 	`)
 	var out AnalysisRunRow
 	var importRun sql.NullInt64
 	var createdAtRaw string
-	if err := row.Scan(&out.ID, &out.AnalysisType, &importRun, &out.RosterPath, &out.PoolPath, &out.WindowStart, &out.WindowEnd, &createdAtRaw, &out.Status, &out.SummaryJSON); err != nil {
+	if err := row.Scan(&out.ID, &out.AnalysisType, &importRun, &out.RosterPath, &out.WindowStart, &out.WindowEnd, &createdAtRaw, &out.Status, &out.SummaryJSON); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}

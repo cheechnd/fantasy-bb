@@ -5,10 +5,9 @@ import "time"
 type AnalysisType string
 
 const (
-	AnalysisTypeWeekly    AnalysisType = "weekly_pitchers"
-	AnalysisTypeTwoStart  AnalysisType = "two_start"
-	AnalysisTypeStreamers AnalysisType = "streamers"
-	AnalysisTypeReport    AnalysisType = "report"
+	AnalysisTypeWeekly   AnalysisType = "weekly_pitchers"
+	AnalysisTypeTwoStart AnalysisType = "two_start"
+	AnalysisTypeReport   AnalysisType = "report"
 )
 
 type MatchStatus string
@@ -68,12 +67,8 @@ type AnalysisOptions struct {
 	From         time.Time
 	To           time.Time
 	ImportRunID  *int64
-	RosterPath   string
 	RosterInputs []RosterInput
 	RosterSource string
-	PoolPath     string
-	TopN         int
-	MinTotalFPTS *float64
 }
 
 type RosterInput struct {

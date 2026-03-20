@@ -26,6 +26,7 @@ type Config struct {
 	Auth        AuthConfig      `json:"auth"`
 	ESPN        ESPNConfig      `json:"espn"`
 	Execution   ExecutionConfig `json:"execution"`
+	Planning    PlanningConfig  `json:"planning"`
 	Features    FeaturesConfig  `json:"features"`
 }
 
@@ -54,6 +55,20 @@ type ESPNConfig struct {
 type ESPNCredentials struct {
 	ESPNS2 string
 	SWID   string
+}
+
+type PlanningConfig struct {
+	Pitchers PitcherPlanningConfig `json:"pitchers"`
+}
+
+type PitcherPlanningConfig struct {
+	AutoStartMinTotalFPTS    float64 `json:"auto_start_min_total_fpts"`
+	LikelyStartMinTotalFPTS  float64 `json:"likely_start_min_total_fpts"`
+	MonitorMinTotalFPTS      float64 `json:"monitor_min_total_fpts"`
+	TwoStartAutoStartBonus   float64 `json:"two_start_auto_start_bonus"`
+	TBDPenalty               float64 `json:"tbd_penalty"`
+	MissingProjectionPenalty float64 `json:"missing_projection_penalty"`
+	AmbiguousMatchPenalty    float64 `json:"ambiguous_match_penalty"`
 }
 
 type FeaturesConfig struct {
@@ -99,6 +114,17 @@ func Default() Config {
 		Execution: ExecutionConfig{
 			DryRun:              true,
 			RequireConfirmation: true,
+		},
+		Planning: PlanningConfig{
+			Pitchers: PitcherPlanningConfig{
+				AutoStartMinTotalFPTS:    20.0,
+				LikelyStartMinTotalFPTS:  12.0,
+				MonitorMinTotalFPTS:      6.0,
+				TwoStartAutoStartBonus:   2.0,
+				TBDPenalty:               3.0,
+				MissingProjectionPenalty: 4.0,
+				AmbiguousMatchPenalty:    5.0,
+			},
 		},
 		Features: FeaturesConfig{
 			EnableWriteActions:      false,
@@ -234,6 +260,33 @@ func (c Config) Validate() error {
 	}
 	if c.ESPN.TimeoutSeconds <= 0 || c.ESPN.TimeoutSeconds > 120 {
 		problems = append(problems, "espn.timeout_seconds must be between 1 and 120")
+	}
+	if c.Planning.Pitchers.AutoStartMinTotalFPTS < 0 {
+		problems = append(problems, "planning.pitchers.auto_start_min_total_fpts must be >= 0")
+	}
+	if c.Planning.Pitchers.LikelyStartMinTotalFPTS < 0 {
+		problems = append(problems, "planning.pitchers.likely_start_min_total_fpts must be >= 0")
+	}
+	if c.Planning.Pitchers.MonitorMinTotalFPTS < 0 {
+		problems = append(problems, "planning.pitchers.monitor_min_total_fpts must be >= 0")
+	}
+	if c.Planning.Pitchers.AutoStartMinTotalFPTS < c.Planning.Pitchers.LikelyStartMinTotalFPTS {
+		problems = append(problems, "planning.pitchers.auto_start_min_total_fpts must be >= likely_start_min_total_fpts")
+	}
+	if c.Planning.Pitchers.LikelyStartMinTotalFPTS < c.Planning.Pitchers.MonitorMinTotalFPTS {
+		problems = append(problems, "planning.pitchers.likely_start_min_total_fpts must be >= monitor_min_total_fpts")
+	}
+	if c.Planning.Pitchers.TwoStartAutoStartBonus < 0 {
+		problems = append(problems, "planning.pitchers.two_start_auto_start_bonus must be >= 0")
+	}
+	if c.Planning.Pitchers.TBDPenalty < 0 {
+		problems = append(problems, "planning.pitchers.tbd_penalty must be >= 0")
+	}
+	if c.Planning.Pitchers.MissingProjectionPenalty < 0 {
+		problems = append(problems, "planning.pitchers.missing_projection_penalty must be >= 0")
+	}
+	if c.Planning.Pitchers.AmbiguousMatchPenalty < 0 {
+		problems = append(problems, "planning.pitchers.ambiguous_match_penalty must be >= 0")
 	}
 
 	if len(problems) > 0 {
