@@ -1,0 +1,23 @@
+# Build artifacts
+fb
+*.exe
+*.out
+
+# Local completions
+fb-completions.zsh
+
+# Local runtime data
+*.db
+*.sqlite
+*.sqlite3
+.fantasy-baseball/
+
+# Temp/local scratch
+tmp/
+scripts/
+*.tmp
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/

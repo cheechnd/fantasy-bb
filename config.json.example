@@ -1,0 +1,25 @@
+{
+  "app_dir": "~/.fantasy-baseball",
+  "db_path": "~/.fantasy-baseball/fb.db",
+  "log_level": "info",
+  "environment": "development",
+  "league": {
+    "platform": "espn",
+    "league_id": "",
+    "team_id": "",
+    "season": 2026
+  },
+  "auth": {
+    "espn_s2_env": "ESPN_S2",
+    "swid_env": "ESPN_SWID"
+  },
+  "execution": {
+    "dry_run": true,
+    "require_confirmation": true
+  },
+  "features": {
+    "enable_write_actions": false,
+    "enable_browser_automation": false,
+    "enable_llm_explanations": false
+  }
+}
