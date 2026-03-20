@@ -86,6 +86,35 @@ func TestAnalyzeWeekAndTwoStart(t *testing.T) {
 	}
 }
 
+func TestAnalyzeWeekWithRosterInputs(t *testing.T) {
+	svc, importRunID := setupService(t)
+	from := time.Date(2026, 9, 15, 0, 0, 0, 0, time.Local)
+	to := from.AddDate(0, 0, 6)
+	report, err := svc.AnalyzeWeek(context.Background(), pitchers.AnalysisOptions{
+		From:        from,
+		To:          to,
+		ImportRunID: &importRunID,
+		RosterInputs: []pitchers.RosterInput{
+			{PlayerName: "Gerrit Cole", MLBTeam: "NYY"},
+			{PlayerName: "Zack Wheeler", MLBTeam: "PHI"},
+		},
+		RosterSource: "espn:sync_run:12",
+	})
+	if err != nil {
+		t.Fatalf("AnalyzeWeek with roster inputs: %v", err)
+	}
+	if len(report.RankedPitchers) != 2 {
+		t.Fatalf("expected 2 ranked pitchers, got %d", len(report.RankedPitchers))
+	}
+	run, _, err := svc.LastReport(context.Background())
+	if err != nil {
+		t.Fatalf("LastReport: %v", err)
+	}
+	if run == nil || run.RosterPath != "espn:sync_run:12" {
+		t.Fatalf("expected persisted roster source marker, got %+v", run)
+	}
+}
+
 func TestStreamersAndLastReportPersistence(t *testing.T) {
 	svc, importRunID := setupService(t)
 	base := t.TempDir()

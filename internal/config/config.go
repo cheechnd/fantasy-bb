@@ -24,6 +24,7 @@ type Config struct {
 	Environment string          `json:"environment"`
 	League      LeagueConfig    `json:"league"`
 	Auth        AuthConfig      `json:"auth"`
+	ESPN        ESPNConfig      `json:"espn"`
 	Execution   ExecutionConfig `json:"execution"`
 	Features    FeaturesConfig  `json:"features"`
 }
@@ -43,6 +44,16 @@ type AuthConfig struct {
 type ExecutionConfig struct {
 	DryRun              bool `json:"dry_run"`
 	RequireConfirmation bool `json:"require_confirmation"`
+}
+
+type ESPNConfig struct {
+	BaseURL        string `json:"base_url"`
+	TimeoutSeconds int    `json:"timeout_seconds"`
+}
+
+type ESPNCredentials struct {
+	ESPNS2 string
+	SWID   string
 }
 
 type FeaturesConfig struct {
@@ -80,6 +91,10 @@ func Default() Config {
 		Auth: AuthConfig{
 			ESPNS2Env: "ESPN_S2",
 			SWIDEnv:   "ESPN_SWID",
+		},
+		ESPN: ESPNConfig{
+			BaseURL:        "https://lm-api-reads.fantasy.espn.com",
+			TimeoutSeconds: 20,
 		},
 		Execution: ExecutionConfig{
 			DryRun:              true,
@@ -214,11 +229,62 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.Auth.SWIDEnv) == "" {
 		problems = append(problems, "auth.swid_env is required")
 	}
+	if strings.TrimSpace(c.ESPN.BaseURL) == "" {
+		problems = append(problems, "espn.base_url is required")
+	}
+	if c.ESPN.TimeoutSeconds <= 0 || c.ESPN.TimeoutSeconds > 120 {
+		problems = append(problems, "espn.timeout_seconds must be between 1 and 120")
+	}
 
 	if len(problems) > 0 {
 		return fmt.Errorf("config validation failed: %s", strings.Join(problems, "; "))
 	}
 	return nil
+}
+
+func (c Config) ValidateESPNUsage() error {
+	var problems []string
+	if strings.ToLower(strings.TrimSpace(c.League.Platform)) != "espn" {
+		problems = append(problems, "league.platform must be espn for ESPN commands")
+	}
+	if strings.TrimSpace(c.League.LeagueID) == "" {
+		problems = append(problems, "league.league_id is required for ESPN commands")
+	}
+	if strings.TrimSpace(c.League.TeamID) == "" {
+		problems = append(problems, "league.team_id is required for ESPN commands")
+	}
+	if c.League.Season < 2000 || c.League.Season > 2100 {
+		problems = append(problems, "league.season must be between 2000 and 2100 for ESPN commands")
+	}
+	if strings.TrimSpace(c.Auth.ESPNS2Env) == "" {
+		problems = append(problems, "auth.espn_s2_env is required for ESPN commands")
+	}
+	if strings.TrimSpace(c.Auth.SWIDEnv) == "" {
+		problems = append(problems, "auth.swid_env is required for ESPN commands")
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("espn configuration invalid: %s", strings.Join(problems, "; "))
+	}
+	return nil
+}
+
+func (c Config) LoadESPNCredentialsFromEnv() (ESPNCredentials, error) {
+	if err := c.ValidateESPNUsage(); err != nil {
+		return ESPNCredentials{}, err
+	}
+	espnS2 := strings.TrimSpace(os.Getenv(c.Auth.ESPNS2Env))
+	swid := strings.TrimSpace(os.Getenv(c.Auth.SWIDEnv))
+	var problems []string
+	if espnS2 == "" {
+		problems = append(problems, fmt.Sprintf("environment variable %q is not set", c.Auth.ESPNS2Env))
+	}
+	if swid == "" {
+		problems = append(problems, fmt.Sprintf("environment variable %q is not set", c.Auth.SWIDEnv))
+	}
+	if len(problems) > 0 {
+		return ESPNCredentials{}, fmt.Errorf("espn credentials missing: %s", strings.Join(problems, "; "))
+	}
+	return ESPNCredentials{ESPNS2: espnS2, SWID: swid}, nil
 }
 
 func ExpandPath(path string) (string, error) {

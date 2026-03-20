@@ -1,0 +1,348 @@
+package repository
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"fantasy-baseball/internal/espn"
+)
+
+type Repository struct {
+	db *sql.DB
+}
+
+func New(db *sql.DB) *Repository {
+	return &Repository{db: db}
+}
+
+type PersistSyncInput struct {
+	SyncType     string
+	LeagueID     string
+	TeamID       string
+	Season       int
+	Status       string
+	WarningCount int
+	Summary      map[string]any
+	Payloads     []espn.RawPayload
+	League       espn.LeagueSnapshot
+	Roster       []espn.RosterSnapshot
+	Warnings     []espn.ParseWarningInput
+}
+
+func (r *Repository) PersistSync(ctx context.Context, input PersistSyncInput) (int64, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin espn sync tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	now := time.Now().UTC()
+	startedAt := now.Format(time.RFC3339)
+	completedAt := startedAt
+	summaryJSON := "{}"
+	if len(input.Summary) > 0 {
+		b, _ := json.Marshal(input.Summary)
+		summaryJSON = string(b)
+	}
+	res, err := tx.ExecContext(ctx, `
+		INSERT INTO espn_sync_runs (
+			sync_type, league_id, team_id, season, started_at, completed_at,
+			status, warning_count, summary_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, input.SyncType, input.LeagueID, input.TeamID, input.Season, startedAt, completedAt, input.Status, input.WarningCount, summaryJSON)
+	if err != nil {
+		return 0, fmt.Errorf("insert espn_sync_run: %w", err)
+	}
+	syncRunID, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("espn sync run id: %w", err)
+	}
+
+	for _, p := range input.Payloads {
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO espn_raw_payloads (
+				sync_run_id, payload_type, source_endpoint,
+				response_status, payload_json, created_at
+			) VALUES (?, ?, ?, ?, ?, ?)
+		`, syncRunID, p.PayloadType, p.SourceEndpoint, p.ResponseStatus, p.PayloadJSON, startedAt)
+		if err != nil {
+			return 0, fmt.Errorf("insert espn_raw_payload: %w", err)
+		}
+	}
+
+	league := input.League
+	if league.CreatedAt.IsZero() {
+		league.CreatedAt = now
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO espn_league_snapshots (
+			sync_run_id, league_id, season, league_name, team_id,
+			team_name, scoring_type, settings_json, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, syncRunID, league.LeagueID, league.Season, league.LeagueName, league.TeamID, league.TeamName, league.ScoringType, league.SettingsJSON, league.CreatedAt.UTC().Format(time.RFC3339))
+	if err != nil {
+		return 0, fmt.Errorf("insert espn_league_snapshot: %w", err)
+	}
+
+	for _, row := range input.Roster {
+		createdAt := row.CreatedAt
+		if createdAt.IsZero() {
+			createdAt = now
+		}
+		isPitcher := 0
+		if row.IsPitcher {
+			isPitcher = 1
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO espn_roster_snapshots (
+				sync_run_id, espn_player_id, player_name, normalized_name,
+				mlb_team, roster_slot, is_pitcher, role, status_tag,
+				raw_player_json, created_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, syncRunID, nullInt64(row.ESPNPlayerID), row.PlayerName, row.NormalizedName, row.MLBTeam, row.RosterSlot, isPitcher, row.Role, row.StatusTag, row.RawPlayerJSON, createdAt.UTC().Format(time.RFC3339))
+		if err != nil {
+			return 0, fmt.Errorf("insert espn_roster_snapshot: %w", err)
+		}
+	}
+
+	for _, w := range input.Warnings {
+		rowContextJSON := "{}"
+		if len(w.RowContext) > 0 {
+			b, _ := json.Marshal(w.RowContext)
+			rowContextJSON = string(b)
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO espn_parse_warnings (
+				sync_run_id, warning_type, message, row_context_json, created_at
+			) VALUES (?, ?, ?, ?, ?)
+		`, syncRunID, w.WarningType, w.Message, rowContextJSON, startedAt)
+		if err != nil {
+			return 0, fmt.Errorf("insert espn_parse_warning: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit espn sync tx: %w", err)
+	}
+	return syncRunID, nil
+}
+
+func (r *Repository) LatestSyncRun(ctx context.Context) (*espn.SyncRun, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, sync_type, league_id, team_id, season, started_at,
+		       COALESCE(completed_at, started_at), status, warning_count,
+		       COALESCE(summary_json, '{}')
+		FROM espn_sync_runs
+		ORDER BY id DESC
+		LIMIT 1
+	`)
+	var out espn.SyncRun
+	var startedAtRaw, completedAtRaw string
+	if err := row.Scan(&out.ID, &out.SyncType, &out.LeagueID, &out.TeamID, &out.Season, &startedAtRaw, &completedAtRaw, &out.Status, &out.WarningCount, &out.SummaryJSON); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("query latest espn sync run: %w", err)
+	}
+	startedAt, err := time.Parse(time.RFC3339, startedAtRaw)
+	if err != nil {
+		return nil, fmt.Errorf("parse espn sync started_at: %w", err)
+	}
+	completedAt, err := time.Parse(time.RFC3339, completedAtRaw)
+	if err != nil {
+		return nil, fmt.Errorf("parse espn sync completed_at: %w", err)
+	}
+	out.StartedAt = startedAt
+	out.CompletedAt = completedAt
+	return &out, nil
+}
+
+func (r *Repository) SyncRunByID(ctx context.Context, syncRunID int64) (*espn.SyncRun, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, sync_type, league_id, team_id, season, started_at,
+		       COALESCE(completed_at, started_at), status, warning_count,
+		       COALESCE(summary_json, '{}')
+		FROM espn_sync_runs
+		WHERE id = ?
+	`, syncRunID)
+	var out espn.SyncRun
+	var startedAtRaw, completedAtRaw string
+	if err := row.Scan(&out.ID, &out.SyncType, &out.LeagueID, &out.TeamID, &out.Season, &startedAtRaw, &completedAtRaw, &out.Status, &out.WarningCount, &out.SummaryJSON); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("query espn sync run by id: %w", err)
+	}
+	startedAt, err := time.Parse(time.RFC3339, startedAtRaw)
+	if err != nil {
+		return nil, fmt.Errorf("parse espn sync started_at: %w", err)
+	}
+	completedAt, err := time.Parse(time.RFC3339, completedAtRaw)
+	if err != nil {
+		return nil, fmt.Errorf("parse espn sync completed_at: %w", err)
+	}
+	out.StartedAt = startedAt
+	out.CompletedAt = completedAt
+	return &out, nil
+}
+
+func (r *Repository) ListSyncRuns(ctx context.Context, limit int) ([]espn.SyncRun, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, sync_type, league_id, team_id, season, started_at,
+		       COALESCE(completed_at, started_at), status, warning_count,
+		       COALESCE(summary_json, '{}')
+		FROM espn_sync_runs
+		ORDER BY id DESC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query espn sync runs: %w", err)
+	}
+	defer rows.Close()
+
+	out := []espn.SyncRun{}
+	for rows.Next() {
+		var row espn.SyncRun
+		var startedAtRaw, completedAtRaw string
+		if err := rows.Scan(&row.ID, &row.SyncType, &row.LeagueID, &row.TeamID, &row.Season, &startedAtRaw, &completedAtRaw, &row.Status, &row.WarningCount, &row.SummaryJSON); err != nil {
+			return nil, fmt.Errorf("scan espn sync run row: %w", err)
+		}
+		startedAt, err := time.Parse(time.RFC3339, startedAtRaw)
+		if err != nil {
+			return nil, fmt.Errorf("parse espn sync run started_at: %w", err)
+		}
+		completedAt, err := time.Parse(time.RFC3339, completedAtRaw)
+		if err != nil {
+			return nil, fmt.Errorf("parse espn sync run completed_at: %w", err)
+		}
+		row.StartedAt = startedAt
+		row.CompletedAt = completedAt
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate espn sync runs: %w", err)
+	}
+	return out, nil
+}
+
+func (r *Repository) LatestRoster(ctx context.Context, syncRunID *int64, pitchersOnly bool) ([]espn.RosterSnapshot, error) {
+	where := "sync_run_id = COALESCE(?, (SELECT id FROM espn_sync_runs ORDER BY id DESC LIMIT 1))"
+	args := []any{nullInt64(syncRunID)}
+	if pitchersOnly {
+		where += " AND is_pitcher = 1"
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, sync_run_id, espn_player_id, player_name, normalized_name,
+		       COALESCE(mlb_team, ''), COALESCE(roster_slot, ''), is_pitcher,
+		       COALESCE(role, ''), COALESCE(status_tag, ''),
+		       COALESCE(raw_player_json, '{}'), created_at
+		FROM espn_roster_snapshots
+		WHERE `+where+`
+		ORDER BY player_name ASC
+	`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query espn roster snapshot: %w", err)
+	}
+	defer rows.Close()
+
+	out := []espn.RosterSnapshot{}
+	for rows.Next() {
+		var row espn.RosterSnapshot
+		var playerID sql.NullInt64
+		var isPitcher int
+		var createdAtRaw string
+		if err := rows.Scan(&row.ID, &row.SyncRunID, &playerID, &row.PlayerName, &row.NormalizedName, &row.MLBTeam, &row.RosterSlot, &isPitcher, &row.Role, &row.StatusTag, &row.RawPlayerJSON, &createdAtRaw); err != nil {
+			return nil, fmt.Errorf("scan espn roster row: %w", err)
+		}
+		if playerID.Valid {
+			v := playerID.Int64
+			row.ESPNPlayerID = &v
+		}
+		row.IsPitcher = isPitcher == 1
+		tm, err := time.Parse(time.RFC3339, createdAtRaw)
+		if err != nil {
+			return nil, fmt.Errorf("parse espn roster created_at: %w", err)
+		}
+		row.CreatedAt = tm
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate espn roster rows: %w", err)
+	}
+	return out, nil
+}
+
+func (r *Repository) LatestLeague(ctx context.Context, syncRunID *int64) (*espn.LeagueSnapshot, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT sync_run_id, league_id, season, COALESCE(league_name, ''),
+		       team_id, COALESCE(team_name, ''), COALESCE(scoring_type, ''),
+		       COALESCE(settings_json, '{}'), created_at
+		FROM espn_league_snapshots
+		WHERE sync_run_id = COALESCE(?, (SELECT id FROM espn_sync_runs ORDER BY id DESC LIMIT 1))
+		ORDER BY id DESC
+		LIMIT 1
+	`, nullInt64(syncRunID))
+	var out espn.LeagueSnapshot
+	var createdAtRaw string
+	if err := row.Scan(&out.SyncRunID, &out.LeagueID, &out.Season, &out.LeagueName, &out.TeamID, &out.TeamName, &out.ScoringType, &out.SettingsJSON, &createdAtRaw); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("query espn league snapshot: %w", err)
+	}
+	tm, err := time.Parse(time.RFC3339, createdAtRaw)
+	if err != nil {
+		return nil, fmt.Errorf("parse espn league created_at: %w", err)
+	}
+	out.CreatedAt = tm
+	return &out, nil
+}
+
+func (r *Repository) ListWarnings(ctx context.Context, syncRunID *int64, limit int) ([]espn.ParseWarning, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, sync_run_id, warning_type, message, COALESCE(row_context_json, '{}'), created_at
+		FROM espn_parse_warnings
+		WHERE sync_run_id = COALESCE(?, (SELECT id FROM espn_sync_runs ORDER BY id DESC LIMIT 1))
+		ORDER BY id DESC
+		LIMIT ?
+	`, nullInt64(syncRunID), limit)
+	if err != nil {
+		return nil, fmt.Errorf("query espn parse warnings: %w", err)
+	}
+	defer rows.Close()
+
+	out := []espn.ParseWarning{}
+	for rows.Next() {
+		var row espn.ParseWarning
+		var createdAtRaw string
+		if err := rows.Scan(&row.ID, &row.SyncRunID, &row.WarningType, &row.Message, &row.RowContextJSON, &createdAtRaw); err != nil {
+			return nil, fmt.Errorf("scan espn parse warning row: %w", err)
+		}
+		tm, err := time.Parse(time.RFC3339, createdAtRaw)
+		if err != nil {
+			return nil, fmt.Errorf("parse espn parse warning created_at: %w", err)
+		}
+		row.CreatedAt = tm
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate espn parse warnings: %w", err)
+	}
+	return out, nil
+}
+
+func nullInt64(v *int64) any {
+	if v == nil {
+		return nil
+	}
+	return *v
+}

@@ -59,12 +59,13 @@ func TestValidateFriendlyErrors(t *testing.T) {
 	cfg.Environment = "qa"
 	cfg.League.Platform = ""
 	cfg.Auth.ESPNS2Env = ""
+	cfg.ESPN.TimeoutSeconds = 0
 	err := cfg.Validate()
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
 	msg := err.Error()
-	for _, part := range []string{"log_level", "environment", "league.platform", "auth.espn_s2_env"} {
+	for _, part := range []string{"log_level", "environment", "league.platform", "auth.espn_s2_env", "espn.timeout_seconds"} {
 		if !strings.Contains(msg, part) {
 			t.Fatalf("validation error missing %q: %s", part, msg)
 		}
@@ -96,5 +97,37 @@ func TestSaveDefaultCreatesFile(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("config file not created: %v", err)
+	}
+}
+
+func TestValidateESPNUsage(t *testing.T) {
+	cfg := Default()
+	cfg.League.LeagueID = ""
+	cfg.League.TeamID = ""
+	err := cfg.ValidateESPNUsage()
+	if err == nil {
+		t.Fatal("expected ValidateESPNUsage to fail")
+	}
+	msg := err.Error()
+	for _, part := range []string{"league.league_id", "league.team_id"} {
+		if !strings.Contains(msg, part) {
+			t.Fatalf("ValidateESPNUsage error missing %q: %s", part, msg)
+		}
+	}
+}
+
+func TestLoadESPNCredentialsFromEnv(t *testing.T) {
+	cfg := Default()
+	cfg.League.LeagueID = "123"
+	cfg.League.TeamID = "4"
+	t.Setenv(cfg.Auth.ESPNS2Env, "cookie-a")
+	t.Setenv(cfg.Auth.SWIDEnv, "{cookie-b}")
+
+	creds, err := cfg.LoadESPNCredentialsFromEnv()
+	if err != nil {
+		t.Fatalf("LoadESPNCredentialsFromEnv: %v", err)
+	}
+	if creds.ESPNS2 != "cookie-a" || creds.SWID != "{cookie-b}" {
+		t.Fatalf("unexpected creds: %#v", creds)
 	}
 }

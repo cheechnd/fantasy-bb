@@ -13,6 +13,10 @@
     "espn_s2_env": "ESPN_S2",
     "swid_env": "ESPN_SWID"
   },
+  "espn": {
+    "base_url": "https://lm-api-reads.fantasy.espn.com",
+    "timeout_seconds": 20
+  },
   "execution": {
     "dry_run": true,
     "require_confirmation": true

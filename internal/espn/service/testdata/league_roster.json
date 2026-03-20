@@ -1,0 +1,81 @@
+{
+  "settings": {
+    "name": "Jake Test League",
+    "scoringSettings": {
+      "scoringType": "H2H_POINTS"
+    },
+    "rosterSettings": {
+      "lineupSlotCounts": {
+        "13": 3,
+        "14": 4,
+        "15": 2
+      }
+    }
+  },
+  "teams": [
+    {
+      "id": 7,
+      "name": "Test Rotation",
+      "roster": {
+        "entries": [
+          {
+            "lineupSlotId": 14,
+            "playerPoolEntry": {
+              "player": {
+                "id": 101,
+                "fullName": "Gerrit Cole",
+                "proTeamAbbrev": "",
+                "proTeamId": 10,
+                "defaultPositionId": 14,
+                "eligibleSlots": [13, 14],
+                "injuryStatus": "ACTIVE"
+              }
+            }
+          },
+          {
+            "lineupSlotId": 16,
+            "playerPoolEntry": {
+              "player": {
+                "id": 202,
+                "fullName": "Tarik Skubal",
+                "proTeamAbbrev": "",
+                "proTeamId": 6,
+                "defaultPositionId": 13,
+                "eligibleSlots": [13, 14],
+                "injuryStatus": "ACTIVE"
+              }
+            }
+          },
+          {
+            "lineupSlotId": 15,
+            "playerPoolEntry": {
+              "player": {
+                "id": 250,
+                "fullName": "Raisel Iglesias",
+                "proTeamAbbrev": "",
+                "proTeamId": 15,
+                "defaultPositionId": 15,
+                "eligibleSlots": [13, 15],
+                "injuryStatus": "ACTIVE"
+              }
+            }
+          },
+          {
+            "lineupSlotId": 16,
+            "playerPoolEntry": {
+              "player": {
+                "id": 303,
+                "fullName": "Mookie Betts",
+                "proTeamAbbrev": "",
+                "proTeamId": 19,
+                "defaultPositionId": 5,
+                "eligibleSlots": [5, 8],
+                "injuryStatus": "ACTIVE"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

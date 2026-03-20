@@ -31,7 +31,7 @@ type playerInput struct {
 }
 
 func (s *Service) AnalyzeWeek(ctx context.Context, opts pitchers.AnalysisOptions) (pitchers.AnalysisReport, error) {
-	roster, err := pinput.LoadRoster(opts.RosterPath)
+	roster, err := s.loadRosterInputs(opts)
 	if err != nil {
 		return pitchers.AnalysisReport{}, err
 	}
@@ -43,7 +43,7 @@ func (s *Service) AnalyzeWeek(ctx context.Context, opts pitchers.AnalysisOptions
 }
 
 func (s *Service) TwoStart(ctx context.Context, opts pitchers.AnalysisOptions) (pitchers.AnalysisReport, error) {
-	roster, err := pinput.LoadRoster(opts.RosterPath)
+	roster, err := s.loadRosterInputs(opts)
 	if err != nil {
 		return pitchers.AnalysisReport{}, err
 	}
@@ -55,7 +55,7 @@ func (s *Service) TwoStart(ctx context.Context, opts pitchers.AnalysisOptions) (
 }
 
 func (s *Service) Streamers(ctx context.Context, opts pitchers.AnalysisOptions) (pitchers.AnalysisReport, error) {
-	roster, err := pinput.LoadRoster(opts.RosterPath)
+	roster, err := s.loadRosterInputs(opts)
 	if err != nil {
 		return pitchers.AnalysisReport{}, err
 	}
@@ -104,7 +104,7 @@ func (s *Service) Report(ctx context.Context, opts pitchers.AnalysisOptions) (pi
 }
 
 func (s *Service) ExplainMatches(ctx context.Context, opts pitchers.AnalysisOptions) ([]pitchers.MatchResult, error) {
-	roster, err := pinput.LoadRoster(opts.RosterPath)
+	roster, err := s.loadRosterInputs(opts)
 	if err != nil {
 		return nil, err
 	}
@@ -118,6 +118,29 @@ func (s *Service) ExplainMatches(ctx context.Context, opts pitchers.AnalysisOpti
 		results = append(results, matching.Match(p.PlayerName, p.MLBTeam, candidates))
 	}
 	return results, nil
+}
+
+func (s *Service) loadRosterInputs(opts pitchers.AnalysisOptions) ([]pitchers.RosterInput, error) {
+	if len(opts.RosterInputs) > 0 {
+		return opts.RosterInputs, nil
+	}
+	roster, err := pinput.LoadRoster(opts.RosterPath)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]pitchers.RosterInput, 0, len(roster))
+	for _, p := range roster {
+		out = append(out, pitchers.RosterInput{
+			PlayerName: p.PlayerName,
+			MLBTeam:    p.MLBTeam,
+			Role:       p.Role,
+			Status:     p.Status,
+			Locked:     p.Locked,
+			MustHold:   p.MustHold,
+			Notes:      p.Notes,
+		})
+	}
+	return out, nil
 }
 
 func (s *Service) LastReport(ctx context.Context) (*repository.AnalysisRunRow, []repository.AnalysisResultRow, error) {
@@ -250,13 +273,22 @@ func (s *Service) persistReport(ctx context.Context, report pitchers.AnalysisRep
 	return s.pitchRepo.SaveRun(ctx, repository.CreateRunInput{
 		AnalysisType: string(report.AnalysisType),
 		ImportRunID:  report.ImportRunID,
-		RosterPath:   opts.RosterPath,
+		RosterPath:   firstNonEmpty(opts.RosterSource, opts.RosterPath),
 		PoolPath:     opts.PoolPath,
 		WindowStart:  report.WindowStart,
 		WindowEnd:    report.WindowEnd,
 		Status:       "success",
 		Summary:      summary,
 	}, report.MatchResults, results)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func (s *Service) windowedStarts(ctx context.Context, opts pitchers.AnalysisOptions) ([]forecaster.ProbableStart, *int64, error) {

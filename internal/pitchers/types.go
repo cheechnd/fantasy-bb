@@ -69,7 +69,19 @@ type AnalysisOptions struct {
 	To           time.Time
 	ImportRunID  *int64
 	RosterPath   string
+	RosterInputs []RosterInput
+	RosterSource string
 	PoolPath     string
 	TopN         int
 	MinTotalFPTS *float64
+}
+
+type RosterInput struct {
+	PlayerName string `json:"player_name"`
+	MLBTeam    string `json:"mlb_team,omitempty"`
+	Role       string `json:"role,omitempty"`
+	Status     string `json:"status,omitempty"`
+	Locked     bool   `json:"locked,omitempty"`
+	MustHold   bool   `json:"must_hold,omitempty"`
+	Notes      string `json:"notes,omitempty"`
 }

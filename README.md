@@ -2,7 +2,7 @@
 
 `fantasy-baseball` (`fb`) is a local-first CLI for fantasy baseball pitcher planning.
 
-It ingests probable starter projections into SQLite, then runs roster-aware weekly pitcher analysis from manual JSON inputs.
+It ingests probable starter projections into SQLite, syncs your ESPN roster in read-only mode, and runs weekly pitcher analysis.
 
 ## What it does
 
@@ -12,11 +12,11 @@ It ingests probable starter projections into SQLite, then runs roster-aware week
 - analyzes weekly pitcher decisions for your roster
 - detects two-start pitchers
 - ranks streamers from an optional free-agent pool
+- syncs ESPN league + roster snapshots (read-only)
 - saves analysis runs/results for later inspection
 
 ## What it does not do
 
-- ESPN auth or roster sync
 - lineup/add-drop execution
 - browser automation
 - web dashboard
@@ -36,13 +36,29 @@ Import probable starts:
 ./fb forecaster import --file ./tmp/table.html
 ```
 
-Run weekly pitcher report:
+Sync ESPN roster (read-only):
+
+```bash
+export ESPN_S2="your_espn_s2_cookie"
+export ESPN_SWID="{your-swid-cookie}"
+./fb espn validate
+./fb espn sync roster
+./fb espn show roster --pitchers-only
+```
+
+Run weekly pitcher report (manual JSON):
 
 ```bash
 ./fb pitchers report \
   --roster ./samples/roster.json \
   --from 2026-09-15 \
   --to 2026-09-22
+```
+
+Run weekly pitcher report (ESPN roster source):
+
+```bash
+./fb pitchers report --espn --from 2026-09-15 --to 2026-09-22
 ```
 
 ## Input files
@@ -93,6 +109,15 @@ Example: [samples/free_agents.json](/Users/jakebot/dev/fantasy-bb/samples/free_a
 ./fb pitchers explain-matches --roster ./samples/roster.json --from 2026-09-15 --to 2026-09-22
 ```
 
+### 2b. Analyze from ESPN roster snapshots
+
+```bash
+./fb espn sync roster
+./fb pitchers analyze-week --espn --from 2026-09-15 --to 2026-09-22
+./fb pitchers two-start --espn --from 2026-09-15 --to 2026-09-22
+./fb pitchers explain-matches --espn --from 2026-09-15 --to 2026-09-22
+```
+
 ### 3. Rank streamers
 
 ```bash
@@ -136,9 +161,17 @@ Matching is deterministic and inspectable:
 - `fb forecaster list ...`
 - `fb forecaster show-week ...`
 - `fb forecaster top ...`
-- `fb forecaster source-status`
+- `fb forecaster status` (alias: `source-status`)
 - `fb forecaster warnings`
 - `fb forecaster clear --yes`
+
+### ESPN (read-only)
+- `fb espn validate`
+- `fb espn sync roster [--dry-run]`
+- `fb espn show roster [--pitchers-only] [--sync-run <id>]`
+- `fb espn show league [--sync-run <id>]`
+- `fb espn status` (alias: `source-status`)
+- `fb espn warnings [--sync-run <id>] [--limit <n>]`
 
 ### Pitchers
 - `fb pitchers analyze-week --roster <path> ...`
@@ -147,6 +180,12 @@ Matching is deterministic and inspectable:
 - `fb pitchers report --roster <path> ...`
 - `fb pitchers explain-matches --roster <path> ...`
 - `fb pitchers last-report`
+
+For `analyze-week`, `two-start`, `report`, and `explain-matches`, you can use either:
+- `--roster <path>` (manual JSON) or
+- `--espn` (latest ESPN snapshot), optionally `--sync-run <id>`
+
+In `--espn` mode, starter-focused analysis excludes clear RP-only roster players from report inputs.
 
 Global flags (all commands):
 - `--json`
@@ -164,6 +203,23 @@ SQLite is the system of record. Key tables:
 
 - forecaster imports: `forecaster_import_runs`, `probable_starts`, `parse_warnings`
 - pitcher analysis: `analysis_runs`, `analysis_results`, `player_match_results`
+- ESPN sync snapshots: `espn_sync_runs`, `espn_raw_payloads`, `espn_league_snapshots`, `espn_roster_snapshots`
+
+## ESPN credentials
+
+`fb` reads ESPN cookie values from environment variables referenced by config:
+
+- `auth.espn_s2_env` (default: `ESPN_S2`)
+- `auth.swid_env` (default: `ESPN_SWID`)
+
+Set them before ESPN commands:
+
+```bash
+export ESPN_S2="..."
+export ESPN_SWID="{...}"
+```
+
+`config.json.example` includes non-secret ESPN settings (`base_url`, `timeout_seconds`), but no cookie values.
 
 ## Development
 
