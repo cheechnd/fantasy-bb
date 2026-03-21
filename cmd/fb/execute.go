@@ -54,11 +54,13 @@ func newExecuteCmd(opts *cliOptions) *cobra.Command {
 	resultCmd.GroupID = "inspect"
 	verifyCmd := newExecuteVerifyCmd(opts)
 	verifyCmd.GroupID = "inspect"
+	resolveCmd := newExecuteResolveCmd(opts)
+	resolveCmd.GroupID = "inspect"
 	pendingCmd := newExecutePendingCmd(opts)
 	pendingCmd.GroupID = "inspect"
 	reconcileCmd := newExecuteReconcileCmd(opts)
 	reconcileCmd.GroupID = "inspect"
-	cmd.AddCommand(preflightCmd, dryRunCmd, transactionCmd, confirmCmd, adHocCmd, adHocConfirmCmd, queueCmd, lastCmd, showCmd, historyCmd, resultCmd, verifyCmd, pendingCmd, reconcileCmd)
+	cmd.AddCommand(preflightCmd, dryRunCmd, transactionCmd, confirmCmd, adHocCmd, adHocConfirmCmd, queueCmd, lastCmd, showCmd, historyCmd, resultCmd, verifyCmd, resolveCmd, pendingCmd, reconcileCmd)
 	return cmd
 }
 
@@ -453,6 +455,56 @@ func newExecutePendingCmd(opts *cliOptions) *cobra.Command {
 	return cmd
 }
 
+func newExecuteResolveCmd(opts *cliOptions) *cobra.Command {
+	var attemptID int64
+	cmd := &cobra.Command{
+		Use:   "resolve",
+		Short: "Run verify then reconcile (if needed) for one unresolved execution attempt",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if attemptID <= 0 {
+				return fmt.Errorf("--execution-id must be > 0")
+			}
+			v, err := withRealExecuteService(cmd.Context(), opts, func(ctx context.Context, cfg config.Config, svc *exerealsvc.Service) (any, error) {
+				verifyRes, err := svc.VerifyAttempt(ctx, cfg, attemptID)
+				if err != nil {
+					return nil, err
+				}
+				payload := map[string]any{
+					"verify": verifyRes,
+					"final":  verifyRes,
+				}
+				if verifyRes != nil && verifyRes.Attempt != nil && attemptNeedsFollowup(verifyRes.Attempt) {
+					reconcileRes, recErr := svc.ReconcileAttempt(ctx, cfg, attemptID)
+					if recErr != nil {
+						payload["reconcile_error"] = recErr.Error()
+						return payload, nil
+					}
+					payload["reconcile"] = reconcileRes
+					payload["final"] = reconcileRes
+				}
+				return payload, nil
+			})
+			if err != nil {
+				return err
+			}
+			payload := v.(map[string]any)
+			if opts.OutputJSON {
+				return writeJSON(cmd, payload)
+			}
+			finalRes, _ := payload["final"].(*execute.VerifyResult)
+			if finalRes != nil {
+				printVerifyResult(cmd, finalRes)
+			}
+			if recErr, ok := payload["reconcile_error"].(string); ok && strings.TrimSpace(recErr) != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "Reconcile warning: %s\n", recErr)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().Int64Var(&attemptID, "execution-id", 0, "Execution attempt ID")
+	return cmd
+}
+
 func newExecuteReconcileCmd(opts *cliOptions) *cobra.Command {
 	var attemptID int64
 	cmd := &cobra.Command{
@@ -705,6 +757,11 @@ func printRealExecutionResult(cmd *cobra.Command, res *execute.RealExecutionResu
 	if strings.TrimSpace(res.Message) != "" {
 		fmt.Fprintf(cmd.OutOrStdout(), "Message: %s\n", res.Message)
 	}
+	if res.Attempt != nil {
+		if next := nextActionForAttempt(*res.Attempt); next != "-" {
+			fmt.Fprintf(cmd.OutOrStdout(), "Next: %s\n", next)
+		}
+	}
 }
 
 func printVerifyResult(cmd *cobra.Command, res *execute.VerifyResult) {
@@ -724,6 +781,11 @@ func printVerifyResult(cmd *cobra.Command, res *execute.VerifyResult) {
 	if strings.TrimSpace(res.Message) != "" {
 		fmt.Fprintf(cmd.OutOrStdout(), "Message: %s\n", res.Message)
 	}
+	if res.Attempt != nil {
+		if next := nextActionForAttempt(*res.Attempt); next != "-" {
+			fmt.Fprintf(cmd.OutOrStdout(), "Next: %s\n", next)
+		}
+	}
 }
 
 func printExecutionPending(cmd *cobra.Command, rows []execute.Attempt) {
@@ -732,13 +794,13 @@ func printExecutionPending(cmd *cobra.Command, rows []execute.Attempt) {
 		return
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "EXECUTION_ID\tITEM\tPLAN\tADD\tDROP\tSTATUS\tVERIFY\tSTARTED")
+	fmt.Fprintln(w, "EXECUTION_ID\tITEM\tPLAN\tADD\tDROP\tSTATUS\tVERIFY\tSTARTED\tNEXT_ACTION")
 	for _, row := range rows {
 		fmt.Fprintf(
 			w,
-			"%d\t%d\t%d\t%s\t%s\t%s\t%s\t%s\n",
+			"%d\t%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			row.ID, row.ApprovedItemID, row.SourcePlanID, row.AddPlayerName, row.DropPlayerName,
-			row.ExecutionStatus, row.VerificationStatus, row.StartedAt.Format(time.RFC3339),
+			row.ExecutionStatus, row.VerificationStatus, row.StartedAt.Format(time.RFC3339), nextActionForAttempt(row),
 		)
 	}
 	w.Flush()
@@ -805,6 +867,9 @@ func printExecutionAttempt(cmd *cobra.Command, attempt *execute.Attempt) {
 	if msg := strings.TrimSpace(attempt.ErrorMessage); msg != "" {
 		fmt.Fprintf(cmd.OutOrStdout(), "Error: %s\n", msg)
 	}
+	if next := nextActionForAttempt(*attempt); next != "-" {
+		fmt.Fprintf(cmd.OutOrStdout(), "Next: %s\n", next)
+	}
 	fmt.Fprintln(cmd.OutOrStdout())
 	fmt.Fprintln(cmd.OutOrStdout(), "Events")
 	if len(attempt.Events) == 0 {
@@ -817,4 +882,31 @@ func printExecutionAttempt(cmd *cobra.Command, attempt *execute.Attempt) {
 		fmt.Fprintf(w, "%s\t%s\n", ev.EventType, ev.CreatedAt.Format(time.RFC3339))
 	}
 	w.Flush()
+}
+
+func attemptNeedsFollowup(a *execute.Attempt) bool {
+	if a == nil {
+		return false
+	}
+	return a.ExecutionStatus == execute.ExecutionStatusAmbiguous ||
+		a.ExecutionStatus == execute.ExecutionStatusSubmitted ||
+		a.VerificationStatus == execute.VerificationStatusPending ||
+		a.VerificationStatus == execute.VerificationStatusUnverified ||
+		a.VerificationStatus == execute.VerificationStatusUnknown ||
+		a.VerificationStatus == execute.VerificationStatusVerificationFailed
+}
+
+func nextActionForAttempt(a execute.Attempt) string {
+	switch {
+	case a.ExecutionStatus == execute.ExecutionStatusAmbiguous ||
+		a.ExecutionStatus == execute.ExecutionStatusSubmitted ||
+		a.VerificationStatus == execute.VerificationStatusPending ||
+		a.VerificationStatus == execute.VerificationStatusUnverified:
+		return fmt.Sprintf("fb execute verify --execution-id %d", a.ID)
+	case a.VerificationStatus == execute.VerificationStatusUnknown ||
+		a.VerificationStatus == execute.VerificationStatusVerificationFailed:
+		return fmt.Sprintf("fb execute resolve --execution-id %d", a.ID)
+	default:
+		return "-"
+	}
 }

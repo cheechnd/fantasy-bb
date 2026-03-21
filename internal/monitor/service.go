@@ -512,7 +512,13 @@ func ageHours(t, now time.Time) float64 {
 }
 
 func maxStatus(a, b Status) Status {
-	order := map[Status]int{StatusFresh: 1, StatusStale: 2, StatusUnknown: 3, StatusBlocked: 4, StatusInvalidated: 5}
+	order := map[Status]int{
+		StatusFresh:       1,
+		StatusUnknown:     2,
+		StatusStale:       3,
+		StatusBlocked:     4,
+		StatusInvalidated: 5,
+	}
 	if order[b] > order[a] {
 		return b
 	}
