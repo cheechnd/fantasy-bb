@@ -137,7 +137,7 @@ func newInitCmd(opts *cliOptions) *cobra.Command {
 
 			steps := []map[string]any{}
 
-			for _, dir := range []string{paths.AppDir, filepath.Join(paths.AppDir, "logs"), filepath.Join(paths.AppDir, "cache")} {
+			for _, dir := range []string{paths.AppDir} {
 				created, stepErr := ensureDir(dir, execOpts.DryRun)
 				if stepErr != nil {
 					return stepErr
