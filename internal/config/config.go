@@ -30,6 +30,7 @@ type Config struct {
 	Pickups      PickupsConfig      `json:"pickups"`
 	Transactions TransactionsConfig `json:"transactions"`
 	Lineup       LineupConfig       `json:"lineup"`
+	Monitoring   MonitoringConfig   `json:"monitoring"`
 	Features     FeaturesConfig     `json:"features"`
 }
 
@@ -149,6 +150,16 @@ type LineupPitchersConfig struct {
 	BlockOnAmbiguousSlotMapping bool `json:"block_on_ambiguous_slot_mapping"`
 }
 
+type MonitoringConfig struct {
+	PlansStaleHours               int  `json:"plans_stale_hours"`
+	LineupStaleHours              int  `json:"lineup_stale_hours"`
+	PickupsStaleHours             int  `json:"pickups_stale_hours"`
+	CandidatePoolStaleHours       int  `json:"candidate_pool_stale_hours"`
+	ApprovalStaleHours            int  `json:"approval_stale_hours"`
+	ExecutionFollowupHours        int  `json:"execution_followup_hours"`
+	RequireLiveRecheckForApproved bool `json:"require_live_recheck_for_approved_items"`
+}
+
 type FeaturesConfig struct {
 	EnableWriteActions      bool `json:"enable_write_actions"`
 	EnableBrowserAutomation bool `json:"enable_browser_automation"`
@@ -261,6 +272,15 @@ func Default() Config {
 				RequireConfirmation:         true,
 				BlockOnAmbiguousSlotMapping: true,
 			},
+		},
+		Monitoring: MonitoringConfig{
+			PlansStaleHours:               12,
+			LineupStaleHours:              4,
+			PickupsStaleHours:             6,
+			CandidatePoolStaleHours:       4,
+			ApprovalStaleHours:            2,
+			ExecutionFollowupHours:        1,
+			RequireLiveRecheckForApproved: true,
 		},
 		Features: FeaturesConfig{
 			EnableWriteActions:      false,
@@ -504,6 +524,24 @@ func (c Config) Validate() error {
 	}
 	if c.Lineup.Pitchers.RequireConfirmation && !c.Execution.Real.RequireConfirmation {
 		problems = append(problems, "lineup.pitchers.require_confirmation requires execution.real.require_confirmation=true")
+	}
+	if c.Monitoring.PlansStaleHours < 0 || c.Monitoring.PlansStaleHours > 168 {
+		problems = append(problems, "monitoring.plans_stale_hours must be between 0 and 168")
+	}
+	if c.Monitoring.LineupStaleHours < 0 || c.Monitoring.LineupStaleHours > 168 {
+		problems = append(problems, "monitoring.lineup_stale_hours must be between 0 and 168")
+	}
+	if c.Monitoring.PickupsStaleHours < 0 || c.Monitoring.PickupsStaleHours > 168 {
+		problems = append(problems, "monitoring.pickups_stale_hours must be between 0 and 168")
+	}
+	if c.Monitoring.CandidatePoolStaleHours < 0 || c.Monitoring.CandidatePoolStaleHours > 168 {
+		problems = append(problems, "monitoring.candidate_pool_stale_hours must be between 0 and 168")
+	}
+	if c.Monitoring.ApprovalStaleHours < 0 || c.Monitoring.ApprovalStaleHours > 168 {
+		problems = append(problems, "monitoring.approval_stale_hours must be between 0 and 168")
+	}
+	if c.Monitoring.ExecutionFollowupHours < 0 || c.Monitoring.ExecutionFollowupHours > 168 {
+		problems = append(problems, "monitoring.execution_followup_hours must be between 0 and 168")
 	}
 
 	if len(problems) > 0 {

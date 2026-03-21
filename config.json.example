@@ -65,6 +65,15 @@
       "block_on_ambiguous_slot_mapping": true
     }
   },
+  "monitoring": {
+    "plans_stale_hours": 12,
+    "lineup_stale_hours": 4,
+    "pickups_stale_hours": 6,
+    "candidate_pool_stale_hours": 4,
+    "approval_stale_hours": 2,
+    "execution_followup_hours": 1,
+    "require_live_recheck_for_approved_items": true
+  },
   "execution": {
     "dry_run": true,
     "require_confirmation": true,

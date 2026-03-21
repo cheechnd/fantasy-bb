@@ -61,15 +61,29 @@ func TestValidateFriendlyErrors(t *testing.T) {
 	cfg.Auth.ESPNS2Env = ""
 	cfg.ESPN.TimeoutSeconds = 0
 	cfg.Execution.Preflight.DefaultLimit = 0
+	cfg.Monitoring.PlansStaleHours = -1
 	err := cfg.Validate()
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
 	msg := err.Error()
-	for _, part := range []string{"log_level", "environment", "league.platform", "auth.espn_s2_env", "espn.timeout_seconds", "execution.preflight.default_limit"} {
+	for _, part := range []string{"log_level", "environment", "league.platform", "auth.espn_s2_env", "espn.timeout_seconds", "execution.preflight.default_limit", "monitoring.plans_stale_hours"} {
 		if !strings.Contains(msg, part) {
 			t.Fatalf("validation error missing %q: %s", part, msg)
 		}
+	}
+}
+
+func TestDefaultMonitoringConfig(t *testing.T) {
+	cfg := Default()
+	if cfg.Monitoring.PlansStaleHours <= 0 {
+		t.Fatalf("expected positive plans stale hours, got %d", cfg.Monitoring.PlansStaleHours)
+	}
+	if cfg.Monitoring.CandidatePoolStaleHours <= 0 {
+		t.Fatalf("expected positive candidate pool stale hours, got %d", cfg.Monitoring.CandidatePoolStaleHours)
+	}
+	if !cfg.Monitoring.RequireLiveRecheckForApproved {
+		t.Fatal("expected monitoring.require_live_recheck_for_approved_items default true")
 	}
 }
 

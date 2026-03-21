@@ -16,23 +16,41 @@ type Service struct {
 func NewService(repo *Repository, cfg Config) *Service { return &Service{repo: repo, cfg: cfg} }
 
 func (s *Service) Summary(ctx context.Context) (*Run, error) {
-	items := []Item{}
-	appendItems := func(run *Run) {
-		if run != nil {
-			items = append(items, run.Items...)
+	items := make([]Item, 0, 128)
+	appendItems := func(part []Item) {
+		if len(part) > 0 {
+			items = append(items, part...)
 		}
 	}
-	pr, _ := s.Plans(ctx, EvaluateOptions{Limit: 10, LatestOnly: false})
+	pr, err := s.evaluatePlans(ctx, EvaluateOptions{Limit: 10, LatestOnly: false})
+	if err != nil {
+		return nil, err
+	}
 	appendItems(pr)
-	lr, _ := s.Lineup(ctx, EvaluateOptions{Limit: 10, LatestOnly: false})
+	lr, err := s.evaluateLineup(ctx, EvaluateOptions{Limit: 10, LatestOnly: false})
+	if err != nil {
+		return nil, err
+	}
 	appendItems(lr)
-	pu, _ := s.Pickups(ctx, EvaluateOptions{Limit: 10, LatestOnly: false})
+	pu, err := s.evaluatePickups(ctx, EvaluateOptions{Limit: 10, LatestOnly: false})
+	if err != nil {
+		return nil, err
+	}
 	appendItems(pu)
-	ap, _ := s.Approvals(ctx, EvaluateOptions{Limit: 25})
+	ap, err := s.evaluateApprovals(ctx, EvaluateOptions{Limit: 25})
+	if err != nil {
+		return nil, err
+	}
 	appendItems(ap)
-	ah, _ := s.AdHoc(ctx, EvaluateOptions{Limit: 25})
+	ah, err := s.evaluateAdHoc(ctx, EvaluateOptions{Limit: 25})
+	if err != nil {
+		return nil, err
+	}
 	appendItems(ah)
-	ex, _ := s.Execution(ctx, EvaluateOptions{Limit: 25})
+	ex, err := s.evaluateExecution(ctx, EvaluateOptions{Limit: 25})
+	if err != nil {
+		return nil, err
+	}
 	appendItems(ex)
 
 	summary := s.buildSummary(items)
@@ -48,9 +66,17 @@ func (s *Service) Summary(ctx context.Context) (*Run, error) {
 }
 
 func (s *Service) Plans(ctx context.Context, opts EvaluateOptions) (*Run, error) {
-	rows, err := s.repo.PitcherPlans(ctx, opts.Limit, opts.LatestOnly)
+	items, err := s.evaluatePlans(ctx, opts)
 	if err != nil {
 		return nil, err
+	}
+	return s.persist(ctx, "plans", items)
+}
+
+func (s *Service) evaluatePlans(ctx context.Context, opts EvaluateOptions) ([]Item, error) {
+	rows, err := s.repo.PitcherPlans(ctx, opts.Limit, opts.LatestOnly)
+	if err != nil {
+		return nil, fmt.Errorf("evaluate plans: %w", err)
 	}
 	latestSyncID, _, _ := s.repo.LatestSyncRun(ctx)
 	latestImportID, _, _ := s.repo.LatestImportRun(ctx)
@@ -93,13 +119,21 @@ func (s *Service) Plans(ctx context.Context, opts EvaluateOptions) (*Run, error)
 		}
 		items = append(items, Item{ArtifactType: "plan", ArtifactID: p.ID, MonitorStatus: status, Reasons: reasons, RecommendedAction: rec, Details: map[string]any{"created_at": p.CreatedAt}})
 	}
-	return s.persist(ctx, "plans", items)
+	return items, nil
 }
 
 func (s *Service) Lineup(ctx context.Context, opts EvaluateOptions) (*Run, error) {
-	rows, err := s.repo.LineupPlans(ctx, opts.Limit, opts.LatestOnly)
+	items, err := s.evaluateLineup(ctx, opts)
 	if err != nil {
 		return nil, err
+	}
+	return s.persist(ctx, "lineup", items)
+}
+
+func (s *Service) evaluateLineup(ctx context.Context, opts EvaluateOptions) ([]Item, error) {
+	rows, err := s.repo.LineupPlans(ctx, opts.Limit, opts.LatestOnly)
+	if err != nil {
+		return nil, fmt.Errorf("evaluate lineup plans: %w", err)
 	}
 	latestSyncID, _, _ := s.repo.LatestSyncRun(ctx)
 	now := time.Now().UTC()
@@ -140,13 +174,21 @@ func (s *Service) Lineup(ctx context.Context, opts EvaluateOptions) (*Run, error
 		}
 		items = append(items, Item{ArtifactType: "lineup_plan", ArtifactID: p.ID, MonitorStatus: status, Reasons: reasons, RecommendedAction: rec, Details: map[string]any{"created_at": p.CreatedAt}})
 	}
-	return s.persist(ctx, "lineup", items)
+	return items, nil
 }
 
 func (s *Service) Pickups(ctx context.Context, opts EvaluateOptions) (*Run, error) {
-	rows, err := s.repo.PickupRuns(ctx, opts.Limit, opts.LatestOnly)
+	items, err := s.evaluatePickups(ctx, opts)
 	if err != nil {
 		return nil, err
+	}
+	return s.persist(ctx, "pickups", items)
+}
+
+func (s *Service) evaluatePickups(ctx context.Context, opts EvaluateOptions) ([]Item, error) {
+	rows, err := s.repo.PickupRuns(ctx, opts.Limit, opts.LatestOnly)
+	if err != nil {
+		return nil, fmt.Errorf("evaluate pickups: %w", err)
 	}
 	now := time.Now().UTC()
 	items := []Item{}
@@ -188,17 +230,25 @@ func (s *Service) Pickups(ctx context.Context, opts EvaluateOptions) (*Run, erro
 		}
 		items = append(items, Item{ArtifactType: "pickup", ArtifactID: r0.ID, MonitorStatus: status, Reasons: reasons, RecommendedAction: rec, Details: map[string]any{"created_at": r0.CreatedAt}})
 	}
-	return s.persist(ctx, "pickups", items)
+	return items, nil
 }
 
 func (s *Service) Approvals(ctx context.Context, opts EvaluateOptions) (*Run, error) {
-	tr, err := s.repo.ApprovedTransactions(ctx, opts.Limit)
+	items, err := s.evaluateApprovals(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
+	return s.persist(ctx, "approvals", items)
+}
+
+func (s *Service) evaluateApprovals(ctx context.Context, opts EvaluateOptions) ([]Item, error) {
+	tr, err := s.repo.ApprovedTransactions(ctx, opts.Limit)
+	if err != nil {
+		return nil, fmt.Errorf("evaluate approvals: %w", err)
+	}
 	lr, err := s.repo.ApprovedLineup(ctx, opts.Limit)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("evaluate lineup approvals: %w", err)
 	}
 	now := time.Now().UTC()
 	items := []Item{}
@@ -270,13 +320,21 @@ func (s *Service) Approvals(ctx context.Context, opts EvaluateOptions) (*Run, er
 		}
 		items = append(items, Item{ArtifactType: "lineup_approval", ArtifactID: a.ItemID, MonitorStatus: status, Reasons: reasons, RecommendedAction: rec, Details: map[string]any{"plan_id": a.PlanID}})
 	}
-	return s.persist(ctx, "approvals", items)
+	return items, nil
 }
 
 func (s *Service) AdHoc(ctx context.Context, opts EvaluateOptions) (*Run, error) {
-	rows, err := s.repo.AdHocRequests(ctx, opts.Limit)
+	items, err := s.evaluateAdHoc(ctx, opts)
 	if err != nil {
 		return nil, err
+	}
+	return s.persist(ctx, "ad_hoc", items)
+}
+
+func (s *Service) evaluateAdHoc(ctx context.Context, opts EvaluateOptions) ([]Item, error) {
+	rows, err := s.repo.AdHocRequests(ctx, opts.Limit)
+	if err != nil {
+		return nil, fmt.Errorf("evaluate ad hoc requests: %w", err)
 	}
 	now := time.Now().UTC()
 	items := []Item{}
@@ -319,17 +377,25 @@ func (s *Service) AdHoc(ctx context.Context, opts EvaluateOptions) (*Run, error)
 		}
 		items = append(items, Item{ArtifactType: "ad_hoc", ArtifactID: a.ID, MonitorStatus: status, Reasons: reasons, RecommendedAction: rec, Details: map[string]any{"state": a.State, "resolution": a.Resolution}})
 	}
-	return s.persist(ctx, "ad_hoc", items)
+	return items, nil
 }
 
 func (s *Service) Execution(ctx context.Context, opts EvaluateOptions) (*Run, error) {
-	tr, err := s.repo.PendingExecutions(ctx, opts.Limit)
+	items, err := s.evaluateExecution(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
+	return s.persist(ctx, "execution", items)
+}
+
+func (s *Service) evaluateExecution(ctx context.Context, opts EvaluateOptions) ([]Item, error) {
+	tr, err := s.repo.PendingExecutions(ctx, opts.Limit)
+	if err != nil {
+		return nil, fmt.Errorf("evaluate transaction execution follow-up: %w", err)
+	}
 	lr, err := s.repo.PendingLineupExecutions(ctx, opts.Limit)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("evaluate lineup execution follow-up: %w", err)
 	}
 	now := time.Now().UTC()
 	items := []Item{}
@@ -371,7 +437,7 @@ func (s *Service) Execution(ctx context.Context, opts EvaluateOptions) (*Run, er
 		}
 		items = append(items, Item{ArtifactType: "execution", ArtifactID: e.ID, MonitorStatus: status, Reasons: reasons, RecommendedAction: rec, Details: map[string]any{"scope": "lineup"}})
 	}
-	return s.persist(ctx, "execution", items)
+	return items, nil
 }
 
 func (s *Service) Show(ctx context.Context, typ string, id int64) (*Run, error) {
@@ -382,12 +448,14 @@ func (s *Service) Show(ctx context.Context, typ string, id int64) (*Run, error) 
 	var err error
 	switch strings.ToLower(strings.TrimSpace(typ)) {
 	case "plan":
-		run, err = s.Plans(ctx, EvaluateOptions{Limit: 100})
+		run, err = s.Plans(ctx, EvaluateOptions{Limit: 200})
 	case "lineup_plan":
-		run, err = s.Lineup(ctx, EvaluateOptions{Limit: 100})
+		run, err = s.Lineup(ctx, EvaluateOptions{Limit: 200})
 	case "pickup":
-		run, err = s.Pickups(ctx, EvaluateOptions{Limit: 100})
-	case "approval", "lineup_approval":
+		run, err = s.Pickups(ctx, EvaluateOptions{Limit: 200})
+	case "approval":
+		run, err = s.Approvals(ctx, EvaluateOptions{Limit: 200})
+	case "lineup_approval":
 		run, err = s.Approvals(ctx, EvaluateOptions{Limit: 200})
 	case "ad_hoc":
 		run, err = s.AdHoc(ctx, EvaluateOptions{Limit: 200})
@@ -401,7 +469,7 @@ func (s *Service) Show(ctx context.Context, typ string, id int64) (*Run, error) 
 	}
 	filtered := []Item{}
 	for _, it := range run.Items {
-		if it.ArtifactID == id && (strings.EqualFold(it.ArtifactType, typ) || typ == "approval" || typ == "lineup_approval") {
+		if it.ArtifactID == id && strings.EqualFold(it.ArtifactType, typ) {
 			filtered = append(filtered, it)
 		}
 	}

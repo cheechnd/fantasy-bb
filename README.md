@@ -1,508 +1,258 @@
-# fantasy-baseball
+# fantasy-baseball (fb)
 
-`fantasy-baseball` (`fb`) is a local-first CLI for fantasy baseball pitcher planning.
+`fb` is a local-first CLI for ESPN fantasy baseball pitcher operations.
 
-It ingests probable starter projections into SQLite, syncs your ESPN roster in read-only mode, and runs weekly pitcher analysis.
+It keeps your workflow in SQLite, uses deterministic rules, and gates write actions behind explicit review, preflight, confirmation, verification, and audit trails.
 
-## What it does
+## v1 Scope
 
-- imports forecaster-style probable starter tables from file or URL
-- normalizes messy rows (`OFF`, `TBD`, blank/misaligned cells, noisy opponent text)
-- stores imports, normalized starts, and parse warnings in SQLite
-- analyzes weekly pitcher decisions for your roster
-- detects two-start pitchers
-- syncs ESPN league + roster snapshots (read-only)
-- ingests a bounded ESPN free-agent pitcher candidate pool (read-only)
-- saves analysis runs/results for later inspection
-- builds saved weekly pitcher plans with deterministic start/sit buckets
-- generates saved read-only pickup/streamer recommendations with upgrade comparisons
-- generates saved read-only add/drop transaction plans with deterministic move buckets
-- adds explicit transaction review workflow with pending/approved/rejected/deferred states
-- adds dry-run execution preflight runs for approved items (no ESPN writes)
-- executes one explicitly confirmed approved add/drop move for real with immediate preflight gating and verification
-- hardens real execution with duplicate-protection, ambiguous outcome handling, re-verification, and reconciliation tools
-- adds ad hoc manual pitcher add/drop requests that run through the same safety pipeline as planned moves
-- adds pitcher lineup planning/review/preflight and single-item lineup execution with verification/audit
+### Included
+- Forecaster probable-start ingestion + normalization
+- ESPN roster/league sync (read + bounded candidate ingestion)
+- Pitcher analysis, planning, and pickup recommendations
+- Transaction planning and approval workflow
+- Ad hoc pitcher add/drop requests
+- Single-item transaction execution with hard preflight + verification
+- Pitcher lineup planning/approval/preflight/single-item execution
+- Monitoring for stale/blocked/invalidated artifacts
+- Operator diagnostics via `fb doctor`
 
-## What it does not do
+### Intentionally out of scope
+- Hitters
+- Batch/unattended execution
+- Waiver/FAAB automation
+- Browser automation
+- Web dashboard
+- LLM-generated strategy decisions
 
-- batch transaction execution
-- hitter lineup logic
-- waiver submission/FAAB bidding automation
-- browser automation
-- web dashboard
-
-## Quickstart
+## Install and Build
 
 ```bash
-cd /Users/jakebot/dev/fantasy-bb
-go mod tidy
 go build -o fb ./cmd/fb
 ./fb init
+./fb doctor
 ```
 
-Import probable starts:
+## Config
+
+Default config location: `~/.fantasy-baseball/config.json`
+
+Use the example as baseline:
 
 ```bash
-./fb forecaster import --file ./tmp/table.html
+cp config.json.example ~/.fantasy-baseball/config.json
 ```
 
-Sync ESPN roster (read-only):
-
-```bash
-export ESPN_S2="your_espn_s2_cookie"
-export ESPN_SWID="{your-swid-cookie}"
-./fb espn validate
-./fb espn sync roster
-./fb espn show roster --pitchers-only
-```
-
-Run weekly pitcher report (ESPN roster source):
-
-```bash
-./fb pitchers report --from 2026-09-15 --to 2026-09-22
-```
-
-Build a weekly pitcher plan:
-
-```bash
-./fb pitchers plan --from 2026-09-15 --to 2026-09-22
-./fb pitchers start-sit --from 2026-09-15 --to 2026-09-22
-./fb pitchers plan-last
-```
-
-Fetch bounded free-agent pitchers and build pickup recommendations:
-
-```bash
-./fb espn free-agents pitchers --limit 25
-./fb pickups recommend --from 2026-09-15 --to 2026-09-22
-./fb pickups top-streamers --from 2026-09-15 --to 2026-09-22 --top 15
-./fb pickups last
-./fb transactions plan --from 2026-09-15 --to 2026-09-22
-./fb transactions top --from 2026-09-15 --to 2026-09-22
-./fb transactions review --plan-id 1
-./fb transactions approve --plan-id 1 --item 3 --note "Good weekly delta"
-./fb transactions queue
-./fb execute queue
-./fb execute preflight
-./fb execute dry-run
-./fb execute transaction --item 3
-./fb execute transaction --item 3 --confirm
-./fb execute history
-./fb execute result --execution-id 1
-./fb execute pending
-./fb execute verify --execution-id 1
-./fb execute reconcile --execution-id 1
-./fb transactions ad-hoc --add "Aaron Nola" --drop "Shota Imanaga"
-./fb transactions ad-hoc-list
-./fb execute ad-hoc --request-id 4
-./fb execute ad-hoc-confirm --request-id 4
-./fb lineup pitchers plan
-./fb lineup pitchers review --plan-id 1
-./fb lineup pitchers approve --plan-id 1 --item 2 --note "start this week"
-./fb lineup pitchers preflight
-./fb lineup pitchers execute --item 2 --confirm
-```
-
-## Typical workflow
-
-### 1. Import and inspect forecaster data
-
-```bash
-./fb forecaster import --file ./tmp/table.html
-./fb forecaster status
-./fb forecaster list --from 2026-09-15 --to 2026-09-22
-./fb forecaster warnings --limit 25
-```
-
-### 2. Sync ESPN and analyze your roster
-
-```bash
-./fb espn sync roster
-./fb pitchers analyze-week --from 2026-09-15 --to 2026-09-22
-./fb pitchers two-start --from 2026-09-15 --to 2026-09-22
-./fb pitchers explain-matches --from 2026-09-15 --to 2026-09-22
-```
-
-### 3. Re-open the latest saved analysis
-
-```bash
-./fb pitchers last-report
-```
-
-### 4. Generate a weekly pitcher plan
-
-```bash
-./fb espn sync roster
-./fb forecaster import --file ./tmp/forecaster_sample.html
-./fb pitchers plan
-./fb pitchers start-sit
-./fb pitchers plan-last
-./fb pitchers plan-show --plan-id 1
-```
-
-### 5. Generate pickup recommendations
-
-```bash
-./fb espn free-agents pitchers --limit 25
-./fb pickups recommend
-./fb pickups top-streamers --top 20
-./fb pickups last
-./fb pickups show --recommendation-id 1
-```
-
-### 6. Generate transaction plans (read-only add/drop proposals)
-
-```bash
-./fb transactions plan --top 10
-./fb transactions top --top 10
-./fb transactions compare --top 10
-./fb transactions last
-./fb transactions show --plan-id 1
-./fb transactions explain --plan-id 1
-```
-
-### 7. Review and approve/reject/defer transaction items
-
-```bash
-./fb transactions review --plan-id 1
-./fb transactions approve --plan-id 1 --item 3 --note "Proceed if still available"
-./fb transactions defer --plan-id 1 --item 4 --note "Wait for weekend schedule"
-./fb transactions reject --plan-id 1 --item 5 --note "Too risky this week"
-./fb transactions approvals --state approved --limit 25
-./fb transactions queue
-./fb transactions reset-review --plan-id 1
-```
-
-### 8. Preflight approved moves (dry-run execution readiness)
-
-```bash
-./fb execute queue
-./fb execute preflight
-./fb execute dry-run
-./fb execute preflight --item 3
-./fb execute show --run-id 1
-./fb execute last
-```
-
-### 9. Execute one approved move (real write, explicit confirm required)
-
-```bash
-./fb execute transaction --item 3
-./fb execute transaction --item 3 --confirm
-# equivalent:
-./fb execute confirm --item 3
-./fb execute history
-./fb execute result --execution-id 1
-./fb execute pending
-./fb execute verify --execution-id 1
-./fb execute reconcile --execution-id 1
-```
-
-### 10. Ad hoc manual move (same safety path, no bypass)
-
-```bash
-./fb transactions ad-hoc --add "Aaron Nola" --drop "Shota Imanaga"
-./fb transactions ad-hoc-show --request-id 4
-./fb execute ad-hoc --request-id 4
-./fb execute ad-hoc --request-id 4 --confirm
-# equivalent:
-./fb execute ad-hoc-confirm --request-id 4
-```
-
-### 11. Pitcher lineup actions (same safety model)
-
-```bash
-./fb lineup pitchers plan
-./fb lineup pitchers show --plan-id 1
-./fb lineup pitchers review --plan-id 1
-./fb lineup pitchers approve --plan-id 1 --item 2 --note "start this week"
-./fb lineup pitchers queue
-./fb lineup pitchers preflight
-./fb lineup pitchers execute --item 2
-./fb lineup pitchers execute --item 2 --confirm
-./fb lineup pitchers confirm --item 2
-./fb lineup pitchers history
-./fb lineup pitchers result --execution-id 1
-```
-
-Safety rules:
-
-- one approved item at a time only (no batch execute)
-- immediate preflight is re-run right before write
-- write is attempted only with explicit confirmation
-- no hidden retries
-- post-write verification is recorded separately from write success
-- duplicate-protection blocks re-execution after verified success
-- unresolved/ambiguous attempts must be verified/reconciled before any future retry
-
-Recommendations are deterministic and inspectable:
-
-- `top_candidate`: strongest overall options in the window
-- `streamer`: short-window options above streamer threshold
-- `upgrade`: candidate projected above a weaker rostered pitcher
-- `risky_monitor`: interesting but uncertain (`TBD`, missing projection, etc.)
-- `unmatched`: candidate could not be matched to forecaster starts
-
-Transaction move buckets:
-
-- `strong_move`: clear projected weekly upgrade with acceptable certainty
-- `marginal_move`: positive projected upgrade, but smaller
-- `risky_move`: intriguing move with meaningful uncertainty
-- `watch_only`: low-confidence or low-delta option to monitor
-
-Per-start transaction scoring:
-
-- transaction plan comparisons are now based on projected FPTS per start (quality-first).
-- two-start context remains informational (`two_start_week` flag), not a scoring bonus.
-- move buckets (`strong_move`, `marginal_move`, etc.) use single-start opportunity deltas with uncertainty penalties.
-
-Transaction review states:
-
-- `pending`: default state on new transaction plan items
-- `approved`: explicitly approved and queued for later execution phase
-- `rejected`: explicitly declined
-- `deferred`: intentionally postponed for reconsideration
-
-Execution preflight statuses:
-
-- `executable`: checks passed and move appears ready
-- `blocked`: move cannot proceed under current live conditions
-- `stale`: approval/context looks out of date
-- `conflict`: live roster state conflicts with planned move
-- `unknown`: insufficient certainty to proceed safely
-
-Real execution statuses:
-
-- `started`: execution attempt created
-- `submitted`: write request was submitted; verification may still be pending
-- `succeeded`: write outcome is verified
-- `failed`: write request attempted and failed
-- `aborted`: no write attempted (for example preflight gate failed)
-- `ambiguous`: write/verification evidence is mixed or inconclusive
-
-Verification statuses:
-
-- `verified`: add/drop appears landed in post-write checks
-- `verification_pending`: write may have landed but live state may still be catching up
-- `unverified`: evidence currently suggests move did not cleanly land
-- `verification_failed`: verification check errored
-- `unknown`: verification not available
-
-## Interpreting output
-
-- `Top overall candidates`: best free-agent options in the selected window.
-- `Best streamers`: options above streamer threshold for the window.
-- `Risky / monitor`: candidates with uncertainty (`TBD`, missing projection, injury/status risk).
-- `Unmatched`: candidate could not be mapped to probable-start rows in the selected window.
-
-In-season data note:
-
-- if the selected date range has no probable starts, many rows will appear as `unmatched`.
-- verify window coverage with `fb forecaster list --from ... --to ... --include-tbd`.
-
-## Matching behavior
-
-Matching is deterministic and inspectable:
-
-- normalize player name (case, punctuation, whitespace)
-- exact normalized-name match first
-- use `mlb_team` as tie-breaker when available
-- output `matched`, `unmatched`, or `ambiguous_match`
-- use `pitchers explain-matches` for debug visibility
-
-## Pitcher planning buckets
-
-`fb pitchers plan` and `fb pitchers start-sit` assign each rostered pitcher to one bucket:
-
-- `auto_start`: strong projected value for the window
-- `likely_start`: solid projection but below auto-start threshold
-- `monitor`: uncertainty (for example `TBD`, missing projection, ambiguous/unmatched data)
-- `bench`: low projected value with a scheduled start
-- `no_start_scheduled`: matched pitcher but no projected starts in the window
-
-Thresholds and penalties are configurable under `planning.pitchers` in `config.json`.
-
-## Command reference
-
-### App/system
-- `fb init`
-- `fb healthcheck`
-- `fb version`
-- `fb config show`
-- `fb db migrate`
-- `fb db status`
-
-### Forecaster
-- `fb forecaster import --file <path>`
-- `fb forecaster import --url <url>`
-- `fb forecaster list ...`
-- `fb forecaster show-week ...`
-- `fb forecaster top ...`
-- `fb forecaster status` (alias: `source-status`)
-- `fb forecaster warnings`
-- `fb forecaster clear --yes`
-
-### ESPN (read-only)
-- `fb espn validate`
-- `fb espn sync roster [--dry-run]`
-- `fb espn free-agents pitchers --limit <n> [--search <text>] [--team <MLB>]`
-- `fb espn show roster [--pitchers-only] [--sync-run <id>]`
-- `fb espn show league [--sync-run <id>]`
-- `fb espn show free-agents [--candidate-run <id>] [--limit <n>]`
-- `fb espn status` (alias: `source-status`)
-- `fb espn warnings [--sync-run <id>] [--limit <n>]`
-
-### Pitchers
-- `fb pitchers analyze-week [--sync-run <id>] ...`
-- `fb pitchers two-start [--sync-run <id>] ...`
-- `fb pitchers report [--sync-run <id>] ...`
-- `fb pitchers explain-matches [--sync-run <id>] ...`
-- `fb pitchers last-report`
-- `fb pitchers plan [--from YYYY-MM-DD --to YYYY-MM-DD --sync-run <id> --import-run <id>]`
-- `fb pitchers start-sit [--from YYYY-MM-DD --to YYYY-MM-DD --sync-run <id> --import-run <id>]`
-- `fb pitchers plan-last`
-- `fb pitchers plan-show --plan-id <id>`
-
-### Pickups
-- `fb pickups recommend [--from YYYY-MM-DD --to YYYY-MM-DD --sync-run <id> --import-run <id> --candidate-run <id> --top <n>]`
-- `fb pickups top-streamers [--min-total-fpts <n>]`
-- `fb pickups last`
-- `fb pickups show --recommendation-id <id>`
-
-Pitcher analysis uses ESPN snapshots only. By default it uses the latest sync, or `--sync-run <id>` when provided.
-
-`pickups` commands are ESPN-backed and read-only. They use latest ESPN sync + forecaster import + candidate run by default unless overridden with run IDs.
-
-### Transactions
-- `fb transactions plan [--from YYYY-MM-DD --to YYYY-MM-DD --sync-run <id> --import-run <id> --pitcher-plan-id <id> --pickup-run <id> --top <n>]`
-- `fb transactions top [same source/window flags]`
-- `fb transactions compare [same source/window flags]`
-- `fb transactions review --plan-id <id>`
-- `fb transactions approve --plan-id <id> --item <item-id> [--note <text>]`
-- `fb transactions reject --plan-id <id> --item <item-id> [--note <text>]`
-- `fb transactions defer --plan-id <id> --item <item-id> [--note <text>]`
-- `fb transactions queue [--limit <n>]`
-- `fb transactions approvals [--state pending|approved|rejected|deferred] [--limit <n>]`
-- `fb transactions reset-review --plan-id <id> [--item <item-id>]`
-- `fb transactions last`
-- `fb transactions show --plan-id <id>`
-- `fb transactions explain --plan-id <id>`
-
-### Execute
-- `fb execute queue [--limit <n>]`
-- `fb execute preflight [--item <approved-item-id>] [--limit <n>]`
-- `fb execute dry-run [--item <approved-item-id>] [--limit <n>]`
-- `fb execute transaction --item <approved-item-id> [--confirm]`
-- `fb execute confirm --item <approved-item-id>`
-- `fb execute history [--limit <n>]`
-- `fb execute result --execution-id <id>`
-- `fb execute pending [--limit <n>]`
-- `fb execute verify --execution-id <id>`
-- `fb execute reconcile --execution-id <id>`
-- `fb execute ad-hoc --request-id <id> [--confirm]`
-- `fb execute ad-hoc-confirm --request-id <id>`
-- `fb execute last`
-- `fb execute show --run-id <id>`
-- `fb transactions ad-hoc --add "<player>" --drop "<player>"`
-- `fb transactions ad-hoc-show --request-id <id>`
-- `fb transactions ad-hoc-list [--state <state>] [--limit <n>]`
-- `fb lineup pitchers plan [--pitcher-plan-id <id> --sync-run <id>]`
-- `fb lineup pitchers show [--plan-id <id>]`
-- `fb lineup pitchers review --plan-id <id>`
-- `fb lineup pitchers approve --plan-id <id> --item <item-id> [--note <text>]`
-- `fb lineup pitchers reject --plan-id <id> --item <item-id> [--note <text>]`
-- `fb lineup pitchers defer --plan-id <id> --item <item-id> [--note <text>]`
-- `fb lineup pitchers queue [--limit <n>]`
-- `fb lineup pitchers preflight [--item <approved-item-id>] [--limit <n>]`
-- `fb lineup pitchers execute --item <approved-item-id> [--confirm]`
-- `fb lineup pitchers confirm --item <approved-item-id>`
-- `fb lineup pitchers history [--limit <n>]`
-- `fb lineup pitchers result --execution-id <id>`
-
-Global flags (all commands):
-- `--json`
-- `--app-dir`
-- `--config`
-- `--db-path`
-- `--log-level`
-- `--environment`
-
-## Data storage
-
-SQLite is the system of record. Key tables:
-
-- forecaster imports: `forecaster_import_runs`, `probable_starts`, `parse_warnings`
-- pitcher analysis: `analysis_runs`, `analysis_results`, `player_match_results`
-- ESPN sync snapshots: `espn_sync_runs`, `espn_raw_payloads`, `espn_league_snapshots`, `espn_roster_snapshots`
-- ESPN bounded candidate ingestion: `espn_candidate_runs`, `espn_free_agent_candidates`
-- saved planning artifacts: `pitcher_plans`, `pitcher_plan_items`
-- pickup recommendation artifacts: `pickup_recommendation_runs`, `pickup_recommendation_items`
-- transaction planning artifacts: `transaction_plans`, `transaction_plan_items`
-- transaction review workflow: `transaction_review_states`, `transaction_review_history`
-- execution preflight artifacts: `execution_runs`, `execution_run_items`
-- real execution artifacts: `execution_attempts`, `execution_attempt_events`
-- lineup planning/review artifacts: `lineup_plans`, `lineup_plan_items`, `lineup_review_states`, `lineup_review_history`
-- lineup execution artifacts: `lineup_execution_attempts`, `lineup_execution_attempt_events`
-
-## ESPN credentials
-
-`fb` reads ESPN cookie values from environment variables referenced by config:
-
-- `auth.espn_s2_env` (default: `ESPN_S2`)
-- `auth.swid_env` (default: `ESPN_SWID`)
-
-Set them before ESPN commands:
+Required for live ESPN usage:
+- `league.league_id`
+- `league.team_id`
+- `league.season`
+- `auth.espn_s2_env`
+- `auth.swid_env`
+
+Export cookie env vars:
 
 ```bash
 export ESPN_S2="..."
 export ESPN_SWID="{...}"
 ```
 
-`config.json.example` includes non-secret ESPN settings (`base_url`, `timeout_seconds`), but no cookie values.
-
-Planning thresholds are configurable under `planning.pitchers` in `config.json`. If omitted, defaults are used.
-
-Pickup recommendation tuning is configurable under `pickups.pitchers` in `config.json`:
-
-- `default_candidate_limit`
-- `max_candidate_limit`
-- `min_streamer_total_fpts`
-- `strong_upgrade_delta_fpts`
-- `marginal_upgrade_delta_fpts`
-- `risky_monitor_min_total_fpts`
-
-Transaction planning tuning is configurable under `transactions.pitchers` in `config.json`:
-
-- `top_move_limit`
-- `max_pairings`
-- `strong_move_delta_fpts`
-- `marginal_move_delta_fpts`
-- `risky_move_min_delta_fpts`
-- `uncertainty_penalty_tbd`
-- `uncertainty_penalty_missing_projection`
-- `uncertainty_penalty_ambiguous_match`
-- `allow_compare_against_likely_start`
-
-Pitcher lineup controls are configurable under `lineup.pitchers`:
-
-- `enabled`
-- `auto_generate_from_pitcher_plan`
-- `allow_monitor_actions`
-- `require_confirmation`
-- `block_on_ambiguous_slot_mapping`
-
-Real single-item execution tuning is configurable under `execution.real`:
-
-- `enabled` (default `false`)
-- `require_confirmation` (default `true`)
-- `allow_repeat_execution` (default `false`)
-- `verification_timeout_seconds` (default `20`)
-
-## Development
-
-Run tests:
+Validate setup:
 
 ```bash
-go test ./...
+./fb espn validate
+./fb doctor
 ```
+
+## Core Command Groups
+
+- `fb forecaster` - probable-start source ingestion and inspection
+- `fb espn` - roster/league/candidate ingestion and source inspection
+- `fb pitchers` - analysis and weekly pitcher plan
+- `fb pickups` - free-agent pickup recommendations
+- `fb transactions` - transaction plan/review queue + ad hoc request creation
+- `fb execute` - transaction preflight, execution, verification, reconciliation
+- `fb lineup pitchers` - lineup plan/review/preflight/execution
+- `fb monitor` - stale/blocked/invalidated artifact visibility
+- `fb doctor` - operator readiness checks
+
+## Recommended Weekly Routine
+
+1. Refresh inputs
+```bash
+./fb espn sync roster
+./fb forecaster import --url
+./fb espn free-agents pitchers --limit 25
+```
+
+2. Build decision artifacts
+```bash
+./fb pitchers plan
+./fb pickups recommend
+./fb transactions plan --top 10
+./fb lineup pitchers plan
+```
+
+3. Review + approve
+```bash
+./fb transactions review --plan-id <id>
+./fb transactions approve --plan-id <id> --item <id> --note "weekly gain"
+
+./fb lineup pitchers review --plan-id <id>
+./fb lineup pitchers approve --plan-id <id> --item <id>
+```
+
+4. Preflight and execute one item at a time
+```bash
+./fb execute preflight
+./fb execute transaction --item <approved_item_id>
+./fb execute transaction --item <approved_item_id> --confirm
+
+./fb lineup pitchers preflight
+./fb lineup pitchers execute --item <approved_lineup_item_id> --confirm
+```
+
+5. Verify and monitor
+```bash
+./fb execute pending
+./fb execute verify --execution-id <id>
+./fb execute reconcile --execution-id <id>
+
+./fb monitor summary
+./fb monitor approvals
+./fb monitor execution
+```
+
+## End-to-End Example (Copy/Paste)
+
+```bash
+./fb init
+./fb doctor
+
+./fb espn validate
+./fb espn sync roster
+./fb forecaster import --url
+./fb espn free-agents pitchers --limit 25
+
+./fb pitchers plan --from 2026-09-15 --to 2026-09-24
+./fb pickups recommend --from 2026-09-15 --to 2026-09-24
+./fb transactions plan --from 2026-09-15 --to 2026-09-24 --top 10
+
+./fb transactions review --plan-id 1
+./fb transactions approve --plan-id 1 --item 3 --note "best weekly delta"
+./fb transactions queue
+
+./fb execute preflight --item 3
+./fb execute transaction --item 3
+./fb execute transaction --item 3 --confirm
+./fb execute result --execution-id 1
+
+./fb lineup pitchers plan
+./fb lineup pitchers review --plan-id 1
+./fb lineup pitchers approve --plan-id 1 --item 2
+./fb lineup pitchers execute --item 2 --confirm
+
+./fb monitor summary
+./fb doctor
+```
+
+## Ad Hoc Workflow
+
+Use when you already know the move.
+
+```bash
+./fb transactions ad-hoc --add "Aaron Nola" --drop "Shota Imanaga"
+./fb transactions ad-hoc-show --request-id 4
+./fb execute ad-hoc --request-id 4
+./fb execute ad-hoc --request-id 4 --confirm
+```
+
+Ad hoc still uses the same guardrails:
+- identity resolution
+- immediate preflight gate
+- explicit confirmation
+- single-item execution
+- verification + audit
+
+## Monitoring vs Preflight
+
+- **Preflight** (`fb execute preflight`, `fb lineup pitchers preflight`) checks current executability right now for queued items.
+- **Monitoring** (`fb monitor ...`) checks whether saved artifacts/approvals/execution outcomes have gone stale, blocked, or invalid over time.
+
+Use both.
+
+## Status Vocabulary
+
+### Review state
+- `pending`, `approved`, `rejected`, `deferred`
+
+### Preflight status
+- `executable`, `blocked`, `stale`, `conflict`, `unknown`
+
+### Execution status
+- `started`, `submitted`, `succeeded`, `failed`, `aborted`, `ambiguous`
+
+### Verification status
+- `verified`, `verification_pending`, `unverified`, `verification_failed`, `unknown`
+
+### Monitoring status
+- `fresh`, `stale`, `blocked`, `invalidated`, `unknown`
+
+## Safety Model
+
+- No batch execution
+- One item per command
+- Confirmation required for real writes
+- Immediate preflight rerun before write
+- Duplicate protection blocks re-execution after successful/verified attempts
+- Verification stored separately from write submission
+- Ambiguity is explicit (not silently treated as success)
+
+## Troubleshooting
+
+### “No rows found” or unmatched players
+- Confirm date window has probable starts:
+```bash
+./fb forecaster list --from YYYY-MM-DD --to YYYY-MM-DD --include-tbd
+```
+- Re-import forecaster source and rerun planning.
+
+### Execution blocked
+- Check queue/preflight details:
+```bash
+./fb execute queue
+./fb execute preflight --item <id>
+```
+- Re-run planning/approval if add is unavailable or drop is no longer rostered.
+
+### Unresolved execution attempts
+```bash
+./fb execute pending
+./fb execute verify --execution-id <id>
+./fb execute reconcile --execution-id <id>
+```
+
+### Overall readiness
+```bash
+./fb doctor
+./fb monitor summary
+```
+
+## JSON Output
+
+Most commands support `--json` for scripting/OpenClaw usage.
+
+Examples:
+
+```bash
+./fb doctor --json
+./fb monitor summary --json
+./fb execute result --execution-id 8 --json
+./fb lineup pitchers queue --json
+```
+
+## Backward Compatibility Notes
+
+- `fb healthcheck` is retained as a basic legacy check command.
+- `fb doctor` is the preferred v1 operator readiness command.
+- Existing workflow commands remain intact; this phase focuses on consistency/polish.
