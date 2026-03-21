@@ -24,7 +24,7 @@ import (
 )
 
 func newExecuteCmd(opts *cliOptions) *cobra.Command {
-	cmd := &cobra.Command{Use: "execute", Short: "Execution readiness and single-item real transaction execution"}
+	cmd := &cobra.Command{Use: "execute", Short: "Transaction execution readiness and single-item real execution"}
 	cmd.AddGroup(
 		&cobra.Group{ID: "run", Title: "Run"},
 		&cobra.Group{ID: "write", Title: "Real Write"},
@@ -36,12 +36,8 @@ func newExecuteCmd(opts *cliOptions) *cobra.Command {
 	dryRunCmd.GroupID = "run"
 	transactionCmd := newExecuteTransactionCmd(opts)
 	transactionCmd.GroupID = "write"
-	confirmCmd := newExecuteConfirmCmd(opts)
-	confirmCmd.GroupID = "write"
 	adHocCmd := newExecuteAdHocCmd(opts)
 	adHocCmd.GroupID = "write"
-	adHocConfirmCmd := newExecuteAdHocConfirmCmd(opts)
-	adHocConfirmCmd.GroupID = "write"
 	queueCmd := newExecuteQueueCmd(opts)
 	queueCmd.GroupID = "inspect"
 	lastCmd := newExecuteLastCmd(opts)
@@ -60,7 +56,7 @@ func newExecuteCmd(opts *cliOptions) *cobra.Command {
 	pendingCmd.GroupID = "inspect"
 	reconcileCmd := newExecuteReconcileCmd(opts)
 	reconcileCmd.GroupID = "inspect"
-	cmd.AddCommand(preflightCmd, dryRunCmd, transactionCmd, confirmCmd, adHocCmd, adHocConfirmCmd, queueCmd, lastCmd, showCmd, historyCmd, resultCmd, verifyCmd, resolveCmd, pendingCmd, reconcileCmd)
+	cmd.AddCommand(preflightCmd, dryRunCmd, transactionCmd, adHocCmd, queueCmd, lastCmd, showCmd, historyCmd, resultCmd, verifyCmd, resolveCmd, pendingCmd, reconcileCmd)
 	return cmd
 }
 
@@ -235,36 +231,6 @@ func newExecuteTransactionCmd(opts *cliOptions) *cobra.Command {
 	return cmd
 }
 
-func newExecuteConfirmCmd(opts *cliOptions) *cobra.Command {
-	var itemID int64
-	cmd := &cobra.Command{
-		Use:   "confirm",
-		Short: "Execute one approved add/drop transaction with explicit confirmation",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if itemID <= 0 {
-				return fmt.Errorf("--item must be > 0")
-			}
-			v, err := withRealExecuteService(cmd.Context(), opts, func(ctx context.Context, cfg config.Config, svc *exerealsvc.Service) (any, error) {
-				return svc.ExecuteOne(ctx, cfg, execute.RealExecutionOptions{
-					ItemID:  itemID,
-					Confirm: true,
-				})
-			})
-			if err != nil {
-				return err
-			}
-			res := v.(*execute.RealExecutionResult)
-			if opts.OutputJSON {
-				return writeJSON(cmd, res)
-			}
-			printRealExecutionResult(cmd, res)
-			return nil
-		},
-	}
-	cmd.Flags().Int64Var(&itemID, "item", 0, "Approved queue item ID to execute")
-	return cmd
-}
-
 func newExecuteAdHocCmd(opts *cliOptions) *cobra.Command {
 	var requestID int64
 	var confirm bool
@@ -305,47 +271,6 @@ func newExecuteAdHocCmd(opts *cliOptions) *cobra.Command {
 	}
 	cmd.Flags().Int64Var(&requestID, "request-id", 0, "Ad hoc request ID")
 	cmd.Flags().BoolVar(&confirm, "confirm", false, "Actually perform the real write attempt")
-	return cmd
-}
-
-func newExecuteAdHocConfirmCmd(opts *cliOptions) *cobra.Command {
-	var requestID int64
-	cmd := &cobra.Command{
-		Use:   "ad-hoc-confirm",
-		Short: "Execute one resolved ad hoc request with explicit confirmation",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if requestID <= 0 {
-				return fmt.Errorf("--request-id must be > 0")
-			}
-			v, err := withAdHocAndRealExecuteService(cmd.Context(), opts, func(ctx context.Context, cfg config.Config, adhoc *adhocsvc.Service, real *exerealsvc.Service) (any, error) {
-				req, itemID, err := adhoc.EnsureExecutionCandidate(ctx, requestID)
-				if err != nil {
-					return nil, err
-				}
-				res, err := real.ExecuteOne(ctx, cfg, execute.RealExecutionOptions{
-					ItemID:  itemID,
-					Confirm: true,
-				})
-				if err != nil {
-					return nil, err
-				}
-				if res.Attempt != nil {
-					_ = adhoc.LinkExecutionResult(ctx, req.ID, res.Attempt.ID, res.Attempt.ExecutionStatus == execute.ExecutionStatusSucceeded)
-				}
-				return res, nil
-			})
-			if err != nil {
-				return err
-			}
-			res := v.(*execute.RealExecutionResult)
-			if opts.OutputJSON {
-				return writeJSON(cmd, res)
-			}
-			printRealExecutionResult(cmd, res)
-			return nil
-		},
-	}
-	cmd.Flags().Int64Var(&requestID, "request-id", 0, "Ad hoc request ID")
 	return cmd
 }
 

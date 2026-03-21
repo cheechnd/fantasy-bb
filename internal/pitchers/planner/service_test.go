@@ -42,14 +42,14 @@ func TestBuildPlanItemsBuckets(t *testing.T) {
 	if summary[BucketLikelyStart] != 2 {
 		t.Fatalf("expected 2 likely_start, got %d", summary[BucketLikelyStart])
 	}
-	if summary[BucketMonitor] != 3 {
-		t.Fatalf("expected 3 monitor, got %d", summary[BucketMonitor])
+	if summary[BucketMonitor] != 2 {
+		t.Fatalf("expected 2 monitor, got %d", summary[BucketMonitor])
 	}
 	if summary[BucketBench] != 1 {
 		t.Fatalf("expected 1 bench, got %d", summary[BucketBench])
 	}
-	if summary[BucketNoStartScheduled] != 1 {
-		t.Fatalf("expected 1 no_start_scheduled, got %d", summary[BucketNoStartScheduled])
+	if summary[BucketNoStartScheduled] != 2 {
+		t.Fatalf("expected 2 no_start_scheduled, got %d", summary[BucketNoStartScheduled])
 	}
 }
 

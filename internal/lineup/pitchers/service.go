@@ -2,8 +2,10 @@ package pitchers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -84,7 +86,15 @@ func (s *Service) GeneratePlan(ctx context.Context, pitcherPlanID, syncRunID *in
 		resolvedSyncRunID = &v
 	}
 
-	items, summary := buildLineupItems(pItems, rows)
+	league, err := s.espnRepo.LatestLeague(ctx, resolvedSyncRunID)
+	if err != nil {
+		return nil, err
+	}
+	slotCaps := pitcherSlotCapacities(nil)
+	if league != nil {
+		slotCaps = pitcherSlotCapacities(league)
+	}
+	items, summary := buildLineupItems(pItems, rows, slotCaps)
 	planID, err := s.repo.SavePlan(ctx, &pPlan.ID, resolvedSyncRunID, "success", summary, items)
 	if err != nil {
 		return nil, err
@@ -173,19 +183,27 @@ func (s *Service) Preflight(ctx context.Context, itemID *int64, limit int) (*Pre
 	if err != nil {
 		return nil, err
 	}
+	league, err := s.espnRepo.LatestLeague(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
 	rosterByName := rosterIndex(rows)
+	slotCaps := pitcherSlotCapacities(league)
+	slotUsage := pitcherSlotUsage(rows)
 
 	out := make([]PreflightItem, 0, len(candidates))
 	now := time.Now().UTC()
 	for _, q := range candidates {
 		reasons := []execute.Reason{}
 		status := execute.StatusExecutable
+		resolvedCurrent := strings.ToUpper(strings.TrimSpace(q.CurrentSlot))
 		row := findRosterRowByName(rosterByName, q.PlayerName)
 		if row == nil {
 			status = execute.StatusConflict
 			reasons = append(reasons, execute.Reason{Code: "player_not_on_roster", Message: "pitcher is no longer on roster"})
 		} else {
 			current := strings.ToUpper(strings.TrimSpace(row.RosterSlot))
+			resolvedCurrent = current
 			isActive := isActiveSlot(current)
 			targetActive := isTargetActive(q.ActionType)
 			if q.ActionType != ActionActivatePitcher && q.ActionType != ActionBenchPitcher {
@@ -197,6 +215,13 @@ func (s *Service) Preflight(ctx context.Context, itemID *int64, limit int) (*Pre
 			} else if !targetActive && !isActive {
 				status = execute.StatusBlocked
 				reasons = append(reasons, execute.Reason{Code: "already_benched", Message: "pitcher is already benched/out of active slot"})
+			}
+			targetSlot := strings.ToUpper(strings.TrimSpace(q.TargetSlot))
+			if status == execute.StatusExecutable && targetActive && targetSlot != "" && current != targetSlot {
+				if isTargetSlotFull(targetSlot, slotUsage, slotCaps) {
+					status = execute.StatusBlocked
+					reasons = append(reasons, execute.Reason{Code: "target_slot_full", Message: fmt.Sprintf("target slot %s is currently full", targetSlot)})
+				}
 			}
 			if latestSync != nil && row.SyncRunID != latestSync.ID {
 				if status == execute.StatusExecutable {
@@ -215,7 +240,7 @@ func (s *Service) Preflight(ctx context.Context, itemID *int64, limit int) (*Pre
 			ActionType:       q.ActionType,
 			ValidationStatus: status,
 			Reasons:          reasons,
-			CurrentSlot:      q.CurrentSlot,
+			CurrentSlot:      resolvedCurrent,
 			TargetSlot:       q.TargetSlot,
 			CheckedAt:        now,
 		})
@@ -301,7 +326,7 @@ func (s *Service) Execute(ctx context.Context, cfg config.Config, itemID int64, 
 		PlanID:         it.LineupPlanID,
 		PlayerName:     it.PlayerName,
 		ESPNPlayerID:   *it.ESPNPlayerID,
-		FromSlot:       it.CurrentSlot,
+		FromSlot:       pre.CurrentSlot,
 		ToSlot:         it.TargetSlot,
 	}
 	attemptID, err := s.repo.CreateExecutionAttempt(ctx, itemID, it.LineupPlanID, execute.ExecutionStatusStarted, execute.VerificationStatusUnknown, map[string]any{
@@ -358,8 +383,18 @@ func (s *Service) LatestExecution(ctx context.Context) (*ExecutionAttempt, error
 	return s.repo.LatestExecution(ctx)
 }
 
-func buildLineupItems(planItems []pitchplan.PlanItem, roster []espn.RosterSnapshot) ([]PlanItem, map[string]any) {
+func buildLineupItems(planItems []pitchplan.PlanItem, roster []espn.RosterSnapshot, slotCaps map[string]int) ([]PlanItem, map[string]any) {
 	rosterByName := rosterIndex(roster)
+	slotUsage := pitcherSlotUsage(roster)
+	planByName := map[string]pitchplan.PlanItem{}
+	for _, p := range planItems {
+		k := matching.NormalizeName(p.PlayerName)
+		if k == "" {
+			continue
+		}
+		planByName[k] = p
+	}
+	usedBenchTargets := map[string]bool{}
 	out := make([]PlanItem, 0)
 	summary := map[string]int{
 		"recommended_starts":   0,
@@ -393,16 +428,60 @@ func buildLineupItems(planItems []pitchplan.PlanItem, roster []espn.RosterSnapsh
 				summary["no_action_needed"]++
 				continue
 			}
+			targetSlot, ok := firstOpenActiveSlot(slotUsage, slotCaps)
+			if !ok {
+				swap, found := chooseBenchSwapTarget(roster, planByName, usedBenchTargets, row.PlayerName)
+				if found {
+					swapSlot := strings.ToUpper(strings.TrimSpace(swap.RosterSlot))
+					out = append(out, PlanItem{
+						ActionType:   ActionBenchPitcher,
+						PlayerName:   swap.PlayerName,
+						ESPNPlayerID: swap.ESPNPlayerID,
+						CurrentSlot:  swapSlot,
+						TargetSlot:   "BE",
+						Rationale: map[string]any{
+							"reason": "slot_rebalance_for_recommended_start",
+						},
+						Flags:     []string{"recommended_bench", "slot_rebalance"},
+						CreatedAt: time.Now().UTC(),
+					})
+					usedBenchTargets[matching.NormalizeName(swap.PlayerName)] = true
+					if slotUsage[swapSlot] > 0 {
+						slotUsage[swapSlot]--
+					}
+					summary["recommended_benches"]++
+					targetSlot, ok = firstOpenActiveSlot(slotUsage, slotCaps)
+				}
+			}
+			if !ok {
+				out = append(out, PlanItem{
+					ActionType:   ActionAmbiguousOrBlocked,
+					PlayerName:   row.PlayerName,
+					ESPNPlayerID: row.ESPNPlayerID,
+					CurrentSlot:  currentSlot,
+					TargetSlot:   "",
+					Rationale: map[string]any{
+						"pitcher_bucket": it.Bucket,
+						"player_key":     nameKey,
+						"reason":         "no_open_active_pitcher_slot",
+					},
+					Flags:     []string{"blocked", "target_slot_full"},
+					CreatedAt: time.Now().UTC(),
+				})
+				summary["ambiguous_or_blocked"]++
+				continue
+			}
 			out = append(out, PlanItem{
 				ActionType:   ActionActivatePitcher,
 				PlayerName:   row.PlayerName,
 				ESPNPlayerID: row.ESPNPlayerID,
 				CurrentSlot:  currentSlot,
-				TargetSlot:   "P",
+				TargetSlot:   targetSlot,
 				Rationale:    map[string]any{"pitcher_bucket": it.Bucket, "player_key": nameKey},
 				Flags:        []string{"recommended_start"},
 				CreatedAt:    time.Now().UTC(),
 			})
+			slotUsage[targetSlot]++
 			summary["recommended_starts"]++
 		case pitchplan.BucketBench, pitchplan.BucketNoStartScheduled:
 			if !active {
@@ -465,6 +544,177 @@ func isActiveSlot(slot string) bool {
 }
 
 func isTargetActive(action ActionType) bool { return action == ActionActivatePitcher }
+
+func pitcherSlotCapacities(league *espn.LeagueSnapshot) map[string]int {
+	out := map[string]int{
+		"P":  0,
+		"SP": 0,
+		"RP": 0,
+	}
+	if league == nil || strings.TrimSpace(league.SettingsJSON) == "" {
+		return out
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(league.SettingsJSON), &raw); err != nil {
+		return out
+	}
+	rawCounts, ok := raw["lineupSlotCounts"].(map[string]any)
+	if !ok {
+		return out
+	}
+	parseCount := func(v any) int {
+		switch t := v.(type) {
+		case float64:
+			return int(t)
+		case int:
+			return t
+		case int64:
+			return int(t)
+		case string:
+			n, _ := strconv.Atoi(strings.TrimSpace(t))
+			return n
+		default:
+			return 0
+		}
+	}
+	for k, v := range rawCounts {
+		key := strings.ToUpper(strings.TrimSpace(k))
+		n := parseCount(v)
+		switch key {
+		case "13", "P":
+			out["P"] = n
+		case "14", "SP":
+			out["SP"] = n
+		case "15", "RP":
+			out["RP"] = n
+		}
+	}
+	return out
+}
+
+func pitcherSlotUsage(rows []espn.RosterSnapshot) map[string]int {
+	out := map[string]int{
+		"P":  0,
+		"SP": 0,
+		"RP": 0,
+	}
+	for _, r := range rows {
+		slot := strings.ToUpper(strings.TrimSpace(r.RosterSlot))
+		if _, ok := out[slot]; ok {
+			out[slot]++
+		}
+	}
+	return out
+}
+
+func firstOpenActiveSlot(usage, caps map[string]int) (string, bool) {
+	known := false
+	for _, slot := range []string{"P", "SP", "RP"} {
+		cap := caps[slot]
+		if cap <= 0 {
+			continue
+		}
+		known = true
+		if usage[slot] < cap {
+			return slot, true
+		}
+	}
+	if !known {
+		return "P", true
+	}
+	return "", false
+}
+
+func isTargetSlotFull(slot string, usage, caps map[string]int) bool {
+	cap := caps[slot]
+	if cap <= 0 {
+		return false
+	}
+	return usage[slot] >= cap
+}
+
+func chooseBenchSwapTarget(roster []espn.RosterSnapshot, planByName map[string]pitchplan.PlanItem, used map[string]bool, addPlayerName string) (espn.RosterSnapshot, bool) {
+	type candidate struct {
+		row      espn.RosterSnapshot
+		priority int
+		starts   int
+		total    float64
+	}
+	addKey := matching.NormalizeName(addPlayerName)
+	cands := make([]candidate, 0)
+
+	for _, r := range roster {
+		if !isActiveSlot(r.RosterSlot) {
+			continue
+		}
+		key := matching.NormalizeName(r.PlayerName)
+		if key == "" || key == addKey || used[key] {
+			continue
+		}
+		p, ok := planByName[key]
+		if !ok {
+			continue
+		}
+		priority, eligible := benchSwapPriority(p)
+		if !eligible {
+			continue
+		}
+		total := 0.0
+		if p.TotalProjectedFPTS != nil {
+			total = *p.TotalProjectedFPTS
+		}
+		cands = append(cands, candidate{
+			row:      r,
+			priority: priority,
+			starts:   p.ProjectedStartCount,
+			total:    total,
+		})
+	}
+	if len(cands) == 0 {
+		return espn.RosterSnapshot{}, false
+	}
+	sort.SliceStable(cands, func(i, j int) bool {
+		if cands[i].priority != cands[j].priority {
+			return cands[i].priority < cands[j].priority
+		}
+		if cands[i].starts != cands[j].starts {
+			return cands[i].starts < cands[j].starts
+		}
+		if cands[i].total != cands[j].total {
+			return cands[i].total < cands[j].total
+		}
+		return strings.ToLower(cands[i].row.PlayerName) < strings.ToLower(cands[j].row.PlayerName)
+	})
+	return cands[0].row, true
+}
+
+func benchSwapPriority(p pitchplan.PlanItem) (int, bool) {
+	switch p.Bucket {
+	case pitchplan.BucketNoStartScheduled:
+		return 1, true
+	case pitchplan.BucketBench:
+		return 2, true
+	case pitchplan.BucketMonitor:
+		if hasFlag(p.Flags, "unmatched") {
+			return 3, true
+		}
+		if p.ProjectedStartCount == 0 {
+			return 4, true
+		}
+		return 5, true
+	default:
+		return 0, false
+	}
+}
+
+func hasFlag(flags []string, want string) bool {
+	for _, f := range flags {
+		if strings.EqualFold(strings.TrimSpace(f), strings.TrimSpace(want)) {
+			return true
+		}
+	}
+	return false
+}
 
 func deriveExecutionStatus(v execute.VerificationStatus) execute.ExecutionStatus {
 	switch v {

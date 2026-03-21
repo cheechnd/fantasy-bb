@@ -155,7 +155,7 @@ func BuildPlanItems(report pitchers.AnalysisReport, roster []espn.RosterSnapshot
 
 	for _, u := range report.UnmatchedPlayers {
 		row := PlanItem{
-			Bucket:              BucketMonitor,
+			Bucket:              BucketNoStartScheduled,
 			PlayerName:          u.InputPlayerName,
 			MLBTeam:             u.InputMLBTeam,
 			ProjectedStartCount: 0,

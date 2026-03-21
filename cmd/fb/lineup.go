@@ -43,13 +43,11 @@ func newLineupCmd(opts *cliOptions) *cobra.Command {
 	preflightCmd.GroupID = "run"
 	executeCmd := newLineupPitchersExecuteCmd(opts)
 	executeCmd.GroupID = "run"
-	confirmCmd := newLineupPitchersConfirmCmd(opts)
-	confirmCmd.GroupID = "run"
 	historyCmd := newLineupPitchersHistoryCmd(opts)
 	historyCmd.GroupID = "inspect"
 	resultCmd := newLineupPitchersResultCmd(opts)
 	resultCmd.GroupID = "inspect"
-	pitchersCmd.AddCommand(planCmd, showCmd, reviewCmd, approveCmd, rejectCmd, deferCmd, queueCmd, preflightCmd, executeCmd, confirmCmd, historyCmd, resultCmd)
+	pitchersCmd.AddCommand(planCmd, showCmd, reviewCmd, approveCmd, rejectCmd, deferCmd, queueCmd, preflightCmd, executeCmd, historyCmd, resultCmd)
 	cmd.AddCommand(pitchersCmd)
 	return cmd
 }
@@ -253,37 +251,6 @@ func newLineupPitchersExecuteCmd(opts *cliOptions) *cobra.Command {
 	}
 	cmd.Flags().Int64Var(&itemID, "item", 0, "Approved lineup item ID to execute")
 	cmd.Flags().BoolVar(&confirm, "confirm", false, "Actually perform the real write attempt")
-	return cmd
-}
-
-func newLineupPitchersConfirmCmd(opts *cliOptions) *cobra.Command {
-	var itemID int64
-	cmd := &cobra.Command{
-		Use:   "confirm",
-		Short: "Execute one approved pitcher lineup action with explicit confirmation",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if itemID <= 0 {
-				return fmt.Errorf("--item must be > 0")
-			}
-			v, err := withLineupService(cmd.Context(), opts, func(ctx context.Context, cfg config.Config, svc *lp.Service) (any, error) {
-				a, p, willWrite, msg, err := svc.Execute(ctx, cfg, itemID, true)
-				if err != nil {
-					return nil, err
-				}
-				return map[string]any{"attempt": a, "preflight": p, "will_write": willWrite, "message": msg}, nil
-			})
-			if err != nil {
-				return err
-			}
-			payload := v.(map[string]any)
-			if opts.OutputJSON {
-				return writeJSON(cmd, payload)
-			}
-			printLineupExecutionPreview(cmd, itemID, payload)
-			return nil
-		},
-	}
-	cmd.Flags().Int64Var(&itemID, "item", 0, "Approved lineup item ID to execute")
 	return cmd
 }
 

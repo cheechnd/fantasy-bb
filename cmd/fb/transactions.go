@@ -25,11 +25,12 @@ import (
 )
 
 func newTransactionsCmd(opts *cliOptions) *cobra.Command {
-	cmd := &cobra.Command{Use: "transactions", Short: "Read-only add/drop transaction planning"}
+	cmd := &cobra.Command{Use: "transactions", Short: "Add/drop transaction planning, review, and execution"}
 	cmd.AddGroup(
 		&cobra.Group{ID: "generate", Title: "Generate"},
 		&cobra.Group{ID: "adhoc", Title: "Ad Hoc"},
 		&cobra.Group{ID: "review", Title: "Review Workflow"},
+		&cobra.Group{ID: "execute", Title: "Execution"},
 		&cobra.Group{ID: "inspect", Title: "Inspection"},
 		&cobra.Group{ID: "explain", Title: "Explain"},
 	)
@@ -65,9 +66,12 @@ func newTransactionsCmd(opts *cliOptions) *cobra.Command {
 	adHocShowCmd.GroupID = "adhoc"
 	adHocListCmd := newTransactionsAdHocListCmd(opts)
 	adHocListCmd.GroupID = "adhoc"
+	executeCmd := newExecuteCmd(opts)
+	executeCmd.GroupID = "execute"
 	cmd.AddCommand(
 		planCmd, topCmd, compareCmd,
 		adHocCmd, adHocShowCmd, adHocListCmd,
+		executeCmd,
 		reviewCmd, approveCmd, rejectCmd, deferCmd, queueCmd, approvalsCmd, resetReviewCmd,
 		lastCmd, showCmd, explainCmd,
 	)

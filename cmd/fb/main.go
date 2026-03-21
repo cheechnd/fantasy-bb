@@ -88,12 +88,10 @@ func newRootCmd() *cobra.Command {
 	transactionsCmd.GroupID = "team"
 	lineupCmd := newLineupCmd(opts)
 	lineupCmd.GroupID = "team"
-	executeCmd := newExecuteCmd(opts)
-	executeCmd.GroupID = "team"
 	monitorCmd := newMonitorCmd(opts)
 	monitorCmd.GroupID = "team"
 
-	root.AddCommand(versionCmd, doctorCmd, healthCmd, initCmd, configCmd, dbCmd, forecasterCmd, espnCmd, pitchersCmd, pickupsCmd, transactionsCmd, lineupCmd, executeCmd, monitorCmd)
+	root.AddCommand(versionCmd, doctorCmd, healthCmd, initCmd, configCmd, dbCmd, forecasterCmd, espnCmd, pitchersCmd, pickupsCmd, transactionsCmd, lineupCmd, monitorCmd)
 
 	return root
 }
@@ -583,9 +581,9 @@ func newDoctorCmd(opts *cliOptions) *cobra.Command {
 			} else {
 				txPending, err := monRepo.PendingExecutions(ctx, 200)
 				if err != nil {
-					appendCheck("execution.unresolved_transactions", "warn", err.Error(), "run `fb execute pending`")
+					appendCheck("execution.unresolved_transactions", "warn", err.Error(), "run `fb transactions execute pending`")
 				} else if len(txPending) > 0 {
-					appendCheck("execution.unresolved_transactions", "warn", fmt.Sprintf("%d unresolved transaction execution attempt(s)", len(txPending)), "run `fb execute pending`")
+					appendCheck("execution.unresolved_transactions", "warn", fmt.Sprintf("%d unresolved transaction execution attempt(s)", len(txPending)), "run `fb transactions execute pending`")
 				} else {
 					appendCheck("execution.unresolved_transactions", "ok", "no unresolved transaction execution attempts", "")
 				}

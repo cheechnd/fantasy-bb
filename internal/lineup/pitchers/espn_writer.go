@@ -57,15 +57,13 @@ func (w *ESPNWriter) ExecuteLineupMove(ctx context.Context, cfg config.Config, r
 	body := map[string]any{
 		"isLeagueManager": meta.IsLeagueManager,
 		"teamId":          teamID,
-		"type":            "LINEUP",
+		"type":            "ROSTER",
 		"memberId":        meta.MemberID,
 		"scoringPeriodId": meta.ScoringPeriodID,
 		"executionType":   "EXECUTE",
 		"items": []map[string]any{{
 			"type":             "LINEUP",
 			"playerId":         req.ESPNPlayerID,
-			"fromTeamId":       teamID,
-			"toTeamId":         teamID,
 			"fromLineupSlotId": fromSlotID,
 			"toLineupSlotId":   toSlotID,
 		}},

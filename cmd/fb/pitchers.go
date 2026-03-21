@@ -621,11 +621,11 @@ func printPitcherPlan(cmd *cobra.Command, plan *planner.Plan, startSitOnly bool)
 			Name   string
 			Bucket planner.Bucket
 		}{
-			{Name: "Auto-start", Bucket: planner.BucketAutoStart},
-			{Name: "Likely start", Bucket: planner.BucketLikelyStart},
-			{Name: "Monitor", Bucket: planner.BucketMonitor},
-			{Name: "Bench", Bucket: planner.BucketBench},
-			{Name: "No start scheduled", Bucket: planner.BucketNoStartScheduled},
+			{Name: "Projection: Auto-Start", Bucket: planner.BucketAutoStart},
+			{Name: "Projection: Likely Start", Bucket: planner.BucketLikelyStart},
+			{Name: "Projection: Monitor", Bucket: planner.BucketMonitor},
+			{Name: "Projection: Low Priority", Bucket: planner.BucketBench},
+			{Name: "Projection: No Starts", Bucket: planner.BucketNoStartScheduled},
 		}
 		for i, entry := range order {
 			fmt.Fprintln(cmd.OutOrStdout(), entry.Name)
