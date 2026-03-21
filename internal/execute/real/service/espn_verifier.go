@@ -44,19 +44,29 @@ func (v *ESPNVerifier) Verify(ctx context.Context, cfg config.Config, req WriteR
 		"add_on_roster":     addOnRoster,
 		"drop_still_roster": dropOnRoster,
 	}
+	inference, msg := InferExecutionOutcome(addOnRoster, dropOnRoster)
+	details["inference"] = inference
+	details["message"] = msg
+	switch inference {
+	case "likely_executed":
+		return execute.VerificationStatusVerified, details, nil
+	case "inconclusive":
+		return execute.VerificationStatusPending, details, nil
+	default:
+		return execute.VerificationStatusUnverified, details, nil
+	}
+}
+
+func InferExecutionOutcome(addOnRoster, dropOnRoster bool) (string, string) {
 	switch {
 	case addOnRoster && !dropOnRoster:
-		details["message"] = "added pitcher appears on roster and drop pitcher removed"
-		return execute.VerificationStatusVerified, details, nil
+		return "likely_executed", "add player appears on roster and drop player is removed"
 	case addOnRoster && dropOnRoster:
-		details["message"] = "add pitcher appears on roster but drop pitcher still present"
-		return execute.VerificationStatusUnverified, details, nil
+		return "inconclusive", "add player appears, but drop player is still present"
 	case !addOnRoster && !dropOnRoster:
-		details["message"] = "drop pitcher removed but add pitcher not yet visible"
-		return execute.VerificationStatusUnverified, details, nil
+		return "inconclusive", "drop player removed, but add player is not visible yet"
 	default:
-		details["message"] = "add pitcher not visible on roster"
-		return execute.VerificationStatusUnverified, details, nil
+		return "likely_not_executed", "add player is not on roster and drop player is still present"
 	}
 }
 

@@ -66,6 +66,13 @@
       "require_confirmation": true,
       "allow_repeat_execution": false,
       "verification_timeout_seconds": 20
+    },
+    "hardening": {
+      "block_on_prior_success": true,
+      "block_on_ambiguous_prior_attempt": true,
+      "verification_recheck_limit": 3,
+      "verification_pending_window_seconds": 30,
+      "treat_mixed_reconciliation_as_inconclusive": true
     }
   },
   "features": {

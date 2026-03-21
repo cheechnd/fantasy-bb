@@ -46,7 +46,13 @@ func newExecuteCmd(opts *cliOptions) *cobra.Command {
 	historyCmd.GroupID = "inspect"
 	resultCmd := newExecuteResultCmd(opts)
 	resultCmd.GroupID = "inspect"
-	cmd.AddCommand(preflightCmd, dryRunCmd, transactionCmd, confirmCmd, queueCmd, lastCmd, showCmd, historyCmd, resultCmd)
+	verifyCmd := newExecuteVerifyCmd(opts)
+	verifyCmd.GroupID = "inspect"
+	pendingCmd := newExecutePendingCmd(opts)
+	pendingCmd.GroupID = "inspect"
+	reconcileCmd := newExecuteReconcileCmd(opts)
+	reconcileCmd.GroupID = "inspect"
+	cmd.AddCommand(preflightCmd, dryRunCmd, transactionCmd, confirmCmd, queueCmd, lastCmd, showCmd, historyCmd, resultCmd, verifyCmd, pendingCmd, reconcileCmd)
 	return cmd
 }
 
@@ -306,6 +312,84 @@ func newExecuteResultCmd(opts *cliOptions) *cobra.Command {
 	return cmd
 }
 
+func newExecuteVerifyCmd(opts *cliOptions) *cobra.Command {
+	var attemptID int64
+	cmd := &cobra.Command{
+		Use:   "verify",
+		Short: "Re-run verification checks for a prior execution attempt",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if attemptID <= 0 {
+				return fmt.Errorf("--execution-id must be > 0")
+			}
+			v, err := withRealExecuteService(cmd.Context(), opts, func(ctx context.Context, cfg config.Config, svc *exerealsvc.Service) (any, error) {
+				return svc.VerifyAttempt(ctx, cfg, attemptID)
+			})
+			if err != nil {
+				return err
+			}
+			res := v.(*execute.VerifyResult)
+			if opts.OutputJSON {
+				return writeJSON(cmd, res)
+			}
+			printVerifyResult(cmd, res)
+			return nil
+		},
+	}
+	cmd.Flags().Int64Var(&attemptID, "execution-id", 0, "Execution attempt ID")
+	return cmd
+}
+
+func newExecutePendingCmd(opts *cliOptions) *cobra.Command {
+	var limit int
+	cmd := &cobra.Command{
+		Use:   "pending",
+		Short: "Show unresolved execution attempts (ambiguous/pending/unverified)",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			v, err := withRealExecuteService(cmd.Context(), opts, func(ctx context.Context, _ config.Config, svc *exerealsvc.Service) (any, error) {
+				return svc.Pending(ctx, limit)
+			})
+			if err != nil {
+				return err
+			}
+			rows := v.([]execute.Attempt)
+			if opts.OutputJSON {
+				return writeJSON(cmd, map[string]any{"count": len(rows), "attempts": rows})
+			}
+			printExecutionPending(cmd, rows)
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&limit, "limit", 20, "Maximum rows to show")
+	return cmd
+}
+
+func newExecuteReconcileCmd(opts *cliOptions) *cobra.Command {
+	var attemptID int64
+	cmd := &cobra.Command{
+		Use:   "reconcile",
+		Short: "Reconcile a prior unresolved execution attempt against live roster state",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if attemptID <= 0 {
+				return fmt.Errorf("--execution-id must be > 0")
+			}
+			v, err := withRealExecuteService(cmd.Context(), opts, func(ctx context.Context, cfg config.Config, svc *exerealsvc.Service) (any, error) {
+				return svc.ReconcileAttempt(ctx, cfg, attemptID)
+			})
+			if err != nil {
+				return err
+			}
+			res := v.(*execute.VerifyResult)
+			if opts.OutputJSON {
+				return writeJSON(cmd, res)
+			}
+			printVerifyResult(cmd, res)
+			return nil
+		},
+	}
+	cmd.Flags().Int64Var(&attemptID, "execution-id", 0, "Execution attempt ID")
+	return cmd
+}
+
 func withExecuteService(ctx context.Context, opts *cliOptions, fn func(context.Context, *exesvc.Service) (any, error)) (any, error) {
 	cfg, _, err := loadConfigWithOverrides(opts)
 	if err != nil {
@@ -482,23 +566,65 @@ func printRealExecutionResult(cmd *cobra.Command, res *execute.RealExecutionResu
 	}
 }
 
+func printVerifyResult(cmd *cobra.Command, res *execute.VerifyResult) {
+	if res == nil {
+		fmt.Fprintln(cmd.OutOrStdout(), "No verification result.")
+		return
+	}
+	if res.Attempt != nil {
+		fmt.Fprintf(cmd.OutOrStdout(), "Execution ID: %d\n", res.Attempt.ID)
+		fmt.Fprintf(cmd.OutOrStdout(), "Action: add %s / drop %s\n", res.Attempt.AddPlayerName, res.Attempt.DropPlayerName)
+		fmt.Fprintf(cmd.OutOrStdout(), "Execution status: %s\n", res.Attempt.ExecutionStatus)
+		fmt.Fprintf(cmd.OutOrStdout(), "Verification status: %s\n", res.Attempt.VerificationStatus)
+	}
+	if strings.TrimSpace(res.Inference) != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "Inference: %s\n", res.Inference)
+	}
+	if strings.TrimSpace(res.Message) != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "Message: %s\n", res.Message)
+	}
+}
+
+func printExecutionPending(cmd *cobra.Command, rows []execute.Attempt) {
+	if len(rows) == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), "No unresolved execution attempts.")
+		return
+	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "EXECUTION_ID\tITEM\tPLAN\tADD\tDROP\tSTATUS\tVERIFY\tSTARTED")
+	for _, row := range rows {
+		fmt.Fprintf(
+			w,
+			"%d\t%d\t%d\t%s\t%s\t%s\t%s\t%s\n",
+			row.ID, row.ApprovedItemID, row.SourcePlanID, row.AddPlayerName, row.DropPlayerName,
+			row.ExecutionStatus, row.VerificationStatus, row.StartedAt.Format(time.RFC3339),
+		)
+	}
+	w.Flush()
+}
+
 func printExecutionHistory(cmd *cobra.Command, rows []execute.Attempt) {
 	if len(rows) == 0 {
 		fmt.Fprintln(cmd.OutOrStdout(), "No real execution attempts found.")
 		return
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "EXECUTION_ID\tITEM\tPLAN\tADD\tDROP\tSTARTED_AT\tSTATUS\tVERIFY")
+	fmt.Fprintln(w, "EXECUTION_ID\tITEM\tPLAN\tADD\tDROP\tSTARTED_AT\tSUBMITTED_AT\tSTATUS\tVERIFY")
 	for _, row := range rows {
+		submitted := "-"
+		if row.SubmittedAt != nil {
+			submitted = row.SubmittedAt.Format(time.RFC3339)
+		}
 		fmt.Fprintf(
 			w,
-			"%d\t%d\t%d\t%s\t%s\t%s\t%s\t%s\n",
+			"%d\t%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			row.ID,
 			row.ApprovedItemID,
 			row.SourcePlanID,
 			row.AddPlayerName,
 			row.DropPlayerName,
 			row.StartedAt.Format(time.RFC3339),
+			submitted,
 			row.ExecutionStatus,
 			row.VerificationStatus,
 		)
@@ -521,6 +647,15 @@ func printExecutionAttempt(cmd *cobra.Command, attempt *execute.Attempt) {
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Execution status: %s\n", attempt.ExecutionStatus)
 	fmt.Fprintf(cmd.OutOrStdout(), "Verification status: %s\n", attempt.VerificationStatus)
+	if attempt.SubmittedAt != nil {
+		fmt.Fprintf(cmd.OutOrStdout(), "Submitted: %s\n", attempt.SubmittedAt.Format(time.RFC3339))
+	}
+	if attempt.LastVerifiedAt != nil {
+		fmt.Fprintf(cmd.OutOrStdout(), "Last verified: %s\n", attempt.LastVerifiedAt.Format(time.RFC3339))
+	}
+	if msg := strings.TrimSpace(attempt.AmbiguousReason); msg != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "Ambiguous reason: %s\n", msg)
+	}
 	if msg := strings.TrimSpace(attempt.ErrorMessage); msg != "" {
 		fmt.Fprintf(cmd.OutOrStdout(), "Error: %s\n", msg)
 	}

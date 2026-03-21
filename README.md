@@ -20,6 +20,7 @@ It ingests probable starter projections into SQLite, syncs your ESPN roster in r
 - adds explicit transaction review workflow with pending/approved/rejected/deferred states
 - adds dry-run execution preflight runs for approved items (no ESPN writes)
 - executes one explicitly confirmed approved add/drop move for real with immediate preflight gating and verification
+- hardens real execution with duplicate-protection, ambiguous outcome handling, re-verification, and reconciliation tools
 
 ## What it does not do
 
@@ -87,6 +88,9 @@ Fetch bounded free-agent pitchers and build pickup recommendations:
 ./fb execute transaction --item 3 --confirm
 ./fb execute history
 ./fb execute result --execution-id 1
+./fb execute pending
+./fb execute verify --execution-id 1
+./fb execute reconcile --execution-id 1
 ```
 
 ## Typical workflow
@@ -179,6 +183,9 @@ Fetch bounded free-agent pitchers and build pickup recommendations:
 ./fb execute confirm --item 3
 ./fb execute history
 ./fb execute result --execution-id 1
+./fb execute pending
+./fb execute verify --execution-id 1
+./fb execute reconcile --execution-id 1
 ```
 
 Safety rules:
@@ -188,6 +195,8 @@ Safety rules:
 - write is attempted only with explicit confirmation
 - no hidden retries
 - post-write verification is recorded separately from write success
+- duplicate-protection blocks re-execution after verified success
+- unresolved/ambiguous attempts must be verified/reconciled before any future retry
 
 Recommendations are deterministic and inspectable:
 
@@ -228,14 +237,17 @@ Execution preflight statuses:
 Real execution statuses:
 
 - `started`: execution attempt created
-- `succeeded`: write request returned apparent success
+- `submitted`: write request was submitted; verification may still be pending
+- `succeeded`: write outcome is verified
 - `failed`: write request attempted and failed
 - `aborted`: no write attempted (for example preflight gate failed)
+- `ambiguous`: write/verification evidence is mixed or inconclusive
 
 Verification statuses:
 
 - `verified`: add/drop appears landed in post-write checks
-- `unverified`: write may have succeeded but verification is inconclusive
+- `verification_pending`: write may have landed but live state may still be catching up
+- `unverified`: evidence currently suggests move did not cleanly land
 - `verification_failed`: verification check errored
 - `unknown`: verification not available
 
@@ -347,6 +359,9 @@ Pitcher analysis uses ESPN snapshots only. By default it uses the latest sync, o
 - `fb execute confirm --item <approved-item-id>`
 - `fb execute history [--limit <n>]`
 - `fb execute result --execution-id <id>`
+- `fb execute pending [--limit <n>]`
+- `fb execute verify --execution-id <id>`
+- `fb execute reconcile --execution-id <id>`
 - `fb execute last`
 - `fb execute show --run-id <id>`
 

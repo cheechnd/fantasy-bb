@@ -94,15 +94,18 @@ type ExecutionStatus string
 
 const (
 	ExecutionStatusStarted   ExecutionStatus = "started"
+	ExecutionStatusSubmitted ExecutionStatus = "submitted"
 	ExecutionStatusSucceeded ExecutionStatus = "succeeded"
 	ExecutionStatusFailed    ExecutionStatus = "failed"
 	ExecutionStatusAborted   ExecutionStatus = "aborted"
+	ExecutionStatusAmbiguous ExecutionStatus = "ambiguous"
 )
 
 type VerificationStatus string
 
 const (
 	VerificationStatusVerified           VerificationStatus = "verified"
+	VerificationStatusPending            VerificationStatus = "verification_pending"
 	VerificationStatusUnverified         VerificationStatus = "unverified"
 	VerificationStatusVerificationFailed VerificationStatus = "verification_failed"
 	VerificationStatusUnknown            VerificationStatus = "unknown"
@@ -114,13 +117,17 @@ type Attempt struct {
 	SourcePlanID       int64              `json:"source_plan_id"`
 	PreflightRunID     *int64             `json:"preflight_run_id,omitempty"`
 	StartedAt          time.Time          `json:"started_at"`
+	SubmittedAt        *time.Time         `json:"submitted_at,omitempty"`
 	CompletedAt        *time.Time         `json:"completed_at,omitempty"`
 	ExecutionStatus    ExecutionStatus    `json:"execution_status"`
 	VerificationStatus VerificationStatus `json:"verification_status"`
+	LastVerifiedAt     *time.Time         `json:"last_verified_at,omitempty"`
+	AmbiguousReason    string             `json:"ambiguous_reason,omitempty"`
 	AddPlayerName      string             `json:"add_player_name"`
 	DropPlayerName     string             `json:"drop_player_name"`
 	RequestSummary     map[string]any     `json:"request_summary,omitempty"`
 	ResponseSummary    map[string]any     `json:"response_summary,omitempty"`
+	FinalOutcome       map[string]any     `json:"final_outcome,omitempty"`
 	ErrorMessage       string             `json:"error_message,omitempty"`
 	Details            map[string]any     `json:"details,omitempty"`
 	Events             []AttemptEvent     `json:"events,omitempty"`
@@ -135,8 +142,8 @@ type AttemptEvent struct {
 }
 
 type RealExecutionOptions struct {
-	ItemID   int64
-	Confirm  bool
+	ItemID  int64
+	Confirm bool
 }
 
 type RealExecutionResult struct {
@@ -145,4 +152,10 @@ type RealExecutionResult struct {
 	PreflightItem *RunItem    `json:"preflight_item,omitempty"`
 	WillWrite     bool        `json:"will_write"`
 	Message       string      `json:"message"`
+}
+
+type VerifyResult struct {
+	Attempt   *Attempt  `json:"attempt,omitempty"`
+	Inference string    `json:"inference,omitempty"`
+	Message   string    `json:"message"`
 }

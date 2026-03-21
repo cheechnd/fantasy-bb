@@ -24,10 +24,14 @@ type CreateAttemptInput struct {
 	PreflightRunID     *int64
 	ExecutionStatus    execute.ExecutionStatus
 	VerificationStatus execute.VerificationStatus
+	SubmittedAt        *time.Time
+	LastVerifiedAt     *time.Time
+	AmbiguousReason    string
 	AddPlayerName      string
 	DropPlayerName     string
 	RequestSummary     map[string]any
 	Details            map[string]any
+	FinalOutcome       map[string]any
 }
 
 func (r *Repository) CreateAttempt(ctx context.Context, in CreateAttemptInput) (int64, error) {
@@ -37,10 +41,10 @@ func (r *Repository) CreateAttempt(ctx context.Context, in CreateAttemptInput) (
 	res, err := r.db.ExecContext(ctx, `
 		INSERT INTO execution_attempts (
 			approved_item_id, source_plan_id, preflight_run_id,
-			started_at, execution_status, verification_status,
-			add_player_name, drop_player_name, request_summary_json, details_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, in.ApprovedItemID, in.SourcePlanID, nullInt64(in.PreflightRunID), now, in.ExecutionStatus, in.VerificationStatus, in.AddPlayerName, in.DropPlayerName, reqJSON, detailsJSON)
+			started_at, submitted_at, execution_status, verification_status, last_verified_at, ambiguous_reason,
+			add_player_name, drop_player_name, request_summary_json, details_json, final_outcome_summary_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, in.ApprovedItemID, in.SourcePlanID, nullInt64(in.PreflightRunID), now, nullTime(in.SubmittedAt), in.ExecutionStatus, in.VerificationStatus, nullTime(in.LastVerifiedAt), in.AmbiguousReason, in.AddPlayerName, in.DropPlayerName, reqJSON, detailsJSON, toJSON(in.FinalOutcome, "{}"))
 	if err != nil {
 		return 0, fmt.Errorf("insert execution attempt: %w", err)
 	}
@@ -65,30 +69,53 @@ func (r *Repository) AddEvent(ctx context.Context, attemptID int64, eventType st
 type CompleteInput struct {
 	ExecutionStatus    execute.ExecutionStatus
 	VerificationStatus execute.VerificationStatus
+	SubmittedAt        *time.Time
+	LastVerifiedAt     *time.Time
+	AmbiguousReason    string
 	ResponseSummary    map[string]any
 	ErrorMessage       string
 	Details            map[string]any
+	FinalOutcome       map[string]any
 }
 
 func (r *Repository) CompleteAttempt(ctx context.Context, attemptID int64, in CompleteInput) error {
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE execution_attempts
-		SET completed_at = ?, execution_status = ?, verification_status = ?,
-		    response_summary_json = ?, error_message = ?, details_json = ?
+		SET completed_at = ?, submitted_at = COALESCE(?, submitted_at),
+		    execution_status = ?, verification_status = ?, last_verified_at = COALESCE(?, last_verified_at),
+		    ambiguous_reason = ?, response_summary_json = ?, error_message = ?, details_json = ?,
+		    final_outcome_summary_json = ?
 		WHERE id = ?
-	`, time.Now().UTC().Format(time.RFC3339), in.ExecutionStatus, in.VerificationStatus, toJSON(in.ResponseSummary, "{}"), in.ErrorMessage, toJSON(in.Details, "{}"), attemptID)
+	`, time.Now().UTC().Format(time.RFC3339), nullTime(in.SubmittedAt), in.ExecutionStatus, in.VerificationStatus, nullTime(in.LastVerifiedAt), in.AmbiguousReason, toJSON(in.ResponseSummary, "{}"), in.ErrorMessage, toJSON(in.Details, "{}"), toJSON(in.FinalOutcome, "{}"), attemptID)
 	if err != nil {
 		return fmt.Errorf("update execution attempt: %w", err)
 	}
 	return nil
 }
 
+func (r *Repository) UpdateVerification(ctx context.Context, attemptID int64, verStatus execute.VerificationStatus, verDetails map[string]any, now time.Time, execStatus execute.ExecutionStatus, ambiguousReason string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE execution_attempts
+		SET verification_status = ?, last_verified_at = ?, execution_status = ?, ambiguous_reason = ?,
+		    details_json = ?, final_outcome_summary_json = ?
+		WHERE id = ?
+	`, verStatus, now.UTC().Format(time.RFC3339), execStatus, ambiguousReason, toJSON(verDetails, "{}"), toJSON(map[string]any{
+		"verification_status": verStatus,
+		"execution_status":    execStatus,
+		"updated_at":          now.UTC().Format(time.RFC3339),
+	}, "{}"), attemptID)
+	if err != nil {
+		return fmt.Errorf("update execution verification: %w", err)
+	}
+	return nil
+}
+
 func (r *Repository) AttemptByID(ctx context.Context, attemptID int64) (*execute.Attempt, []execute.AttemptEvent, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, approved_item_id, source_plan_id, preflight_run_id, started_at, completed_at,
-		       execution_status, verification_status, add_player_name, drop_player_name,
+		SELECT id, approved_item_id, source_plan_id, preflight_run_id, started_at, submitted_at, completed_at,
+		       execution_status, verification_status, last_verified_at, ambiguous_reason, add_player_name, drop_player_name,
 		       COALESCE(request_summary_json, '{}'), COALESCE(response_summary_json, '{}'),
-		       COALESCE(error_message, ''), COALESCE(details_json, '{}')
+		       COALESCE(error_message, ''), COALESCE(details_json, '{}'), COALESCE(final_outcome_summary_json, '{}')
 		FROM execution_attempts
 		WHERE id = ?
 	`, attemptID)
@@ -111,10 +138,10 @@ func (r *Repository) ListAttempts(ctx context.Context, limit int) ([]execute.Att
 		limit = 20
 	}
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, approved_item_id, source_plan_id, preflight_run_id, started_at, completed_at,
-		       execution_status, verification_status, add_player_name, drop_player_name,
+		SELECT id, approved_item_id, source_plan_id, preflight_run_id, started_at, submitted_at, completed_at,
+		       execution_status, verification_status, last_verified_at, ambiguous_reason, add_player_name, drop_player_name,
 		       COALESCE(request_summary_json, '{}'), COALESCE(response_summary_json, '{}'),
-		       COALESCE(error_message, ''), COALESCE(details_json, '{}')
+		       COALESCE(error_message, ''), COALESCE(details_json, '{}'), COALESCE(final_outcome_summary_json, '{}')
 		FROM execution_attempts
 		ORDER BY id DESC
 		LIMIT ?
@@ -140,10 +167,10 @@ func (r *Repository) ListAttempts(ctx context.Context, limit int) ([]execute.Att
 
 func (r *Repository) LatestAttempt(ctx context.Context) (*execute.Attempt, []execute.AttemptEvent, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, approved_item_id, source_plan_id, preflight_run_id, started_at, completed_at,
-		       execution_status, verification_status, add_player_name, drop_player_name,
+		SELECT id, approved_item_id, source_plan_id, preflight_run_id, started_at, submitted_at, completed_at,
+		       execution_status, verification_status, last_verified_at, ambiguous_reason, add_player_name, drop_player_name,
 		       COALESCE(request_summary_json, '{}'), COALESCE(response_summary_json, '{}'),
-		       COALESCE(error_message, ''), COALESCE(details_json, '{}')
+		       COALESCE(error_message, ''), COALESCE(details_json, '{}'), COALESCE(final_outcome_summary_json, '{}')
 		FROM execution_attempts
 		ORDER BY id DESC
 		LIMIT 1
@@ -212,6 +239,79 @@ func (r *Repository) HasSuccessfulAttempt(ctx context.Context, approvedItemID in
 	return true, nil
 }
 
+func (r *Repository) LatestAttemptByApprovedItem(ctx context.Context, approvedItemID int64) (*execute.Attempt, []execute.AttemptEvent, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, approved_item_id, source_plan_id, preflight_run_id, started_at, submitted_at, completed_at,
+		       execution_status, verification_status, last_verified_at, ambiguous_reason, add_player_name, drop_player_name,
+		       COALESCE(request_summary_json, '{}'), COALESCE(response_summary_json, '{}'),
+		       COALESCE(error_message, ''), COALESCE(details_json, '{}'), COALESCE(final_outcome_summary_json, '{}')
+		FROM execution_attempts
+		WHERE approved_item_id = ?
+		ORDER BY id DESC
+		LIMIT 1
+	`, approvedItemID)
+	a, err := scanAttempt(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil, nil
+		}
+		return nil, nil, err
+	}
+	ev, err := r.EventsByAttemptID(ctx, a.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return a, ev, nil
+}
+
+func (r *Repository) ListPendingAttempts(ctx context.Context, limit int) ([]execute.Attempt, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, approved_item_id, source_plan_id, preflight_run_id, started_at, submitted_at, completed_at,
+		       execution_status, verification_status, last_verified_at, ambiguous_reason, add_player_name, drop_player_name,
+		       COALESCE(request_summary_json, '{}'), COALESCE(response_summary_json, '{}'),
+		       COALESCE(error_message, ''), COALESCE(details_json, '{}'), COALESCE(final_outcome_summary_json, '{}')
+		FROM execution_attempts
+		WHERE execution_status IN (?, ?)
+		   OR verification_status IN (?, ?, ?, ?)
+		ORDER BY id DESC
+		LIMIT ?
+	`, execute.ExecutionStatusSubmitted, execute.ExecutionStatusAmbiguous, execute.VerificationStatusPending, execute.VerificationStatusUnverified, execute.VerificationStatusUnknown, execute.VerificationStatusVerificationFailed, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query pending execution attempts: %w", err)
+	}
+	defer rows.Close()
+	out := make([]execute.Attempt, 0)
+	for rows.Next() {
+		a, err := scanAttemptRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate pending execution attempts: %w", err)
+	}
+	return out, nil
+}
+
+func (r *Repository) CountVerificationRechecks(ctx context.Context, attemptID int64) (int, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM execution_attempt_events
+		WHERE execution_attempt_id = ?
+		  AND event_type = 'verification_started'
+		  AND COALESCE(json_extract(event_data_json, '$.mode'), '') = 'recheck'
+	`, attemptID)
+	var n int
+	if err := row.Scan(&n); err != nil {
+		return 0, fmt.Errorf("count execution attempt events: %w", err)
+	}
+	return n, nil
+}
+
 func scanAttempt(row *sql.Row) (*execute.Attempt, error) {
 	a, err := scanAttemptRows(row)
 	if err != nil {
@@ -228,12 +328,14 @@ func scanAttemptRows(r rowScanner) (*execute.Attempt, error) {
 	var out execute.Attempt
 	var preflightRunID sql.NullInt64
 	var startedRaw string
+	var submittedRaw sql.NullString
 	var completedRaw sql.NullString
-	var reqJSON, respJSON, detailsJSON string
+	var lastVerifiedRaw sql.NullString
+	var reqJSON, respJSON, detailsJSON, finalOutcomeJSON string
 	if err := r.Scan(
-		&out.ID, &out.ApprovedItemID, &out.SourcePlanID, &preflightRunID, &startedRaw, &completedRaw,
-		&out.ExecutionStatus, &out.VerificationStatus, &out.AddPlayerName, &out.DropPlayerName,
-		&reqJSON, &respJSON, &out.ErrorMessage, &detailsJSON,
+		&out.ID, &out.ApprovedItemID, &out.SourcePlanID, &preflightRunID, &startedRaw, &submittedRaw, &completedRaw,
+		&out.ExecutionStatus, &out.VerificationStatus, &lastVerifiedRaw, &out.AmbiguousReason, &out.AddPlayerName, &out.DropPlayerName,
+		&reqJSON, &respJSON, &out.ErrorMessage, &detailsJSON, &finalOutcomeJSON,
 	); err != nil {
 		return nil, err
 	}
@@ -246,6 +348,13 @@ func scanAttemptRows(r rowScanner) (*execute.Attempt, error) {
 		return nil, fmt.Errorf("parse execution attempt started_at: %w", err)
 	}
 	out.StartedAt = startedAt
+	if submittedRaw.Valid && submittedRaw.String != "" {
+		tm, err := time.Parse(time.RFC3339, submittedRaw.String)
+		if err != nil {
+			return nil, fmt.Errorf("parse execution attempt submitted_at: %w", err)
+		}
+		out.SubmittedAt = &tm
+	}
 	if completedRaw.Valid && completedRaw.String != "" {
 		tm, err := time.Parse(time.RFC3339, completedRaw.String)
 		if err != nil {
@@ -253,9 +362,17 @@ func scanAttemptRows(r rowScanner) (*execute.Attempt, error) {
 		}
 		out.CompletedAt = &tm
 	}
+	if lastVerifiedRaw.Valid && lastVerifiedRaw.String != "" {
+		tm, err := time.Parse(time.RFC3339, lastVerifiedRaw.String)
+		if err != nil {
+			return nil, fmt.Errorf("parse execution attempt last_verified_at: %w", err)
+		}
+		out.LastVerifiedAt = &tm
+	}
 	_ = json.Unmarshal([]byte(reqJSON), &out.RequestSummary)
 	_ = json.Unmarshal([]byte(respJSON), &out.ResponseSummary)
 	_ = json.Unmarshal([]byte(detailsJSON), &out.Details)
+	_ = json.Unmarshal([]byte(finalOutcomeJSON), &out.FinalOutcome)
 	return &out, nil
 }
 
@@ -275,4 +392,11 @@ func nullInt64(v *int64) any {
 		return nil
 	}
 	return *v
+}
+
+func nullTime(v *time.Time) any {
+	if v == nil {
+		return nil
+	}
+	return v.UTC().Format(time.RFC3339)
 }

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"fantasy-baseball/internal/config"
 	"fantasy-baseball/internal/execute"
@@ -112,8 +113,23 @@ func (s *Service) ExecuteOne(ctx context.Context, cfg config.Config, opts execut
 		if err != nil {
 			return nil, err
 		}
-		if done {
-			return nil, fmt.Errorf("approved item %d already has a successful execution attempt", opts.ItemID)
+		if done && cfg.Execution.Hardening.BlockOnPriorSuccess {
+			return nil, fmt.Errorf("execution blocked: approved item %d already has a successful execution attempt", opts.ItemID)
+		}
+	}
+	if cfg.Execution.Hardening.BlockOnPriorSuccess || cfg.Execution.Hardening.BlockOnAmbiguousPriorAttempt {
+		last, _, err := s.realRepo.LatestAttemptByApprovedItem(ctx, opts.ItemID)
+		if err != nil {
+			return nil, err
+		}
+		if last != nil {
+			if cfg.Execution.Hardening.BlockOnPriorSuccess && (last.ExecutionStatus == execute.ExecutionStatusSucceeded || last.VerificationStatus == execute.VerificationStatusVerified) {
+				return nil, fmt.Errorf("execution blocked: approved item %d already has a verified successful execution attempt", opts.ItemID)
+			}
+			if cfg.Execution.Hardening.BlockOnAmbiguousPriorAttempt &&
+				(last.ExecutionStatus == execute.ExecutionStatusAmbiguous || last.ExecutionStatus == execute.ExecutionStatusSubmitted || last.VerificationStatus == execute.VerificationStatusPending) {
+				return nil, fmt.Errorf("execution blocked: approved item %d has unresolved prior attempt (%s/%s); run `fb execute result --execution-id %d` and `fb execute verify --execution-id %d`", opts.ItemID, last.ExecutionStatus, last.VerificationStatus, last.ID, last.ID)
+			}
 		}
 	}
 
@@ -168,6 +184,8 @@ func (s *Service) ExecuteOne(ctx context.Context, cfg config.Config, opts execut
 	})
 	_ = s.realRepo.AddEvent(ctx, attemptID, "write_started", map[string]any{"item_id": opts.ItemID})
 
+	submittedAt := time.Now().UTC()
+	_ = s.realRepo.AddEvent(ctx, attemptID, "write_submitted", map[string]any{"submitted_at": submittedAt.Format(time.RFC3339)})
 	writeRes, writeErr := s.writer.ExecuteAddDrop(ctx, cfg, req)
 	if writeErr != nil {
 		_ = s.realRepo.AddEvent(ctx, attemptID, "write_failed", map[string]any{"error": writeErr.Error()})
@@ -204,14 +222,31 @@ func (s *Service) ExecuteOne(ctx context.Context, cfg config.Config, opts execut
 	} else {
 		if verStatus == execute.VerificationStatusVerified {
 			_ = s.realRepo.AddEvent(ctx, attemptID, "verification_succeeded", verDetails)
+		} else if verStatus == execute.VerificationStatusPending {
+			_ = s.realRepo.AddEvent(ctx, attemptID, "verification_pending", verDetails)
 		} else {
-			_ = s.realRepo.AddEvent(ctx, attemptID, "verification_failed", verDetails)
+			_ = s.realRepo.AddEvent(ctx, attemptID, "verification_inconclusive", verDetails)
 		}
 	}
+	execStatus, ambiguousReason := deriveExecutionStatusFromVerification(verStatus)
+	finalOutcome := map[string]any{
+		"execution_status":    execStatus,
+		"verification_status": verStatus,
+	}
+	if inferred, ok := verDetails["inference"]; ok {
+		finalOutcome["inference"] = inferred
+	}
+	if ambiguousReason != "" {
+		finalOutcome["ambiguous_reason"] = ambiguousReason
+	}
+	lastVerifiedAt := time.Now().UTC()
 
 	_ = s.realRepo.CompleteAttempt(ctx, attemptID, realrepo.CompleteInput{
-		ExecutionStatus:    execute.ExecutionStatusSucceeded,
+		ExecutionStatus:    execStatus,
 		VerificationStatus: verStatus,
+		SubmittedAt:        &submittedAt,
+		LastVerifiedAt:     &lastVerifiedAt,
+		AmbiguousReason:    ambiguousReason,
 		ResponseSummary: map[string]any{
 			"ok":              true,
 			"response_status": writeRes.ResponseStatus,
@@ -219,7 +254,8 @@ func (s *Service) ExecuteOne(ctx context.Context, cfg config.Config, opts execut
 			"message":         writeRes.ResponseMessage,
 			"response_json":   writeRes.ResponseJSON,
 		},
-		Details: verDetails,
+		Details:      verDetails,
+		FinalOutcome: finalOutcome,
 	})
 
 	attempt, events, _ := s.realRepo.AttemptByID(ctx, attemptID)
@@ -231,7 +267,7 @@ func (s *Service) ExecuteOne(ctx context.Context, cfg config.Config, opts execut
 		PreflightRun:  preflightRun,
 		PreflightItem: preflightItem,
 		WillWrite:     true,
-		Message:       "execution attempted",
+		Message:       describeExecutionMessage(execStatus, verStatus),
 	}, nil
 }
 
@@ -259,6 +295,93 @@ func (s *Service) ByID(ctx context.Context, attemptID int64) (*execute.Attempt, 
 
 func (s *Service) History(ctx context.Context, limit int) ([]execute.Attempt, error) {
 	return s.realRepo.ListAttempts(ctx, limit)
+}
+
+func (s *Service) Pending(ctx context.Context, limit int) ([]execute.Attempt, error) {
+	return s.realRepo.ListPendingAttempts(ctx, limit)
+}
+
+func (s *Service) VerifyAttempt(ctx context.Context, cfg config.Config, attemptID int64) (*execute.VerifyResult, error) {
+	attempt, _, err := s.realRepo.AttemptByID(ctx, attemptID)
+	if err != nil {
+		return nil, err
+	}
+	if attempt == nil {
+		return nil, fmt.Errorf("execution attempt %d not found", attemptID)
+	}
+	recheckCount, err := s.realRepo.CountVerificationRechecks(ctx, attemptID)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Execution.Hardening.VerificationRecheckLimit > 0 && recheckCount >= cfg.Execution.Hardening.VerificationRecheckLimit {
+		return nil, fmt.Errorf("verification recheck limit reached for execution %d (%d)", attemptID, cfg.Execution.Hardening.VerificationRecheckLimit)
+	}
+	req, err := requestFromAttempt(attempt)
+	if err != nil {
+		return nil, err
+	}
+	_ = s.realRepo.AddEvent(ctx, attemptID, "verification_started", map[string]any{"mode": "recheck"})
+	verStatus, verDetails, verErr := s.verifier.Verify(ctx, cfg, req, WriteResult{})
+	now := time.Now().UTC()
+	if verErr != nil {
+		verStatus = execute.VerificationStatusVerificationFailed
+		verDetails = map[string]any{"error": verErr.Error()}
+		_ = s.realRepo.AddEvent(ctx, attemptID, "verification_failed", verDetails)
+	} else {
+		switch verStatus {
+		case execute.VerificationStatusVerified:
+			_ = s.realRepo.AddEvent(ctx, attemptID, "verification_succeeded", verDetails)
+		case execute.VerificationStatusPending:
+			_ = s.realRepo.AddEvent(ctx, attemptID, "verification_pending", verDetails)
+		default:
+			_ = s.realRepo.AddEvent(ctx, attemptID, "verification_inconclusive", verDetails)
+		}
+	}
+	execStatus, ambiguousReason := deriveExecutionStatusFromVerification(verStatus)
+	if attempt.ExecutionStatus == execute.ExecutionStatusFailed || attempt.ExecutionStatus == execute.ExecutionStatusAborted {
+		execStatus = attempt.ExecutionStatus
+	}
+	if err := s.realRepo.UpdateVerification(ctx, attemptID, verStatus, verDetails, now, execStatus, ambiguousReason); err != nil {
+		return nil, err
+	}
+	updated, _, err := s.realRepo.AttemptByID(ctx, attemptID)
+	if err != nil {
+		return nil, err
+	}
+	return &execute.VerifyResult{
+		Attempt:   updated,
+		Inference: asString(verDetails["inference"]),
+		Message:   describeExecutionMessage(execStatus, verStatus),
+	}, nil
+}
+
+func (s *Service) ReconcileAttempt(ctx context.Context, cfg config.Config, attemptID int64) (*execute.VerifyResult, error) {
+	attempt, _, err := s.realRepo.AttemptByID(ctx, attemptID)
+	if err != nil {
+		return nil, err
+	}
+	if attempt == nil {
+		return nil, fmt.Errorf("execution attempt %d not found", attemptID)
+	}
+	req, err := requestFromAttempt(attempt)
+	if err != nil {
+		return nil, err
+	}
+	verStatus, verDetails, verErr := s.verifier.Verify(ctx, cfg, req, WriteResult{})
+	if verErr != nil {
+		verStatus = execute.VerificationStatusVerificationFailed
+		verDetails = map[string]any{"error": verErr.Error()}
+	}
+	inference := asString(verDetails["inference"])
+	_ = s.realRepo.AddEvent(ctx, attemptID, "reconciliation_run", map[string]any{
+		"inference":           inference,
+		"verification_status": verStatus,
+	})
+	return &execute.VerifyResult{
+		Attempt:   attempt,
+		Inference: inference,
+		Message:   fmt.Sprintf("reconciliation: %s", firstNonEmpty(inference, "inconclusive")),
+	}, nil
 }
 
 func (s *Service) createAbortedAttempt(ctx context.Context, approved *transactions.ApprovalQueueItem, preflightRun *execute.Run, reason string, preflightItem *execute.RunItem) (*execute.Attempt, error) {
@@ -298,6 +421,79 @@ func (s *Service) createAbortedAttempt(ctx context.Context, approved *transactio
 		a.Events = ev
 	}
 	return a, nil
+}
+
+func deriveExecutionStatusFromVerification(ver execute.VerificationStatus) (execute.ExecutionStatus, string) {
+	switch ver {
+	case execute.VerificationStatusVerified:
+		return execute.ExecutionStatusSucceeded, ""
+	case execute.VerificationStatusPending:
+		return execute.ExecutionStatusSubmitted, "verification pending"
+	case execute.VerificationStatusUnverified:
+		return execute.ExecutionStatusAmbiguous, "verification inconclusive"
+	case execute.VerificationStatusVerificationFailed:
+		return execute.ExecutionStatusAmbiguous, "verification failed"
+	default:
+		return execute.ExecutionStatusAmbiguous, "verification unknown"
+	}
+}
+
+func describeExecutionMessage(execStatus execute.ExecutionStatus, verStatus execute.VerificationStatus) string {
+	switch execStatus {
+	case execute.ExecutionStatusSucceeded:
+		return "execution succeeded and verified"
+	case execute.ExecutionStatusSubmitted:
+		return fmt.Sprintf("execution submitted; verification status %s", verStatus)
+	case execute.ExecutionStatusAmbiguous:
+		return fmt.Sprintf("execution result is ambiguous; verification status %s", verStatus)
+	default:
+		return "execution attempted"
+	}
+}
+
+func requestFromAttempt(attempt *execute.Attempt) (WriteRequest, error) {
+	req := WriteRequest{
+		ApprovedItemID: attempt.ApprovedItemID,
+		SourcePlanID:   attempt.SourcePlanID,
+		AddPlayerName:  attempt.AddPlayerName,
+		DropPlayerName: attempt.DropPlayerName,
+	}
+	addID := asInt64(attempt.RequestSummary["add_player_id"])
+	dropID := asInt64(attempt.RequestSummary["drop_player_id"])
+	if addID <= 0 || dropID <= 0 {
+		return WriteRequest{}, fmt.Errorf("execution attempt %d missing request player ids for verification", attempt.ID)
+	}
+	req.AddESPNPlayerID = &addID
+	req.DropESPNPlayerID = &dropID
+	return req, nil
+}
+
+func asInt64(v any) int64 {
+	switch t := v.(type) {
+	case int64:
+		return t
+	case int:
+		return int64(t)
+	case float64:
+		return int64(t)
+	case float32:
+		return int64(t)
+	}
+	return 0
+}
+
+func asString(v any) string {
+	s, _ := v.(string)
+	return s
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func (s *Service) findApprovedItem(ctx context.Context, itemID int64) (*transactions.ApprovalQueueItem, error) {

@@ -49,6 +49,7 @@ type ExecutionConfig struct {
 	RequireConfirmation bool                     `json:"require_confirmation"`
 	Preflight           ExecutionPreflightConfig `json:"preflight"`
 	Real                ExecutionRealConfig      `json:"real"`
+	Hardening           ExecutionHardeningConfig `json:"hardening"`
 }
 
 type ExecutionPreflightConfig struct {
@@ -65,6 +66,14 @@ type ExecutionRealConfig struct {
 	RequireConfirmation        bool `json:"require_confirmation"`
 	AllowRepeatExecution       bool `json:"allow_repeat_execution"`
 	VerificationTimeoutSeconds int  `json:"verification_timeout_seconds"`
+}
+
+type ExecutionHardeningConfig struct {
+	BlockOnPriorSuccess                 bool `json:"block_on_prior_success"`
+	BlockOnAmbiguousPriorAttempt        bool `json:"block_on_ambiguous_prior_attempt"`
+	VerificationRecheckLimit            int  `json:"verification_recheck_limit"`
+	VerificationPendingWindowSeconds    int  `json:"verification_pending_window_seconds"`
+	TreatMixedReconciliationInconclusive bool `json:"treat_mixed_reconciliation_as_inconclusive"`
 }
 
 type ESPNConfig struct {
@@ -175,6 +184,13 @@ func Default() Config {
 				RequireConfirmation:        true,
 				AllowRepeatExecution:       false,
 				VerificationTimeoutSeconds: 20,
+			},
+			Hardening: ExecutionHardeningConfig{
+				BlockOnPriorSuccess:                  true,
+				BlockOnAmbiguousPriorAttempt:         true,
+				VerificationRecheckLimit:             3,
+				VerificationPendingWindowSeconds:     30,
+				TreatMixedReconciliationInconclusive: true,
 			},
 		},
 		Planning: PlanningConfig{
@@ -437,6 +453,12 @@ func (c Config) Validate() error {
 	}
 	if c.Execution.Real.VerificationTimeoutSeconds <= 0 || c.Execution.Real.VerificationTimeoutSeconds > 120 {
 		problems = append(problems, "execution.real.verification_timeout_seconds must be between 1 and 120")
+	}
+	if c.Execution.Hardening.VerificationRecheckLimit <= 0 || c.Execution.Hardening.VerificationRecheckLimit > 20 {
+		problems = append(problems, "execution.hardening.verification_recheck_limit must be between 1 and 20")
+	}
+	if c.Execution.Hardening.VerificationPendingWindowSeconds < 0 || c.Execution.Hardening.VerificationPendingWindowSeconds > 600 {
+		problems = append(problems, "execution.hardening.verification_pending_window_seconds must be between 0 and 600")
 	}
 
 	if len(problems) > 0 {

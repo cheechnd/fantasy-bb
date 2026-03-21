@@ -177,6 +177,155 @@ func TestHistoryAndByID(t *testing.T) {
 	}
 }
 
+func TestExecuteOneSubmittedWhenVerificationPending(t *testing.T) {
+	svc, cfg, itemID, closeFn, writer, verifier := seededRealService(t, realSeedInput{
+		addName:     "Add Arm",
+		dropName:    "Drop Arm",
+		rosterNames: []string{"Drop Arm"},
+		candidates:  []string{"Add Arm"},
+	})
+	defer closeFn()
+	writer.result = WriteResult{OK: true, Endpoint: "https://x/transactions", ResponseStatus: 200}
+	verifier.status = execute.VerificationStatusPending
+
+	res, err := svc.ExecuteOne(context.Background(), cfg, execute.RealExecutionOptions{ItemID: itemID, Confirm: true})
+	if err != nil {
+		t.Fatalf("ExecuteOne: %v", err)
+	}
+	if res.Attempt == nil {
+		t.Fatalf("expected attempt")
+	}
+	if res.Attempt.ExecutionStatus != execute.ExecutionStatusSubmitted {
+		t.Fatalf("expected submitted status, got %s", res.Attempt.ExecutionStatus)
+	}
+	if res.Attempt.VerificationStatus != execute.VerificationStatusPending {
+		t.Fatalf("expected pending verification, got %s", res.Attempt.VerificationStatus)
+	}
+}
+
+func TestExecuteOneBlocksOnPriorAmbiguousAttempt(t *testing.T) {
+	svc, cfg, itemID, closeFn, writer, verifier := seededRealService(t, realSeedInput{
+		addName:     "Add Arm",
+		dropName:    "Drop Arm",
+		rosterNames: []string{"Drop Arm"},
+		candidates:  []string{"Add Arm"},
+	})
+	defer closeFn()
+	writer.result = WriteResult{OK: true, Endpoint: "https://x/transactions", ResponseStatus: 200}
+	verifier.status = execute.VerificationStatusPending
+
+	if _, err := svc.ExecuteOne(context.Background(), cfg, execute.RealExecutionOptions{ItemID: itemID, Confirm: true}); err != nil {
+		t.Fatalf("first ExecuteOne: %v", err)
+	}
+	if _, err := svc.ExecuteOne(context.Background(), cfg, execute.RealExecutionOptions{ItemID: itemID, Confirm: true}); err == nil {
+		t.Fatalf("expected block on prior ambiguous/submitted attempt")
+	}
+}
+
+func TestVerifyAttemptRecheck(t *testing.T) {
+	svc, cfg, itemID, closeFn, writer, verifier := seededRealService(t, realSeedInput{
+		addName:     "Add Arm",
+		dropName:    "Drop Arm",
+		rosterNames: []string{"Drop Arm"},
+		candidates:  []string{"Add Arm"},
+	})
+	defer closeFn()
+	writer.result = WriteResult{OK: true, Endpoint: "https://x/transactions", ResponseStatus: 200}
+	verifier.status = execute.VerificationStatusPending
+
+	res, err := svc.ExecuteOne(context.Background(), cfg, execute.RealExecutionOptions{ItemID: itemID, Confirm: true})
+	if err != nil {
+		t.Fatalf("ExecuteOne: %v", err)
+	}
+	verifier.status = execute.VerificationStatusVerified
+	verifier.details = map[string]any{"inference": "likely_executed"}
+
+	vr, err := svc.VerifyAttempt(context.Background(), cfg, res.Attempt.ID)
+	if err != nil {
+		t.Fatalf("VerifyAttempt: %v", err)
+	}
+	if vr.Attempt == nil {
+		t.Fatalf("expected updated attempt")
+	}
+	if vr.Attempt.VerificationStatus != execute.VerificationStatusVerified {
+		t.Fatalf("expected verified status, got %s", vr.Attempt.VerificationStatus)
+	}
+}
+
+func TestPendingAttempts(t *testing.T) {
+	svc, cfg, itemID, closeFn, writer, verifier := seededRealService(t, realSeedInput{
+		addName:     "Add Arm",
+		dropName:    "Drop Arm",
+		rosterNames: []string{"Drop Arm"},
+		candidates:  []string{"Add Arm"},
+	})
+	defer closeFn()
+	writer.result = WriteResult{OK: true, Endpoint: "https://x/transactions", ResponseStatus: 200}
+	verifier.status = execute.VerificationStatusPending
+
+	if _, err := svc.ExecuteOne(context.Background(), cfg, execute.RealExecutionOptions{ItemID: itemID, Confirm: true}); err != nil {
+		t.Fatalf("ExecuteOne: %v", err)
+	}
+	rows, err := svc.Pending(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatalf("expected unresolved attempts")
+	}
+}
+
+func TestReconcileAttempt(t *testing.T) {
+	svc, cfg, itemID, closeFn, writer, verifier := seededRealService(t, realSeedInput{
+		addName:     "Add Arm",
+		dropName:    "Drop Arm",
+		rosterNames: []string{"Drop Arm"},
+		candidates:  []string{"Add Arm"},
+	})
+	defer closeFn()
+	writer.result = WriteResult{OK: true, Endpoint: "https://x/transactions", ResponseStatus: 200}
+	verifier.status = execute.VerificationStatusUnverified
+	verifier.details = map[string]any{"inference": "likely_not_executed"}
+
+	res, err := svc.ExecuteOne(context.Background(), cfg, execute.RealExecutionOptions{ItemID: itemID, Confirm: true})
+	if err != nil {
+		t.Fatalf("ExecuteOne: %v", err)
+	}
+	rr, err := svc.ReconcileAttempt(context.Background(), cfg, res.Attempt.ID)
+	if err != nil {
+		t.Fatalf("ReconcileAttempt: %v", err)
+	}
+	if rr.Inference == "" {
+		t.Fatalf("expected reconciliation inference")
+	}
+}
+
+func TestVerifyAttemptRespectsRecheckLimit(t *testing.T) {
+	svc, cfg, itemID, closeFn, writer, verifier := seededRealService(t, realSeedInput{
+		addName:     "Add Arm",
+		dropName:    "Drop Arm",
+		rosterNames: []string{"Drop Arm"},
+		candidates:  []string{"Add Arm"},
+	})
+	defer closeFn()
+	cfg.Execution.Hardening.VerificationRecheckLimit = 1
+	writer.result = WriteResult{OK: true, Endpoint: "https://x/transactions", ResponseStatus: 200}
+	verifier.status = execute.VerificationStatusPending
+
+	res, err := svc.ExecuteOne(context.Background(), cfg, execute.RealExecutionOptions{ItemID: itemID, Confirm: true})
+	if err != nil {
+		t.Fatalf("ExecuteOne: %v", err)
+	}
+	// first recheck allowed
+	if _, err := svc.VerifyAttempt(context.Background(), cfg, res.Attempt.ID); err != nil {
+		t.Fatalf("VerifyAttempt #1: %v", err)
+	}
+	// second should be blocked by limit
+	if _, err := svc.VerifyAttempt(context.Background(), cfg, res.Attempt.ID); err == nil {
+		t.Fatalf("expected recheck limit error")
+	}
+}
+
 type fakeWriter struct {
 	calls  int
 	result WriteResult
