@@ -19,13 +19,13 @@ It ingests probable starter projections into SQLite, syncs your ESPN roster in r
 - generates saved read-only add/drop transaction plans with deterministic move buckets
 - adds explicit transaction review workflow with pending/approved/rejected/deferred states
 - adds dry-run execution preflight runs for approved items (no ESPN writes)
+- executes one explicitly confirmed approved add/drop move for real with immediate preflight gating and verification
 
 ## What it does not do
 
-- lineup/add-drop execution
-- transaction execution/waiver submission/FAAB bidding
-- ESPN writes of any kind
-- real execution of add/drop moves
+- lineup execution
+- batch transaction execution
+- waiver submission/FAAB bidding automation
 - browser automation
 - web dashboard
 
@@ -83,6 +83,10 @@ Fetch bounded free-agent pitchers and build pickup recommendations:
 ./fb execute queue
 ./fb execute preflight
 ./fb execute dry-run
+./fb execute transaction --item 3
+./fb execute transaction --item 3 --confirm
+./fb execute history
+./fb execute result --execution-id 1
 ```
 
 ## Typical workflow
@@ -166,6 +170,25 @@ Fetch bounded free-agent pitchers and build pickup recommendations:
 ./fb execute last
 ```
 
+### 9. Execute one approved move (real write, explicit confirm required)
+
+```bash
+./fb execute transaction --item 3
+./fb execute transaction --item 3 --confirm
+# equivalent:
+./fb execute confirm --item 3
+./fb execute history
+./fb execute result --execution-id 1
+```
+
+Safety rules:
+
+- one approved item at a time only (no batch execute)
+- immediate preflight is re-run right before write
+- write is attempted only with explicit confirmation
+- no hidden retries
+- post-write verification is recorded separately from write success
+
 Recommendations are deterministic and inspectable:
 
 - `top_candidate`: strongest overall options in the window
@@ -185,7 +208,7 @@ Per-start transaction scoring:
 
 - transaction plan comparisons are now based on projected FPTS per start (quality-first).
 - two-start context remains informational (`two_start_week` flag), not a scoring bonus.
-- move buckets (`strong_move`, `marginal_move`, etc.) use per-start deltas with uncertainty penalties.
+- move buckets (`strong_move`, `marginal_move`, etc.) use single-start opportunity deltas with uncertainty penalties.
 
 Transaction review states:
 
@@ -201,6 +224,20 @@ Execution preflight statuses:
 - `stale`: approval/context looks out of date
 - `conflict`: live roster state conflicts with planned move
 - `unknown`: insufficient certainty to proceed safely
+
+Real execution statuses:
+
+- `started`: execution attempt created
+- `succeeded`: write request returned apparent success
+- `failed`: write request attempted and failed
+- `aborted`: no write attempted (for example preflight gate failed)
+
+Verification statuses:
+
+- `verified`: add/drop appears landed in post-write checks
+- `unverified`: write may have succeeded but verification is inconclusive
+- `verification_failed`: verification check errored
+- `unknown`: verification not available
 
 ## Interpreting output
 
@@ -302,10 +339,14 @@ Pitcher analysis uses ESPN snapshots only. By default it uses the latest sync, o
 - `fb transactions show --plan-id <id>`
 - `fb transactions explain --plan-id <id>`
 
-### Execute (read-only preflight)
+### Execute
 - `fb execute queue [--limit <n>]`
 - `fb execute preflight [--item <approved-item-id>] [--limit <n>]`
 - `fb execute dry-run [--item <approved-item-id>] [--limit <n>]`
+- `fb execute transaction --item <approved-item-id> [--confirm]`
+- `fb execute confirm --item <approved-item-id>`
+- `fb execute history [--limit <n>]`
+- `fb execute result --execution-id <id>`
 - `fb execute last`
 - `fb execute show --run-id <id>`
 
@@ -330,6 +371,7 @@ SQLite is the system of record. Key tables:
 - transaction planning artifacts: `transaction_plans`, `transaction_plan_items`
 - transaction review workflow: `transaction_review_states`, `transaction_review_history`
 - execution preflight artifacts: `execution_runs`, `execution_run_items`
+- real execution artifacts: `execution_attempts`, `execution_attempt_events`
 
 ## ESPN credentials
 
@@ -369,6 +411,13 @@ Transaction planning tuning is configurable under `transactions.pitchers` in `co
 - `uncertainty_penalty_missing_projection`
 - `uncertainty_penalty_ambiguous_match`
 - `allow_compare_against_likely_start`
+
+Real single-item execution tuning is configurable under `execution.real`:
+
+- `enabled` (default `false`)
+- `require_confirmation` (default `true`)
+- `allow_repeat_execution` (default `false`)
+- `verification_timeout_seconds` (default `20`)
 
 ## Development
 

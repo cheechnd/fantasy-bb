@@ -52,12 +52,14 @@ func (r *Repository) SavePlan(ctx context.Context, in transactions.CreatePlanInp
 		resItem, err := tx.ExecContext(ctx, `
 			INSERT INTO transaction_plan_items (
 				transaction_plan_id, bucket, add_player_name, add_player_team, add_espn_player_id,
+				add_start_date, add_start_opponent,
 				drop_player_name, drop_player_team, drop_espn_player_id,
+				drop_best_start_date, drop_best_start_opponent,
 				add_projected_start_count, add_total_projected_fpts,
 				drop_projected_start_count, drop_total_projected_fpts,
 				delta_fpts, result_rank, flags_json, notes_json, details_json, created_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, planID, item.Bucket, item.AddPlayerName, item.AddPlayerTeam, nullInt64(item.AddESPNPlayerID), item.DropPlayerName, item.DropPlayerTeam, nullInt64(item.DropESPNPlayerID), item.AddProjectedStartCount, item.AddTotalProjectedFPTS, item.DropProjectedStartCount, item.DropTotalProjectedFPTS, item.DeltaFPTS, nullInt(item.ResultRank), string(flagsJSON), string(notesJSON), string(detailsJSON), now)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, planID, item.Bucket, item.AddPlayerName, item.AddPlayerTeam, nullInt64(item.AddESPNPlayerID), item.AddStartDate, item.AddStartOpponent, item.DropPlayerName, item.DropPlayerTeam, nullInt64(item.DropESPNPlayerID), item.DropBestStartDate, item.DropBestStartOpponent, item.AddProjectedStartCount, item.AddTotalProjectedFPTS, item.DropProjectedStartCount, item.DropTotalProjectedFPTS, item.DeltaFPTS, nullInt(item.ResultRank), string(flagsJSON), string(notesJSON), string(detailsJSON), now)
 		if err != nil {
 			return 0, fmt.Errorf("insert transaction plan item: %w", err)
 		}
@@ -131,8 +133,8 @@ func (r *Repository) PlanByID(ctx context.Context, planID int64) (*transactions.
 func (r *Repository) PlanItems(ctx context.Context, planID int64) ([]transactions.PlanItem, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, transaction_plan_id, bucket,
-		       add_player_name, COALESCE(add_player_team, ''), add_espn_player_id,
-		       drop_player_name, COALESCE(drop_player_team, ''), drop_espn_player_id,
+		       add_player_name, COALESCE(add_player_team, ''), add_espn_player_id, COALESCE(add_start_date, ''), COALESCE(add_start_opponent, ''),
+		       drop_player_name, COALESCE(drop_player_team, ''), drop_espn_player_id, COALESCE(drop_best_start_date, ''), COALESCE(drop_best_start_opponent, ''),
 		       add_projected_start_count, add_total_projected_fpts,
 		       drop_projected_start_count, drop_total_projected_fpts,
 		       delta_fpts, result_rank, COALESCE(flags_json, '[]'), COALESCE(notes_json, '[]'),
@@ -160,8 +162,8 @@ func (r *Repository) PlanItems(ctx context.Context, planID int64) ([]transaction
 		var flagsJSON, notesJSON, detailsJSON, createdAtRaw string
 		if err := rows.Scan(
 			&item.ID, &item.TransactionPlanID, &item.Bucket,
-			&item.AddPlayerName, &item.AddPlayerTeam, &addID,
-			&item.DropPlayerName, &item.DropPlayerTeam, &dropID,
+			&item.AddPlayerName, &item.AddPlayerTeam, &addID, &item.AddStartDate, &item.AddStartOpponent,
+			&item.DropPlayerName, &item.DropPlayerTeam, &dropID, &item.DropBestStartDate, &item.DropBestStartOpponent,
 			&item.AddProjectedStartCount, &addTotal,
 			&item.DropProjectedStartCount, &dropTotal,
 			&delta, &rank, &flagsJSON, &notesJSON, &detailsJSON, &createdAtRaw,

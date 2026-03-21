@@ -95,7 +95,7 @@ func TestRecommendBuildsAndPersistsCategories(t *testing.T) {
 	}
 }
 
-func TestTopStreamersRespectsMinTotalFilter(t *testing.T) {
+func TestTopStreamersRespectsMinThresholdOnBestStart(t *testing.T) {
 	store := mustOpenStore(t)
 	defer store.Close()
 
@@ -129,8 +129,8 @@ func TestTopStreamersRespectsMinTotalFilter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TopStreamers: %v", err)
 	}
-	if len(res.TopStreamers) != 1 || res.TopStreamers[0].PlayerName != "Streamer Ace" {
-		t.Fatalf("expected only high-total streamer, got %+v", res.TopStreamers)
+	if len(res.TopStreamers) != 0 {
+		t.Fatalf("expected no streamers at high best-start threshold, got %+v", res.TopStreamers)
 	}
 }
 

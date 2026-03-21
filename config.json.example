@@ -22,7 +22,6 @@
       "auto_start_min_total_fpts": 20.0,
       "likely_start_min_total_fpts": 12.0,
       "monitor_min_total_fpts": 6.0,
-      "two_start_auto_start_bonus": 2.0,
       "tbd_penalty": 3.0,
       "missing_projection_penalty": 4.0,
       "ambiguous_match_penalty": 5.0
@@ -61,6 +60,12 @@
       "stale_hours_threshold": 12,
       "require_live_roster_check": true,
       "require_live_availability_check": true
+    },
+    "real": {
+      "enabled": false,
+      "require_confirmation": true,
+      "allow_repeat_execution": false,
+      "verification_timeout_seconds": 20
     }
   },
   "features": {

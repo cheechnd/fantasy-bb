@@ -48,6 +48,7 @@ type ExecutionConfig struct {
 	DryRun              bool                     `json:"dry_run"`
 	RequireConfirmation bool                     `json:"require_confirmation"`
 	Preflight           ExecutionPreflightConfig `json:"preflight"`
+	Real                ExecutionRealConfig      `json:"real"`
 }
 
 type ExecutionPreflightConfig struct {
@@ -57,6 +58,13 @@ type ExecutionPreflightConfig struct {
 	StaleHoursThreshold          int  `json:"stale_hours_threshold"`
 	RequireLiveRosterCheck       bool `json:"require_live_roster_check"`
 	RequireLiveAvailabilityCheck bool `json:"require_live_availability_check"`
+}
+
+type ExecutionRealConfig struct {
+	Enabled                    bool `json:"enabled"`
+	RequireConfirmation        bool `json:"require_confirmation"`
+	AllowRepeatExecution       bool `json:"allow_repeat_execution"`
+	VerificationTimeoutSeconds int  `json:"verification_timeout_seconds"`
 }
 
 type ESPNConfig struct {
@@ -77,7 +85,6 @@ type PitcherPlanningConfig struct {
 	AutoStartMinTotalFPTS    float64 `json:"auto_start_min_total_fpts"`
 	LikelyStartMinTotalFPTS  float64 `json:"likely_start_min_total_fpts"`
 	MonitorMinTotalFPTS      float64 `json:"monitor_min_total_fpts"`
-	TwoStartAutoStartBonus   float64 `json:"two_start_auto_start_bonus"`
 	TBDPenalty               float64 `json:"tbd_penalty"`
 	MissingProjectionPenalty float64 `json:"missing_projection_penalty"`
 	AmbiguousMatchPenalty    float64 `json:"ambiguous_match_penalty"`
@@ -163,13 +170,18 @@ func Default() Config {
 				RequireLiveRosterCheck:       true,
 				RequireLiveAvailabilityCheck: true,
 			},
+			Real: ExecutionRealConfig{
+				Enabled:                    false,
+				RequireConfirmation:        true,
+				AllowRepeatExecution:       false,
+				VerificationTimeoutSeconds: 20,
+			},
 		},
 		Planning: PlanningConfig{
 			Pitchers: PitcherPlanningConfig{
 				AutoStartMinTotalFPTS:    20.0,
 				LikelyStartMinTotalFPTS:  12.0,
 				MonitorMinTotalFPTS:      6.0,
-				TwoStartAutoStartBonus:   2.0,
 				TBDPenalty:               3.0,
 				MissingProjectionPenalty: 4.0,
 				AmbiguousMatchPenalty:    5.0,
@@ -348,9 +360,6 @@ func (c Config) Validate() error {
 	if c.Planning.Pitchers.LikelyStartMinTotalFPTS < c.Planning.Pitchers.MonitorMinTotalFPTS {
 		problems = append(problems, "planning.pitchers.likely_start_min_total_fpts must be >= monitor_min_total_fpts")
 	}
-	if c.Planning.Pitchers.TwoStartAutoStartBonus < 0 {
-		problems = append(problems, "planning.pitchers.two_start_auto_start_bonus must be >= 0")
-	}
 	if c.Planning.Pitchers.TBDPenalty < 0 {
 		problems = append(problems, "planning.pitchers.tbd_penalty must be >= 0")
 	}
@@ -425,6 +434,9 @@ func (c Config) Validate() error {
 	}
 	if c.Execution.Preflight.StaleHoursThreshold < 0 {
 		problems = append(problems, "execution.preflight.stale_hours_threshold must be >= 0")
+	}
+	if c.Execution.Real.VerificationTimeoutSeconds <= 0 || c.Execution.Real.VerificationTimeoutSeconds > 120 {
+		problems = append(problems, "execution.real.verification_timeout_seconds must be between 1 and 120")
 	}
 
 	if len(problems) > 0 {

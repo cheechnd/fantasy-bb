@@ -309,14 +309,11 @@ func (s *Service) projectCandidates(candidates []espnCandidateRow, starts []fore
 		if out[i].Unmatched != out[j].Unmatched {
 			return !out[i].Unmatched
 		}
-		if out[i].TotalProjectedFPTS != out[j].TotalProjectedFPTS {
-			return out[i].TotalProjectedFPTS > out[j].TotalProjectedFPTS
-		}
-		if out[i].ProjectedStartCount != out[j].ProjectedStartCount {
-			return out[i].ProjectedStartCount > out[j].ProjectedStartCount
-		}
 		if out[i].HighestSingleFPTS != out[j].HighestSingleFPTS {
 			return out[i].HighestSingleFPTS > out[j].HighestSingleFPTS
+		}
+		if out[i].TotalProjectedFPTS != out[j].TotalProjectedFPTS {
+			return out[i].TotalProjectedFPTS > out[j].TotalProjectedFPTS
 		}
 		return strings.ToLower(out[i].PlayerName) < strings.ToLower(out[j].PlayerName)
 	})
@@ -352,7 +349,7 @@ func (s *Service) buildRecommendations(cands []pickups.CandidateProjection, rost
 		}
 		if isRiskyCandidate(c) {
 			base.ItemType = pickups.ItemTypeRiskyMonitor
-			if c.TotalProjectedFPTS >= s.cfg.RiskyMonitorMinTotalFPTS {
+			if c.HighestSingleFPTS >= s.cfg.RiskyMonitorMinTotalFPTS {
 				risky = append(risky, base)
 			}
 		}
@@ -363,7 +360,7 @@ func (s *Service) buildRecommendations(cands []pickups.CandidateProjection, rost
 		if opts.MinTotalFPTS != nil {
 			minStreamer = *opts.MinTotalFPTS
 		}
-		if c.TotalProjectedFPTS >= minStreamer && !containsFlag(c.Flags, "tbd") && !isBlockedCandidate(c) {
+		if c.HighestSingleFPTS >= minStreamer && !containsFlag(c.Flags, "tbd") && !isBlockedCandidate(c) {
 			streamers = append(streamers, base)
 		}
 

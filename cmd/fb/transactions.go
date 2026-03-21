@@ -590,7 +590,7 @@ func printTransactionRowsTable(cmd *cobra.Command, rows []transactions.PlanItem)
 		return
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "BUCKET\tADD\tDROP\tDELTA_PER_START\tADD_FPTS\tDROP_FPTS\tADD_STARTS\tDROP_STARTS\tFLAGS")
+	fmt.Fprintln(w, "BUCKET\tADD\tADD_DATE\tADD_OPP\tDROP\tDROP_BEST_DATE\tDROP_BEST_OPP\tDELTA_START\tADD_FPTS\tDROP_FPTS\tADD_STARTS\tDROP_STARTS\tFLAGS")
 	for _, row := range rows {
 		addTotal := "-"
 		if row.AddTotalProjectedFPTS != nil {
@@ -604,7 +604,25 @@ func printTransactionRowsTable(cmd *cobra.Command, rows []transactions.PlanItem)
 		if row.DeltaFPTS != nil {
 			delta = fmt.Sprintf("%+.1f", *row.DeltaFPTS)
 		}
-		fmt.Fprintf(w, "%s\t%s (%s)\t%s (%s)\t%s\t%s\t%s\t%d\t%d\t%s\n", row.Bucket, row.AddPlayerName, firstNonEmpty(row.AddPlayerTeam, "-"), row.DropPlayerName, firstNonEmpty(row.DropPlayerTeam, "-"), delta, addTotal, dropTotal, row.AddProjectedStartCount, row.DropProjectedStartCount, strings.Join(row.Flags, ","))
+		fmt.Fprintf(
+			w,
+			"%s\t%s (%s)\t%s\t%s\t%s (%s)\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\n",
+			row.Bucket,
+			row.AddPlayerName,
+			firstNonEmpty(row.AddPlayerTeam, "-"),
+			firstNonEmpty(row.AddStartDate, "-"),
+			firstNonEmpty(row.AddStartOpponent, "-"),
+			row.DropPlayerName,
+			firstNonEmpty(row.DropPlayerTeam, "-"),
+			firstNonEmpty(row.DropBestStartDate, "-"),
+			firstNonEmpty(row.DropBestStartOpponent, "-"),
+			delta,
+			addTotal,
+			dropTotal,
+			row.AddProjectedStartCount,
+			row.DropProjectedStartCount,
+			strings.Join(row.Flags, ","),
+		)
 	}
 	w.Flush()
 }
@@ -615,13 +633,13 @@ func printTransactionCompare(cmd *cobra.Command, rows []transactions.PlanItem) {
 		return
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ADD\tDROP\tBUCKET\tDELTA_PER_START\tNOTES")
+	fmt.Fprintln(w, "ADD\tADD_DATE\tADD_OPP\tDROP\tDROP_BEST_DATE\tDROP_BEST_OPP\tBUCKET\tDELTA_START\tNOTES")
 	for _, row := range rows {
 		delta := "-"
 		if row.DeltaFPTS != nil {
 			delta = fmt.Sprintf("%+.1f", *row.DeltaFPTS)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", row.AddPlayerName, row.DropPlayerName, row.Bucket, delta, strings.Join(row.Notes, "; "))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", row.AddPlayerName, firstNonEmpty(row.AddStartDate, "-"), firstNonEmpty(row.AddStartOpponent, "-"), row.DropPlayerName, firstNonEmpty(row.DropBestStartDate, "-"), firstNonEmpty(row.DropBestStartOpponent, "-"), row.Bucket, delta, strings.Join(row.Notes, "; "))
 	}
 	w.Flush()
 }
@@ -634,7 +652,20 @@ func printTransactionExplain(cmd *cobra.Command, plan *transactions.Plan) {
 		if row.DeltaFPTS != nil {
 			delta = fmt.Sprintf("%+.1f", *row.DeltaFPTS)
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "- %s: add %s (%s) drop %s (%s), delta %s\n", row.Bucket, row.AddPlayerName, firstNonEmpty(row.AddPlayerTeam, "-"), row.DropPlayerName, firstNonEmpty(row.DropPlayerTeam, "-"), delta)
+		fmt.Fprintf(
+			cmd.OutOrStdout(),
+			"- %s: add %s (%s) on %s vs %s, drop %s (%s) best %s vs %s, delta %s\n",
+			row.Bucket,
+			row.AddPlayerName,
+			firstNonEmpty(row.AddPlayerTeam, "-"),
+			firstNonEmpty(row.AddStartDate, "-"),
+			firstNonEmpty(row.AddStartOpponent, "-"),
+			row.DropPlayerName,
+			firstNonEmpty(row.DropPlayerTeam, "-"),
+			firstNonEmpty(row.DropBestStartDate, "-"),
+			firstNonEmpty(row.DropBestStartOpponent, "-"),
+			delta,
+		)
 		if len(row.Notes) > 0 {
 			fmt.Fprintf(cmd.OutOrStdout(), "  notes: %s\n", strings.Join(row.Notes, "; "))
 		}

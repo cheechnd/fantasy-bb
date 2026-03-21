@@ -141,6 +141,9 @@ func BuildPlanItems(report pitchers.AnalysisReport, roster []espn.RosterSnapshot
 			},
 			CreatedAt: time.Now().UTC(),
 		}
+		if len(row.Notes) > 0 && !hasAny(row.Flags, "has_notes") {
+			row.Flags = append(row.Flags, "has_notes")
+		}
 		if snap, ok := rosterByName[matching.NormalizeName(p.PlayerName)]; ok {
 			if row.MLBTeam == "" {
 				row.MLBTeam = snap.MLBTeam
@@ -162,6 +165,9 @@ func BuildPlanItems(report pitchers.AnalysisReport, roster []espn.RosterSnapshot
 				"match_status": u.MatchStatus,
 			},
 			CreatedAt: time.Now().UTC(),
+		}
+		if len(row.Notes) > 0 && !hasAny(row.Flags, "has_notes") {
+			row.Flags = append(row.Flags, "has_notes")
 		}
 		if snap, ok := rosterByName[matching.NormalizeName(u.InputPlayerName)]; ok {
 			if row.MLBTeam == "" {
@@ -186,6 +192,9 @@ func BuildPlanItems(report pitchers.AnalysisReport, roster []espn.RosterSnapshot
 			},
 			CreatedAt: time.Now().UTC(),
 		}
+		if len(row.Notes) > 0 && !hasAny(row.Flags, "has_notes") {
+			row.Flags = append(row.Flags, "has_notes")
+		}
 		if snap, ok := rosterByName[matching.NormalizeName(a.InputPlayerName)]; ok {
 			if row.MLBTeam == "" {
 				row.MLBTeam = snap.MLBTeam
@@ -204,10 +213,7 @@ func BuildPlanItems(report pitchers.AnalysisReport, roster []espn.RosterSnapshot
 }
 
 func applyScore(p pitchers.PitcherProjection, rules RuleConfig) float64 {
-	score := p.TotalProjectedFPTS
-	if p.StartCount >= 2 || hasAny(p.Flags, "two_start_week") {
-		score += rules.TwoStartAutoStartBonus
-	}
+	score := p.HighestSingleFPTS
 	if hasAny(p.Flags, "tbd") {
 		score -= rules.TBDPenalty
 	}

@@ -230,20 +230,31 @@ func (s *Service) resolveSources(ctx context.Context, opts transactions.Options)
 }
 
 type pickupCandidate struct {
-	Item        pickups.RecommendationItem
-	Total       float64
-	AvgPerStart float64
-	Uncertainty float64
-	Uncertain   bool
-	NormName    string
+	Item             pickups.RecommendationItem
+	Total            float64
+	Uncertainty      float64
+	Uncertain        bool
+	NormName         string
+	OpportunityDate  string
+	OpportunityOpp   string
+	OpportunityFPTS  float64
+	OpportunityScore float64
 }
 
 type dropCandidate struct {
-	Item        pitchplan.PlanItem
-	Total       float64
-	AvgPerStart float64
-	NormName    string
-	DropScore   float64
+	Item          pitchplan.PlanItem
+	Total         float64
+	NormName      string
+	DropScore     float64
+	BestStartDate string
+	BestStartOpp  string
+	BestStartFPTS float64
+}
+
+type startOpportunity struct {
+	Date         string
+	Opponent     string
+	ProjectedFPT float64
 }
 
 func (s *Service) buildPlanItems(plan *pitchplan.Plan, pickupRun *pickups.RecommendationRun, pickupItems []pickups.RecommendationItem, windowStart string, windowEnd string) []transactions.PlanItem {
@@ -270,7 +281,7 @@ func (s *Service) buildPlanItems(plan *pitchplan.Plan, pickupRun *pickups.Recomm
 			if add.NormName == drop.NormName {
 				continue
 			}
-			key := add.NormName + "|" + drop.NormName
+			key := add.NormName + "|" + add.OpportunityDate + "|" + drop.NormName
 			if _, ok := seen[key]; ok {
 				continue
 			}
@@ -301,21 +312,24 @@ func (s *Service) selectDropCandidates(rows []pitchplan.PlanItem) []dropCandidat
 		if row.TotalProjectedFPTS != nil {
 			total = *row.TotalProjectedFPTS
 		}
-		score := dropPriorityScore(row, total)
+		best := bestDropOpportunity(row, total)
+		score := dropPriorityScore(row, total, best.ProjectedFPT)
 		out = append(out, dropCandidate{
-			Item:        row,
-			Total:       total,
-			AvgPerStart: avgPerStart(total, row.ProjectedStartCount),
-			NormName:    normalize(row.PlayerName),
-			DropScore:   score,
+			Item:          row,
+			Total:         total,
+			NormName:      normalize(row.PlayerName),
+			DropScore:     score,
+			BestStartDate: best.Date,
+			BestStartOpp:  best.Opponent,
+			BestStartFPTS: best.ProjectedFPT,
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].DropScore != out[j].DropScore {
 			return out[i].DropScore > out[j].DropScore
 		}
-		if out[i].Total != out[j].Total {
-			return out[i].Total < out[j].Total
+		if out[i].BestStartFPTS != out[j].BestStartFPTS {
+			return out[i].BestStartFPTS < out[j].BestStartFPTS
 		}
 		return strings.ToLower(out[i].Item.PlayerName) < strings.ToLower(out[j].Item.PlayerName)
 	})
@@ -327,7 +341,7 @@ func (s *Service) selectPickupCandidates(roster []pitchplan.PlanItem, rows []pic
 	for _, r := range roster {
 		rosterSet[normalize(r.PlayerName)] = struct{}{}
 	}
-	byName := map[string]pickupCandidate{}
+	out := []pickupCandidate{}
 	for _, row := range rows {
 		if row.ItemType == pickups.ItemTypeUnmatched {
 			continue
@@ -341,26 +355,27 @@ func (s *Service) selectPickupCandidates(roster []pitchplan.PlanItem, rows []pic
 			total = *row.TotalProjectedFPTS
 		}
 		penalty := uncertaintyPenalty(row.Flags, s.cfg)
-		cand := pickupCandidate{
-			Item:        row,
-			Total:       total,
-			AvgPerStart: avgPerStart(total, row.ProjectedStartCount),
-			Uncertainty: penalty,
-			Uncertain:   penalty > 0,
-			NormName:    n,
+		opps := pickupOpportunities(row, total)
+		for _, opp := range opps {
+			out = append(out, pickupCandidate{
+				Item:             row,
+				Total:            total,
+				Uncertainty:      penalty,
+				Uncertain:        penalty > 0,
+				NormName:         n,
+				OpportunityDate:  opp.Date,
+				OpportunityOpp:   opp.Opponent,
+				OpportunityFPTS:  opp.ProjectedFPT,
+				OpportunityScore: opp.ProjectedFPT,
+			})
 		}
-		prev, ok := byName[n]
-		if !ok || cand.Total > prev.Total {
-			byName[n] = cand
-		}
-	}
-	out := make([]pickupCandidate, 0, len(byName))
-	for _, c := range byName {
-		out = append(out, c)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].AvgPerStart != out[j].AvgPerStart {
-			return out[i].AvgPerStart > out[j].AvgPerStart
+		if out[i].OpportunityScore != out[j].OpportunityScore {
+			return out[i].OpportunityScore > out[j].OpportunityScore
+		}
+		if out[i].OpportunityDate != out[j].OpportunityDate {
+			return out[i].OpportunityDate < out[j].OpportunityDate
 		}
 		if out[i].Total != out[j].Total {
 			return out[i].Total > out[j].Total
@@ -371,7 +386,7 @@ func (s *Service) selectPickupCandidates(roster []pitchplan.PlanItem, rows []pic
 }
 
 func buildMoveItem(add pickupCandidate, drop dropCandidate, cfg transactions.ServiceConfig, pickupRunID, planID int64, windowStart, windowEnd string) transactions.PlanItem {
-	delta := add.AvgPerStart - drop.AvgPerStart
+	delta := add.OpportunityFPTS - drop.BestStartFPTS
 	adjusted := delta - add.Uncertainty
 	bucket := classifyMoveBucket(delta, adjusted, add, cfg)
 
@@ -382,13 +397,18 @@ func buildMoveItem(add pickupCandidate, drop dropCandidate, cfg transactions.Ser
 	}
 	flags = unique(flags)
 
+	addWhen := firstNonEmpty(add.OpportunityDate, "unknown_date")
+	addOpp := firstNonEmpty(add.OpportunityOpp, "-")
+	dropWhen := firstNonEmpty(drop.BestStartDate, "no_start")
+	dropOpp := firstNonEmpty(drop.BestStartOpp, "-")
 	notes := []string{
-		fmt.Sprintf("per-start delta %.1f FPTS (add %.1f - drop %.1f)", delta, add.AvgPerStart, drop.AvgPerStart),
+		fmt.Sprintf("single-start delta %.1f FPTS (add %s vs drop %s)", delta, addWhen, dropWhen),
+		fmt.Sprintf("add opportunity: %s vs %s (%.1f FPTS)", addWhen, addOpp, add.OpportunityFPTS),
+		fmt.Sprintf("drop best opportunity: %s vs %s (%.1f FPTS)", dropWhen, dropOpp, drop.BestStartFPTS),
 	}
 	if add.Uncertainty > 0 {
 		notes = append(notes, fmt.Sprintf("uncertainty penalty applied: -%.1f", add.Uncertainty))
 	}
-	notes = append(notes, fmt.Sprintf("per-start comparison: add %.1f vs drop %.1f", add.AvgPerStart, drop.AvgPerStart))
 	switch bucket {
 	case transactions.BucketStrongMove:
 		notes = append(notes, "strong projected weekly upgrade")
@@ -405,9 +425,13 @@ func buildMoveItem(add pickupCandidate, drop dropCandidate, cfg transactions.Ser
 		AddPlayerName:           add.Item.PlayerName,
 		AddPlayerTeam:           add.Item.MLBTeam,
 		AddESPNPlayerID:         add.Item.ESPNPlayerID,
+		AddStartDate:            add.OpportunityDate,
+		AddStartOpponent:        add.OpportunityOpp,
 		DropPlayerName:          drop.Item.PlayerName,
 		DropPlayerTeam:          drop.Item.MLBTeam,
 		DropESPNPlayerID:        drop.Item.ESPNPlayerID,
+		DropBestStartDate:       drop.BestStartDate,
+		DropBestStartOpponent:   drop.BestStartOpp,
 		AddProjectedStartCount:  add.Item.ProjectedStartCount,
 		AddTotalProjectedFPTS:   floatPtr(add.Total),
 		DropProjectedStartCount: drop.Item.ProjectedStartCount,
@@ -417,10 +441,14 @@ func buildMoveItem(add pickupCandidate, drop dropCandidate, cfg transactions.Ser
 		Notes:                   notes,
 		Details: map[string]interface{}{
 			"adjusted_delta_fpts":          adjusted,
-			"delta_basis":                  "avg_per_start",
-			"add_avg_fpts_per_start":       add.AvgPerStart,
-			"drop_avg_fpts_per_start":      drop.AvgPerStart,
-			"avg_fpts_per_start_delta":     delta,
+			"delta_basis":                  "single_start_opportunity",
+			"add_start_date":               add.OpportunityDate,
+			"add_start_opponent":           add.OpportunityOpp,
+			"add_start_fpts":               add.OpportunityFPTS,
+			"drop_best_start_date":         drop.BestStartDate,
+			"drop_best_start_opponent":     drop.BestStartOpp,
+			"drop_best_start_fpts":         drop.BestStartFPTS,
+			"single_start_delta_fpts":      delta,
 			"pickup_item_type":             add.Item.ItemType,
 			"add_flags":                    add.Item.Flags,
 			"drop_flags":                   drop.Item.Flags,
@@ -502,7 +530,7 @@ func isDropBucket(bucket pitchplan.Bucket, allowLikely bool) bool {
 	}
 }
 
-func dropPriorityScore(row pitchplan.PlanItem, total float64) float64 {
+func dropPriorityScore(row pitchplan.PlanItem, total float64, bestStartFPTS float64) float64 {
 	score := 0.0
 	switch row.Bucket {
 	case pitchplan.BucketNoStartScheduled:
@@ -518,6 +546,7 @@ func dropPriorityScore(row pitchplan.PlanItem, total float64) float64 {
 		score += 15
 	}
 	score += max(0, 20-total)
+	score += max(0, 12-bestStartFPTS)
 	if hasAny(row.Flags, "unmatched", "tbd", "missing_projection", "ambiguous_match") {
 		score += 8
 	}
@@ -593,13 +622,6 @@ func unique(values []string) []string {
 
 func floatPtr(v float64) *float64 { return &v }
 
-func avgPerStart(total float64, starts int) float64 {
-	if starts <= 0 {
-		return 0
-	}
-	return total / float64(starts)
-}
-
 func min(a, b int) int {
 	if a < b {
 		return a
@@ -612,4 +634,122 @@ func max(a, b float64) float64 {
 		return a
 	}
 	return b
+}
+
+func pickupOpportunities(item pickups.RecommendationItem, total float64) []startOpportunity {
+	out := []startOpportunity{}
+	if item.Details != nil {
+		if raw, ok := item.Details["starts"]; ok {
+			if rows, ok := raw.([]interface{}); ok {
+				for _, row := range rows {
+					entry, ok := row.(map[string]interface{})
+					if !ok {
+						continue
+					}
+					status := strings.ToLower(strings.TrimSpace(toString(entry["status"])))
+					if status == "off" {
+						continue
+					}
+					fpts, ok := toFloat(entry["projected_fpts"])
+					if !ok {
+						continue
+					}
+					out = append(out, startOpportunity{
+						Date:         strings.TrimSpace(toString(entry["date"])),
+						Opponent:     strings.TrimSpace(toString(entry["opponent"])),
+						ProjectedFPT: fpts,
+					})
+				}
+			}
+		}
+	}
+	if len(out) == 0 && item.ProjectedStartCount > 0 {
+		out = append(out, startOpportunity{
+			Date:         "",
+			Opponent:     "",
+			ProjectedFPT: total / float64(item.ProjectedStartCount),
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].ProjectedFPT != out[j].ProjectedFPT {
+			return out[i].ProjectedFPT > out[j].ProjectedFPT
+		}
+		return out[i].Date < out[j].Date
+	})
+	return out
+}
+
+func bestDropOpportunity(item pitchplan.PlanItem, total float64) startOpportunity {
+	best := startOpportunity{}
+	found := false
+	if item.Details != nil {
+		if raw, ok := item.Details["starts"]; ok {
+			if rows, ok := raw.([]interface{}); ok {
+				for _, row := range rows {
+					entry, ok := row.(map[string]interface{})
+					if !ok {
+						continue
+					}
+					status := strings.ToLower(strings.TrimSpace(toString(entry["status"])))
+					if status == "off" {
+						continue
+					}
+					fpts, ok := toFloat(entry["projected_fpts"])
+					if !ok {
+						continue
+					}
+					cur := startOpportunity{
+						Date:         strings.TrimSpace(toString(entry["date"])),
+						Opponent:     strings.TrimSpace(toString(entry["opponent"])),
+						ProjectedFPT: fpts,
+					}
+					if !found || cur.ProjectedFPT > best.ProjectedFPT {
+						best = cur
+						found = true
+					}
+				}
+			}
+		}
+	}
+	if !found {
+		fallback := 0.0
+		if item.ProjectedStartCount > 0 {
+			fallback = total / float64(item.ProjectedStartCount)
+		}
+		best = startOpportunity{ProjectedFPT: fallback}
+	}
+	return best
+}
+
+func toFloat(v interface{}) (float64, bool) {
+	switch t := v.(type) {
+	case float64:
+		return t, true
+	case float32:
+		return float64(t), true
+	case int:
+		return float64(t), true
+	case int64:
+		return float64(t), true
+	case nil:
+		return 0, false
+	default:
+		return 0, false
+	}
+}
+
+func toString(v interface{}) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }

@@ -581,7 +581,6 @@ func planningRulesFromConfig(cfg config.Config) planner.RuleConfig {
 		AutoStartMinTotalFPTS:    cfg.Planning.Pitchers.AutoStartMinTotalFPTS,
 		LikelyStartMinTotalFPTS:  cfg.Planning.Pitchers.LikelyStartMinTotalFPTS,
 		MonitorMinTotalFPTS:      cfg.Planning.Pitchers.MonitorMinTotalFPTS,
-		TwoStartAutoStartBonus:   cfg.Planning.Pitchers.TwoStartAutoStartBonus,
 		TBDPenalty:               cfg.Planning.Pitchers.TBDPenalty,
 		MissingProjectionPenalty: cfg.Planning.Pitchers.MissingProjectionPenalty,
 		AmbiguousMatchPenalty:    cfg.Planning.Pitchers.AmbiguousMatchPenalty,

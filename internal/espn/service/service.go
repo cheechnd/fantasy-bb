@@ -337,7 +337,6 @@ func (s *Service) PitcherRosterSource(ctx context.Context, syncRunID *int64) (Pi
 			MLBTeam:    row.MLBTeam,
 			Role:       row.Role,
 			Status:     strings.ToLower(strings.TrimSpace(row.StatusTag)),
-			Notes:      "source=espn",
 		})
 	}
 	return PitcherRosterSource{

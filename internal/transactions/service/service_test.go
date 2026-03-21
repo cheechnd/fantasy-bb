@@ -86,14 +86,14 @@ func TestPairingRespectsMaxPairings(t *testing.T) {
 
 func TestClassificationBuckets(t *testing.T) {
 	cfg := defaultCfg()
-	addStrong := pickupCandidate{Total: 20.0, Uncertainty: 0, Uncertain: false}
+	addStrong := pickupCandidate{Total: 20.0, OpportunityFPTS: 12.0, Uncertainty: 0, Uncertain: false}
 	if got := classifyMoveBucket(8.0, 8.0, addStrong, cfg); got != transactions.BucketStrongMove {
 		t.Fatalf("expected strong_move, got %s", got)
 	}
 	if got := classifyMoveBucket(2.0, 2.0, addStrong, cfg); got != transactions.BucketMarginalMove {
 		t.Fatalf("expected marginal_move, got %s", got)
 	}
-	addRisk := pickupCandidate{Total: 20.0, Uncertainty: 2.0, Uncertain: true}
+	addRisk := pickupCandidate{Total: 20.0, OpportunityFPTS: 12.0, Uncertainty: 2.0, Uncertain: true}
 	if got := classifyMoveBucket(2.0, 0.0, addRisk, cfg); got != transactions.BucketRiskyMove {
 		t.Fatalf("expected risky_move, got %s", got)
 	}
@@ -111,8 +111,10 @@ func TestBuildMoveItem_TwoStartIsInformationalOnly(t *testing.T) {
 			ProjectedStartCount: 2,
 			Flags:               []string{"two_start_week"},
 		},
-		Total:       16.0,
-		AvgPerStart: 8.0,
+		Total:           16.0,
+		OpportunityDate: "2026-09-16",
+		OpportunityOpp:  "MIA",
+		OpportunityFPTS: 8.0,
 	}
 	drop := dropCandidate{
 		Item: pitchplan.PlanItem{
@@ -120,8 +122,10 @@ func TestBuildMoveItem_TwoStartIsInformationalOnly(t *testing.T) {
 			MLBTeam:             "PHI",
 			ProjectedStartCount: 1,
 		},
-		Total:       14.0,
-		AvgPerStart: 14.0,
+		Total:         14.0,
+		BestStartDate: "2026-09-17",
+		BestStartOpp:  "ATL",
+		BestStartFPTS: 14.0,
 	}
 	item := buildMoveItem(add, drop, cfg, 1, 1, "2026-09-15", "2026-09-22")
 	if item.Bucket != transactions.BucketWatchOnly {

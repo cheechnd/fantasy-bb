@@ -144,14 +144,14 @@ func (s *Service) analyzePlayers(ctx context.Context, players []playerInput, opt
 	}
 
 	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].HighestSingleFPTS != ranked[j].HighestSingleFPTS {
+			return ranked[i].HighestSingleFPTS > ranked[j].HighestSingleFPTS
+		}
 		if ranked[i].TotalProjectedFPTS != ranked[j].TotalProjectedFPTS {
 			return ranked[i].TotalProjectedFPTS > ranked[j].TotalProjectedFPTS
 		}
-		if ranked[i].StartCount != ranked[j].StartCount {
-			return ranked[i].StartCount > ranked[j].StartCount
-		}
-		if ranked[i].HighestSingleFPTS != ranked[j].HighestSingleFPTS {
-			return ranked[i].HighestSingleFPTS > ranked[j].HighestSingleFPTS
+		if ranked[i].AverageProjectedFPTS != ranked[j].AverageProjectedFPTS {
+			return ranked[i].AverageProjectedFPTS > ranked[j].AverageProjectedFPTS
 		}
 		return ranked[i].PlayerName < ranked[j].PlayerName
 	})

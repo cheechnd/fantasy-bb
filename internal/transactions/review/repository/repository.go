@@ -187,6 +187,12 @@ func (r *Repository) Queue(ctx context.Context, limit int) ([]transactions.Appro
 		FROM transaction_review_states rs
 		INNER JOIN transaction_plan_items tpi ON tpi.id = rs.transaction_plan_item_id
 		WHERE rs.current_state = ?
+		  AND NOT EXISTS (
+		    SELECT 1
+		    FROM execution_attempts ea
+		    WHERE ea.approved_item_id = rs.transaction_plan_item_id
+		      AND ea.execution_status = 'succeeded'
+		  )
 		ORDER BY rs.updated_at DESC, rs.transaction_plan_item_id DESC
 		LIMIT ?
 	`, transactions.ReviewStateApproved, limit)

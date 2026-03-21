@@ -51,7 +51,6 @@ type RuleConfig struct {
 	AutoStartMinTotalFPTS    float64
 	LikelyStartMinTotalFPTS  float64
 	MonitorMinTotalFPTS      float64
-	TwoStartAutoStartBonus   float64
 	TBDPenalty               float64
 	MissingProjectionPenalty float64
 	AmbiguousMatchPenalty    float64

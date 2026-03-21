@@ -16,17 +16,16 @@ func TestBuildPlanItemsBuckets(t *testing.T) {
 		AutoStartMinTotalFPTS:    20,
 		LikelyStartMinTotalFPTS:  12,
 		MonitorMinTotalFPTS:      6,
-		TwoStartAutoStartBonus:   2,
 		TBDPenalty:               3,
 		MissingProjectionPenalty: 4,
 		AmbiguousMatchPenalty:    5,
 	}
 	report := pitchers.AnalysisReport{
 		RankedPitchers: []pitchers.PitcherProjection{
-			{PlayerName: "Ace One", StartCount: 2, TotalProjectedFPTS: 18.5, Flags: []string{"two_start_week"}},
-			{PlayerName: "Solid Two", StartCount: 1, TotalProjectedFPTS: 13.0},
-			{PlayerName: "Risky Three", StartCount: 1, TotalProjectedFPTS: 9.0, Flags: []string{"tbd"}},
-			{PlayerName: "Low Four", StartCount: 1, TotalProjectedFPTS: 4.5},
+			{PlayerName: "Ace One", StartCount: 2, TotalProjectedFPTS: 18.5, HighestSingleFPTS: 12.2, Flags: []string{"two_start_week"}},
+			{PlayerName: "Solid Two", StartCount: 1, TotalProjectedFPTS: 13.0, HighestSingleFPTS: 13.0},
+			{PlayerName: "Risky Three", StartCount: 1, TotalProjectedFPTS: 9.0, HighestSingleFPTS: 9.0, Flags: []string{"tbd"}},
+			{PlayerName: "Low Four", StartCount: 1, TotalProjectedFPTS: 4.5, HighestSingleFPTS: 4.5},
 			{PlayerName: "NoStart Five", StartCount: 0, TotalProjectedFPTS: 0.0},
 		},
 		UnmatchedPlayers: []pitchers.MatchResult{{InputPlayerName: "Unknown Six", MatchStatus: pitchers.MatchStatusUnmatched, Explanation: "not found"}},
@@ -37,11 +36,11 @@ func TestBuildPlanItemsBuckets(t *testing.T) {
 	if len(rows) != 7 {
 		t.Fatalf("expected 7 plan items, got %d", len(rows))
 	}
-	if summary[BucketAutoStart] != 1 {
-		t.Fatalf("expected 1 auto_start, got %d", summary[BucketAutoStart])
+	if summary[BucketAutoStart] != 0 {
+		t.Fatalf("expected 0 auto_start, got %d", summary[BucketAutoStart])
 	}
-	if summary[BucketLikelyStart] != 1 {
-		t.Fatalf("expected 1 likely_start, got %d", summary[BucketLikelyStart])
+	if summary[BucketLikelyStart] != 2 {
+		t.Fatalf("expected 2 likely_start, got %d", summary[BucketLikelyStart])
 	}
 	if summary[BucketMonitor] != 3 {
 		t.Fatalf("expected 3 monitor, got %d", summary[BucketMonitor])
@@ -76,7 +75,6 @@ func TestGenerateAndRetrievePlanPersistence(t *testing.T) {
 		AutoStartMinTotalFPTS:    20,
 		LikelyStartMinTotalFPTS:  12,
 		MonitorMinTotalFPTS:      6,
-		TwoStartAutoStartBonus:   2,
 		TBDPenalty:               3,
 		MissingProjectionPenalty: 4,
 		AmbiguousMatchPenalty:    5,
@@ -85,7 +83,7 @@ func TestGenerateAndRetrievePlanPersistence(t *testing.T) {
 		AnalysisRunID:  88,
 		WindowStart:    "2026-09-15",
 		WindowEnd:      "2026-09-21",
-		RankedPitchers: []pitchers.PitcherProjection{{PlayerName: "Zack Wheeler", StartCount: 2, TotalProjectedFPTS: 30.1, MatchedPitcherName: "Zack Wheeler"}},
+		RankedPitchers: []pitchers.PitcherProjection{{PlayerName: "Zack Wheeler", StartCount: 2, TotalProjectedFPTS: 30.1, HighestSingleFPTS: 16.0, MatchedPitcherName: "Zack Wheeler"}},
 	}
 	plan, err := svc.GenerateAndSave(context.Background(), GenerateInput{
 		WindowStart: report.WindowStart,
@@ -112,8 +110,8 @@ func TestGenerateAndRetrievePlanPersistence(t *testing.T) {
 	if plan.Items[0].ESPNPlayerID == nil || *plan.Items[0].ESPNPlayerID != espnID {
 		t.Fatalf("expected espn player id %d, got %#v", espnID, plan.Items[0].ESPNPlayerID)
 	}
-	if plan.Items[0].Bucket != BucketAutoStart {
-		t.Fatalf("expected auto_start bucket, got %s", plan.Items[0].Bucket)
+	if plan.Items[0].Bucket != BucketLikelyStart {
+		t.Fatalf("expected likely_start bucket, got %s", plan.Items[0].Bucket)
 	}
 
 	latest, err := svc.Latest(context.Background())

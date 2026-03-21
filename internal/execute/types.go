@@ -89,3 +89,60 @@ type ServiceConfig struct {
 	RequireLiveRosterCheck       bool
 	RequireLiveAvailabilityCheck bool
 }
+
+type ExecutionStatus string
+
+const (
+	ExecutionStatusStarted   ExecutionStatus = "started"
+	ExecutionStatusSucceeded ExecutionStatus = "succeeded"
+	ExecutionStatusFailed    ExecutionStatus = "failed"
+	ExecutionStatusAborted   ExecutionStatus = "aborted"
+)
+
+type VerificationStatus string
+
+const (
+	VerificationStatusVerified           VerificationStatus = "verified"
+	VerificationStatusUnverified         VerificationStatus = "unverified"
+	VerificationStatusVerificationFailed VerificationStatus = "verification_failed"
+	VerificationStatusUnknown            VerificationStatus = "unknown"
+)
+
+type Attempt struct {
+	ID                 int64              `json:"id"`
+	ApprovedItemID     int64              `json:"approved_item_id"`
+	SourcePlanID       int64              `json:"source_plan_id"`
+	PreflightRunID     *int64             `json:"preflight_run_id,omitempty"`
+	StartedAt          time.Time          `json:"started_at"`
+	CompletedAt        *time.Time         `json:"completed_at,omitempty"`
+	ExecutionStatus    ExecutionStatus    `json:"execution_status"`
+	VerificationStatus VerificationStatus `json:"verification_status"`
+	AddPlayerName      string             `json:"add_player_name"`
+	DropPlayerName     string             `json:"drop_player_name"`
+	RequestSummary     map[string]any     `json:"request_summary,omitempty"`
+	ResponseSummary    map[string]any     `json:"response_summary,omitempty"`
+	ErrorMessage       string             `json:"error_message,omitempty"`
+	Details            map[string]any     `json:"details,omitempty"`
+	Events             []AttemptEvent     `json:"events,omitempty"`
+}
+
+type AttemptEvent struct {
+	ID                 int64              `json:"id"`
+	ExecutionAttemptID int64              `json:"execution_attempt_id"`
+	EventType          string             `json:"event_type"`
+	EventData          map[string]any     `json:"event_data,omitempty"`
+	CreatedAt          time.Time          `json:"created_at"`
+}
+
+type RealExecutionOptions struct {
+	ItemID   int64
+	Confirm  bool
+}
+
+type RealExecutionResult struct {
+	Attempt       *Attempt    `json:"attempt,omitempty"`
+	PreflightRun  *Run        `json:"preflight_run,omitempty"`
+	PreflightItem *RunItem    `json:"preflight_item,omitempty"`
+	WillWrite     bool        `json:"will_write"`
+	Message       string      `json:"message"`
+}

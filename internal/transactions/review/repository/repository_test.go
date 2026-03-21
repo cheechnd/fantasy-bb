@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"fantasy-baseball/internal/store/sqlite"
 	"fantasy-baseball/internal/transactions"
@@ -64,6 +65,33 @@ func TestReview_TransitionsAndQueue(t *testing.T) {
 	}
 	if historyCount < 2 {
 		t.Fatalf("expected at least 2 history rows (initial + transition), got %d", historyCount)
+	}
+}
+
+func TestReview_QueueExcludesSuccessfullyExecutedItems(t *testing.T) {
+	store := mustStore(t)
+	defer store.Close()
+	planID, itemID := seedPlan(t, store)
+	repo := New(store.DB())
+
+	if _, err := repo.TransitionState(context.Background(), planID, itemID, transactions.ReviewStateApproved, "ready"); err != nil {
+		t.Fatalf("TransitionState approve: %v", err)
+	}
+	if _, err := store.DB().ExecContext(context.Background(), `
+		INSERT INTO execution_attempts (
+			approved_item_id, source_plan_id, started_at, execution_status, verification_status,
+			add_player_name, drop_player_name, request_summary_json, response_summary_json, details_json
+		) VALUES (?, ?, ?, 'succeeded', 'verified', 'Add Arm', 'Drop Arm', '{}', '{}', '{}')
+	`, itemID, planID, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		t.Fatalf("insert execution attempt: %v", err)
+	}
+
+	queue, err := repo.Queue(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("Queue: %v", err)
+	}
+	if len(queue) != 0 {
+		t.Fatalf("expected queue item to be excluded after successful execution, got %d rows", len(queue))
 	}
 }
 

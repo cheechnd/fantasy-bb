@@ -46,9 +46,13 @@ type PlanItem struct {
 	AddPlayerName           string                 `json:"add_player_name"`
 	AddPlayerTeam           string                 `json:"add_player_team,omitempty"`
 	AddESPNPlayerID         *int64                 `json:"add_espn_player_id,omitempty"`
+	AddStartDate            string                 `json:"add_start_date,omitempty"`
+	AddStartOpponent        string                 `json:"add_start_opponent,omitempty"`
 	DropPlayerName          string                 `json:"drop_player_name"`
 	DropPlayerTeam          string                 `json:"drop_player_team,omitempty"`
 	DropESPNPlayerID        *int64                 `json:"drop_espn_player_id,omitempty"`
+	DropBestStartDate       string                 `json:"drop_best_start_date,omitempty"`
+	DropBestStartOpponent   string                 `json:"drop_best_start_opponent,omitempty"`
 	AddProjectedStartCount  int                    `json:"add_projected_start_count"`
 	AddTotalProjectedFPTS   *float64               `json:"add_total_projected_fpts,omitempty"`
 	DropProjectedStartCount int                    `json:"drop_projected_start_count"`
