@@ -60,12 +60,13 @@ func TestValidateFriendlyErrors(t *testing.T) {
 	cfg.League.Platform = ""
 	cfg.Auth.ESPNS2Env = ""
 	cfg.ESPN.TimeoutSeconds = 0
+	cfg.Execution.Preflight.DefaultLimit = 0
 	err := cfg.Validate()
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
 	msg := err.Error()
-	for _, part := range []string{"log_level", "environment", "league.platform", "auth.espn_s2_env", "espn.timeout_seconds"} {
+	for _, part := range []string{"log_level", "environment", "league.platform", "auth.espn_s2_env", "espn.timeout_seconds", "execution.preflight.default_limit"} {
 		if !strings.Contains(msg, part) {
 			t.Fatalf("validation error missing %q: %s", part, msg)
 		}

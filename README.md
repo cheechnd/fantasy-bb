@@ -17,11 +17,15 @@ It ingests probable starter projections into SQLite, syncs your ESPN roster in r
 - builds saved weekly pitcher plans with deterministic start/sit buckets
 - generates saved read-only pickup/streamer recommendations with upgrade comparisons
 - generates saved read-only add/drop transaction plans with deterministic move buckets
+- adds explicit transaction review workflow with pending/approved/rejected/deferred states
+- adds dry-run execution preflight runs for approved items (no ESPN writes)
 
 ## What it does not do
 
 - lineup/add-drop execution
 - transaction execution/waiver submission/FAAB bidding
+- ESPN writes of any kind
+- real execution of add/drop moves
 - browser automation
 - web dashboard
 
@@ -73,6 +77,12 @@ Fetch bounded free-agent pitchers and build pickup recommendations:
 ./fb pickups last
 ./fb transactions plan --from 2026-09-15 --to 2026-09-22
 ./fb transactions top --from 2026-09-15 --to 2026-09-22
+./fb transactions review --plan-id 1
+./fb transactions approve --plan-id 1 --item 3 --note "Good weekly delta"
+./fb transactions queue
+./fb execute queue
+./fb execute preflight
+./fb execute dry-run
 ```
 
 ## Typical workflow
@@ -133,6 +143,29 @@ Fetch bounded free-agent pitchers and build pickup recommendations:
 ./fb transactions explain --plan-id 1
 ```
 
+### 7. Review and approve/reject/defer transaction items
+
+```bash
+./fb transactions review --plan-id 1
+./fb transactions approve --plan-id 1 --item 3 --note "Proceed if still available"
+./fb transactions defer --plan-id 1 --item 4 --note "Wait for weekend schedule"
+./fb transactions reject --plan-id 1 --item 5 --note "Too risky this week"
+./fb transactions approvals --state approved --limit 25
+./fb transactions queue
+./fb transactions reset-review --plan-id 1
+```
+
+### 8. Preflight approved moves (dry-run execution readiness)
+
+```bash
+./fb execute queue
+./fb execute preflight
+./fb execute dry-run
+./fb execute preflight --item 3
+./fb execute show --run-id 1
+./fb execute last
+```
+
 Recommendations are deterministic and inspectable:
 
 - `top_candidate`: strongest overall options in the window
@@ -147,6 +180,27 @@ Transaction move buckets:
 - `marginal_move`: positive projected upgrade, but smaller
 - `risky_move`: intriguing move with meaningful uncertainty
 - `watch_only`: low-confidence or low-delta option to monitor
+
+Per-start transaction scoring:
+
+- transaction plan comparisons are now based on projected FPTS per start (quality-first).
+- two-start context remains informational (`two_start_week` flag), not a scoring bonus.
+- move buckets (`strong_move`, `marginal_move`, etc.) use per-start deltas with uncertainty penalties.
+
+Transaction review states:
+
+- `pending`: default state on new transaction plan items
+- `approved`: explicitly approved and queued for later execution phase
+- `rejected`: explicitly declined
+- `deferred`: intentionally postponed for reconsideration
+
+Execution preflight statuses:
+
+- `executable`: checks passed and move appears ready
+- `blocked`: move cannot proceed under current live conditions
+- `stale`: approval/context looks out of date
+- `conflict`: live roster state conflicts with planned move
+- `unknown`: insufficient certainty to proceed safely
 
 ## Interpreting output
 
@@ -237,9 +291,23 @@ Pitcher analysis uses ESPN snapshots only. By default it uses the latest sync, o
 - `fb transactions plan [--from YYYY-MM-DD --to YYYY-MM-DD --sync-run <id> --import-run <id> --pitcher-plan-id <id> --pickup-run <id> --top <n>]`
 - `fb transactions top [same source/window flags]`
 - `fb transactions compare [same source/window flags]`
+- `fb transactions review --plan-id <id>`
+- `fb transactions approve --plan-id <id> --item <item-id> [--note <text>]`
+- `fb transactions reject --plan-id <id> --item <item-id> [--note <text>]`
+- `fb transactions defer --plan-id <id> --item <item-id> [--note <text>]`
+- `fb transactions queue [--limit <n>]`
+- `fb transactions approvals [--state pending|approved|rejected|deferred] [--limit <n>]`
+- `fb transactions reset-review --plan-id <id> [--item <item-id>]`
 - `fb transactions last`
 - `fb transactions show --plan-id <id>`
 - `fb transactions explain --plan-id <id>`
+
+### Execute (read-only preflight)
+- `fb execute queue [--limit <n>]`
+- `fb execute preflight [--item <approved-item-id>] [--limit <n>]`
+- `fb execute dry-run [--item <approved-item-id>] [--limit <n>]`
+- `fb execute last`
+- `fb execute show --run-id <id>`
 
 Global flags (all commands):
 - `--json`
@@ -248,8 +316,6 @@ Global flags (all commands):
 - `--db-path`
 - `--log-level`
 - `--environment`
-- `--dry-run`
-- `--require-confirmation`
 
 ## Data storage
 
@@ -262,6 +328,8 @@ SQLite is the system of record. Key tables:
 - saved planning artifacts: `pitcher_plans`, `pitcher_plan_items`
 - pickup recommendation artifacts: `pickup_recommendation_runs`, `pickup_recommendation_items`
 - transaction planning artifacts: `transaction_plans`, `transaction_plan_items`
+- transaction review workflow: `transaction_review_states`, `transaction_review_history`
+- execution preflight artifacts: `execution_runs`, `execution_run_items`
 
 ## ESPN credentials
 

@@ -102,6 +102,36 @@ func TestClassificationBuckets(t *testing.T) {
 	}
 }
 
+func TestBuildMoveItem_TwoStartIsInformationalOnly(t *testing.T) {
+	cfg := defaultCfg()
+	add := pickupCandidate{
+		Item: pickups.RecommendationItem{
+			PlayerName:          "Two Start Arm",
+			MLBTeam:             "ATL",
+			ProjectedStartCount: 2,
+			Flags:               []string{"two_start_week"},
+		},
+		Total:       16.0,
+		AvgPerStart: 8.0,
+	}
+	drop := dropCandidate{
+		Item: pitchplan.PlanItem{
+			PlayerName:          "High Quality Arm",
+			MLBTeam:             "PHI",
+			ProjectedStartCount: 1,
+		},
+		Total:       14.0,
+		AvgPerStart: 14.0,
+	}
+	item := buildMoveItem(add, drop, cfg, 1, 1, "2026-09-15", "2026-09-22")
+	if item.Bucket != transactions.BucketWatchOnly {
+		t.Fatalf("expected watch_only due to negative per-start delta, got %s", item.Bucket)
+	}
+	if !hasAny(item.Flags, "two_start_week") {
+		t.Fatalf("expected two_start_week informational flag, got %+v", item.Flags)
+	}
+}
+
 func TestLatestAndByID(t *testing.T) {
 	store := mustOpenStore(t)
 	defer store.Close()

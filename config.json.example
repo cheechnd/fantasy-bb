@@ -53,7 +53,15 @@
   },
   "execution": {
     "dry_run": true,
-    "require_confirmation": true
+    "require_confirmation": true,
+    "preflight": {
+      "default_limit": 10,
+      "max_limit": 25,
+      "candidate_refresh_limit": 25,
+      "stale_hours_threshold": 12,
+      "require_live_roster_check": true,
+      "require_live_availability_check": true
+    }
   },
   "features": {
     "enable_write_actions": false,

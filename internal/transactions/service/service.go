@@ -232,16 +232,18 @@ func (s *Service) resolveSources(ctx context.Context, opts transactions.Options)
 type pickupCandidate struct {
 	Item        pickups.RecommendationItem
 	Total       float64
+	AvgPerStart float64
 	Uncertainty float64
 	Uncertain   bool
 	NormName    string
 }
 
 type dropCandidate struct {
-	Item      pitchplan.PlanItem
-	Total     float64
-	NormName  string
-	DropScore float64
+	Item        pitchplan.PlanItem
+	Total       float64
+	AvgPerStart float64
+	NormName    string
+	DropScore   float64
 }
 
 func (s *Service) buildPlanItems(plan *pitchplan.Plan, pickupRun *pickups.RecommendationRun, pickupItems []pickups.RecommendationItem, windowStart string, windowEnd string) []transactions.PlanItem {
@@ -301,10 +303,11 @@ func (s *Service) selectDropCandidates(rows []pitchplan.PlanItem) []dropCandidat
 		}
 		score := dropPriorityScore(row, total)
 		out = append(out, dropCandidate{
-			Item:      row,
-			Total:     total,
-			NormName:  normalize(row.PlayerName),
-			DropScore: score,
+			Item:        row,
+			Total:       total,
+			AvgPerStart: avgPerStart(total, row.ProjectedStartCount),
+			NormName:    normalize(row.PlayerName),
+			DropScore:   score,
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -341,6 +344,7 @@ func (s *Service) selectPickupCandidates(roster []pitchplan.PlanItem, rows []pic
 		cand := pickupCandidate{
 			Item:        row,
 			Total:       total,
+			AvgPerStart: avgPerStart(total, row.ProjectedStartCount),
 			Uncertainty: penalty,
 			Uncertain:   penalty > 0,
 			NormName:    n,
@@ -355,6 +359,9 @@ func (s *Service) selectPickupCandidates(roster []pitchplan.PlanItem, rows []pic
 		out = append(out, c)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].AvgPerStart != out[j].AvgPerStart {
+			return out[i].AvgPerStart > out[j].AvgPerStart
+		}
 		if out[i].Total != out[j].Total {
 			return out[i].Total > out[j].Total
 		}
@@ -364,7 +371,7 @@ func (s *Service) selectPickupCandidates(roster []pitchplan.PlanItem, rows []pic
 }
 
 func buildMoveItem(add pickupCandidate, drop dropCandidate, cfg transactions.ServiceConfig, pickupRunID, planID int64, windowStart, windowEnd string) transactions.PlanItem {
-	delta := add.Total - drop.Total
+	delta := add.AvgPerStart - drop.AvgPerStart
 	adjusted := delta - add.Uncertainty
 	bucket := classifyMoveBucket(delta, adjusted, add, cfg)
 
@@ -376,11 +383,12 @@ func buildMoveItem(add pickupCandidate, drop dropCandidate, cfg transactions.Ser
 	flags = unique(flags)
 
 	notes := []string{
-		fmt.Sprintf("delta %.1f FPTS (add %.1f - drop %.1f)", delta, add.Total, drop.Total),
+		fmt.Sprintf("per-start delta %.1f FPTS (add %.1f - drop %.1f)", delta, add.AvgPerStart, drop.AvgPerStart),
 	}
 	if add.Uncertainty > 0 {
 		notes = append(notes, fmt.Sprintf("uncertainty penalty applied: -%.1f", add.Uncertainty))
 	}
+	notes = append(notes, fmt.Sprintf("per-start comparison: add %.1f vs drop %.1f", add.AvgPerStart, drop.AvgPerStart))
 	switch bucket {
 	case transactions.BucketStrongMove:
 		notes = append(notes, "strong projected weekly upgrade")
@@ -409,6 +417,10 @@ func buildMoveItem(add pickupCandidate, drop dropCandidate, cfg transactions.Ser
 		Notes:                   notes,
 		Details: map[string]interface{}{
 			"adjusted_delta_fpts":          adjusted,
+			"delta_basis":                  "avg_per_start",
+			"add_avg_fpts_per_start":       add.AvgPerStart,
+			"drop_avg_fpts_per_start":      drop.AvgPerStart,
+			"avg_fpts_per_start_delta":     delta,
 			"pickup_item_type":             add.Item.ItemType,
 			"add_flags":                    add.Item.Flags,
 			"drop_flags":                   drop.Item.Flags,
@@ -580,6 +592,13 @@ func unique(values []string) []string {
 }
 
 func floatPtr(v float64) *float64 { return &v }
+
+func avgPerStart(total float64, starts int) float64 {
+	if starts <= 0 {
+		return 0
+	}
+	return total / float64(starts)
+}
 
 func min(a, b int) int {
 	if a < b {

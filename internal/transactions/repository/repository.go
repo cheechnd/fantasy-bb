@@ -49,7 +49,7 @@ func (r *Repository) SavePlan(ctx context.Context, in transactions.CreatePlanInp
 		flagsJSON, _ := json.Marshal(item.Flags)
 		notesJSON, _ := json.Marshal(item.Notes)
 		detailsJSON, _ := json.Marshal(item.Details)
-		_, err := tx.ExecContext(ctx, `
+		resItem, err := tx.ExecContext(ctx, `
 			INSERT INTO transaction_plan_items (
 				transaction_plan_id, bucket, add_player_name, add_player_team, add_espn_player_id,
 				drop_player_name, drop_player_team, drop_espn_player_id,
@@ -60,6 +60,22 @@ func (r *Repository) SavePlan(ctx context.Context, in transactions.CreatePlanInp
 		`, planID, item.Bucket, item.AddPlayerName, item.AddPlayerTeam, nullInt64(item.AddESPNPlayerID), item.DropPlayerName, item.DropPlayerTeam, nullInt64(item.DropESPNPlayerID), item.AddProjectedStartCount, item.AddTotalProjectedFPTS, item.DropProjectedStartCount, item.DropTotalProjectedFPTS, item.DeltaFPTS, nullInt(item.ResultRank), string(flagsJSON), string(notesJSON), string(detailsJSON), now)
 		if err != nil {
 			return 0, fmt.Errorf("insert transaction plan item: %w", err)
+		}
+		itemID, err := resItem.LastInsertId()
+		if err != nil {
+			return 0, fmt.Errorf("transaction plan item id: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO transaction_review_states (transaction_plan_item_id, current_state, note, updated_at)
+			VALUES (?, 'pending', '', ?)
+		`, itemID, now); err != nil {
+			return 0, fmt.Errorf("insert default transaction review state: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO transaction_review_history (transaction_plan_item_id, previous_state, new_state, note, changed_at)
+			VALUES (?, 'pending', 'pending', 'initial state', ?)
+		`, itemID, now); err != nil {
+			return 0, fmt.Errorf("insert initial transaction review history: %w", err)
 		}
 	}
 

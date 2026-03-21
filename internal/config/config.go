@@ -45,8 +45,18 @@ type AuthConfig struct {
 }
 
 type ExecutionConfig struct {
-	DryRun              bool `json:"dry_run"`
-	RequireConfirmation bool `json:"require_confirmation"`
+	DryRun              bool                     `json:"dry_run"`
+	RequireConfirmation bool                     `json:"require_confirmation"`
+	Preflight           ExecutionPreflightConfig `json:"preflight"`
+}
+
+type ExecutionPreflightConfig struct {
+	DefaultLimit                 int  `json:"default_limit"`
+	MaxLimit                     int  `json:"max_limit"`
+	CandidateRefreshLimit        int  `json:"candidate_refresh_limit"`
+	StaleHoursThreshold          int  `json:"stale_hours_threshold"`
+	RequireLiveRosterCheck       bool `json:"require_live_roster_check"`
+	RequireLiveAvailabilityCheck bool `json:"require_live_availability_check"`
 }
 
 type ESPNConfig struct {
@@ -145,6 +155,14 @@ func Default() Config {
 		Execution: ExecutionConfig{
 			DryRun:              true,
 			RequireConfirmation: true,
+			Preflight: ExecutionPreflightConfig{
+				DefaultLimit:                 10,
+				MaxLimit:                     25,
+				CandidateRefreshLimit:        25,
+				StaleHoursThreshold:          12,
+				RequireLiveRosterCheck:       true,
+				RequireLiveAvailabilityCheck: true,
+			},
 		},
 		Planning: PlanningConfig{
 			Pitchers: PitcherPlanningConfig{
@@ -392,6 +410,21 @@ func (c Config) Validate() error {
 	}
 	if c.Transactions.Pitchers.UncertaintyPenaltyAmbiguous < 0 {
 		problems = append(problems, "transactions.pitchers.uncertainty_penalty_ambiguous_match must be >= 0")
+	}
+	if c.Execution.Preflight.DefaultLimit <= 0 {
+		problems = append(problems, "execution.preflight.default_limit must be > 0")
+	}
+	if c.Execution.Preflight.MaxLimit <= 0 {
+		problems = append(problems, "execution.preflight.max_limit must be > 0")
+	}
+	if c.Execution.Preflight.DefaultLimit > c.Execution.Preflight.MaxLimit {
+		problems = append(problems, "execution.preflight.default_limit must be <= max_limit")
+	}
+	if c.Execution.Preflight.CandidateRefreshLimit <= 0 {
+		problems = append(problems, "execution.preflight.candidate_refresh_limit must be > 0")
+	}
+	if c.Execution.Preflight.StaleHoursThreshold < 0 {
+		problems = append(problems, "execution.preflight.stale_hours_threshold must be >= 0")
 	}
 
 	if len(problems) > 0 {

@@ -11,6 +11,15 @@ const (
 	BucketWatchOnly    Bucket = "watch_only"
 )
 
+type ReviewState string
+
+const (
+	ReviewStatePending  ReviewState = "pending"
+	ReviewStateApproved ReviewState = "approved"
+	ReviewStateRejected ReviewState = "rejected"
+	ReviewStateDeferred ReviewState = "deferred"
+)
+
 type Plan struct {
 	ID                        int64       `json:"id"`
 	SyncRunID                 *int64      `json:"sync_run_id,omitempty"`
@@ -50,6 +59,54 @@ type PlanItem struct {
 	Notes                   []string               `json:"notes,omitempty"`
 	Details                 map[string]interface{} `json:"details,omitempty"`
 	CreatedAt               time.Time              `json:"created_at"`
+}
+
+type ReviewedPlanItem struct {
+	PlanItem
+	ReviewState   ReviewState `json:"review_state"`
+	ReviewNote    string      `json:"review_note,omitempty"`
+	ReviewUpdated time.Time   `json:"review_updated_at"`
+}
+
+type PlanReview struct {
+	Plan        *Plan                 `json:"plan"`
+	Items       []ReviewedPlanItem    `json:"items"`
+	StateCounts map[ReviewState]int64 `json:"state_counts"`
+}
+
+type ReviewDecision struct {
+	TransactionPlanItemID int64       `json:"transaction_plan_item_id"`
+	PlanID                int64       `json:"plan_id"`
+	PreviousState         ReviewState `json:"previous_state"`
+	NewState              ReviewState `json:"new_state"`
+	Note                  string      `json:"note,omitempty"`
+	ChangedAt             time.Time   `json:"changed_at"`
+}
+
+type ApprovalQueueItem struct {
+	TransactionPlanItemID int64       `json:"transaction_plan_item_id"`
+	PlanID                int64       `json:"plan_id"`
+	Bucket                Bucket      `json:"bucket"`
+	AddPlayerName         string      `json:"add_player_name"`
+	AddPlayerTeam         string      `json:"add_player_team,omitempty"`
+	DropPlayerName        string      `json:"drop_player_name"`
+	DropPlayerTeam        string      `json:"drop_player_team,omitempty"`
+	DeltaFPTS             *float64    `json:"delta_fpts,omitempty"`
+	Note                  string      `json:"note,omitempty"`
+	ApprovedAt            time.Time   `json:"approved_at"`
+	State                 ReviewState `json:"state"`
+}
+
+type ApprovalStateRow struct {
+	TransactionPlanItemID int64       `json:"transaction_plan_item_id"`
+	PlanID                int64       `json:"plan_id"`
+	Bucket                Bucket      `json:"bucket"`
+	AddPlayerName         string      `json:"add_player_name"`
+	DropPlayerName        string      `json:"drop_player_name"`
+	DeltaFPTS             *float64    `json:"delta_fpts,omitempty"`
+	CurrentState          ReviewState `json:"current_state"`
+	Note                  string      `json:"note,omitempty"`
+	UpdatedAt             time.Time   `json:"updated_at"`
 }
 
 type Options struct {

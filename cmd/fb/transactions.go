@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	esrepo "fantasy-baseball/internal/espn/repository"
 	"fantasy-baseball/internal/forecaster"
@@ -13,6 +14,8 @@ import (
 	"fantasy-baseball/internal/store/sqlite"
 	"fantasy-baseball/internal/transactions"
 	tranrepo "fantasy-baseball/internal/transactions/repository"
+	reviewrepo "fantasy-baseball/internal/transactions/review/repository"
+	reviewsvc "fantasy-baseball/internal/transactions/review/service"
 	transvc "fantasy-baseball/internal/transactions/service"
 
 	"github.com/spf13/cobra"
@@ -22,6 +25,7 @@ func newTransactionsCmd(opts *cliOptions) *cobra.Command {
 	cmd := &cobra.Command{Use: "transactions", Short: "Read-only add/drop transaction planning"}
 	cmd.AddGroup(
 		&cobra.Group{ID: "generate", Title: "Generate"},
+		&cobra.Group{ID: "review", Title: "Review Workflow"},
 		&cobra.Group{ID: "inspect", Title: "Inspection"},
 		&cobra.Group{ID: "explain", Title: "Explain"},
 	)
@@ -37,7 +41,25 @@ func newTransactionsCmd(opts *cliOptions) *cobra.Command {
 	showCmd.GroupID = "inspect"
 	explainCmd := newTransactionsExplainCmd(opts)
 	explainCmd.GroupID = "explain"
-	cmd.AddCommand(planCmd, topCmd, compareCmd, lastCmd, showCmd, explainCmd)
+	reviewCmd := newTransactionsReviewCmd(opts)
+	reviewCmd.GroupID = "review"
+	approveCmd := newTransactionsApproveCmd(opts)
+	approveCmd.GroupID = "review"
+	rejectCmd := newTransactionsRejectCmd(opts)
+	rejectCmd.GroupID = "review"
+	deferCmd := newTransactionsDeferCmd(opts)
+	deferCmd.GroupID = "review"
+	queueCmd := newTransactionsQueueCmd(opts)
+	queueCmd.GroupID = "review"
+	approvalsCmd := newTransactionsApprovalsCmd(opts)
+	approvalsCmd.GroupID = "review"
+	resetReviewCmd := newTransactionsResetReviewCmd(opts)
+	resetReviewCmd.GroupID = "review"
+	cmd.AddCommand(
+		planCmd, topCmd, compareCmd,
+		reviewCmd, approveCmd, rejectCmd, deferCmd, queueCmd, approvalsCmd, resetReviewCmd,
+		lastCmd, showCmd, explainCmd,
+	)
 	return cmd
 }
 
@@ -238,6 +260,192 @@ func newTransactionsExplainCmd(opts *cliOptions) *cobra.Command {
 	return cmd
 }
 
+func newTransactionsReviewCmd(opts *cliOptions) *cobra.Command {
+	var planID int64
+	cmd := &cobra.Command{
+		Use:   "review",
+		Short: "Show a transaction plan with current review state per item",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if planID <= 0 {
+				return fmt.Errorf("--plan-id must be > 0")
+			}
+			v, err := withTransactionsReviewService(cmd.Context(), opts, func(ctx context.Context, svc *reviewsvc.Service) (any, error) {
+				return svc.ReviewPlan(ctx, planID)
+			})
+			if err != nil {
+				return err
+			}
+			review := v.(*transactions.PlanReview)
+			if opts.OutputJSON {
+				return writeJSON(cmd, review)
+			}
+			printTransactionPlanReview(cmd, review)
+			return nil
+		},
+	}
+	cmd.Flags().Int64Var(&planID, "plan-id", 0, "Transaction plan ID")
+	return cmd
+}
+
+func newTransactionsApproveCmd(opts *cliOptions) *cobra.Command {
+	return newTransactionsStateChangeCmd(opts, "approve", "Mark a transaction plan item as approved", transactions.ReviewStateApproved)
+}
+
+func newTransactionsRejectCmd(opts *cliOptions) *cobra.Command {
+	return newTransactionsStateChangeCmd(opts, "reject", "Mark a transaction plan item as rejected", transactions.ReviewStateRejected)
+}
+
+func newTransactionsDeferCmd(opts *cliOptions) *cobra.Command {
+	return newTransactionsStateChangeCmd(opts, "defer", "Mark a transaction plan item as deferred", transactions.ReviewStateDeferred)
+}
+
+func newTransactionsStateChangeCmd(opts *cliOptions, use, short string, target transactions.ReviewState) *cobra.Command {
+	var planID int64
+	var itemID int64
+	var note string
+	cmd := &cobra.Command{
+		Use:   use,
+		Short: short,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if planID <= 0 {
+				return fmt.Errorf("--plan-id must be > 0")
+			}
+			if itemID <= 0 {
+				return fmt.Errorf("--item must be > 0")
+			}
+			v, err := withTransactionsReviewService(cmd.Context(), opts, func(ctx context.Context, svc *reviewsvc.Service) (any, error) {
+				switch target {
+				case transactions.ReviewStateApproved:
+					return svc.Approve(ctx, planID, itemID, note)
+				case transactions.ReviewStateRejected:
+					return svc.Reject(ctx, planID, itemID, note)
+				case transactions.ReviewStateDeferred:
+					return svc.Defer(ctx, planID, itemID, note)
+				default:
+					return nil, fmt.Errorf("unsupported review target state %q", target)
+				}
+			})
+			if err != nil {
+				return err
+			}
+			decision := v.(*transactions.ReviewDecision)
+			if opts.OutputJSON {
+				return writeJSON(cmd, map[string]any{"ok": true, "decision": decision})
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Plan %d item %d: %s -> %s\n", decision.PlanID, decision.TransactionPlanItemID, decision.PreviousState, decision.NewState)
+			if decision.Note != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "Note: %s\n", decision.Note)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Updated: %s\n", decision.ChangedAt.Format(time.RFC3339))
+			return nil
+		},
+	}
+	cmd.Flags().Int64Var(&planID, "plan-id", 0, "Transaction plan ID")
+	cmd.Flags().Int64Var(&itemID, "item", 0, "Transaction plan item ID")
+	cmd.Flags().StringVar(&note, "note", "", "Optional decision note")
+	return cmd
+}
+
+func newTransactionsQueueCmd(opts *cliOptions) *cobra.Command {
+	var limit int
+	cmd := &cobra.Command{
+		Use:   "queue",
+		Short: "Show approved transaction items queued for future execution",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			v, err := withTransactionsReviewService(cmd.Context(), opts, func(ctx context.Context, svc *reviewsvc.Service) (any, error) {
+				return svc.Queue(ctx, limit)
+			})
+			if err != nil {
+				return err
+			}
+			rows := v.([]transactions.ApprovalQueueItem)
+			if opts.OutputJSON {
+				return writeJSON(cmd, map[string]any{"ok": true, "count": len(rows), "items": rows})
+			}
+			printTransactionQueue(cmd, rows)
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&limit, "limit", 20, "Maximum queued items to show")
+	return cmd
+}
+
+func newTransactionsApprovalsCmd(opts *cliOptions) *cobra.Command {
+	var limit int
+	var stateRaw string
+	cmd := &cobra.Command{
+		Use:   "approvals",
+		Short: "Show transaction review states across plans",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var state *transactions.ReviewState
+			if cmd.Flags().Changed("state") {
+				s, err := parseReviewState(stateRaw)
+				if err != nil {
+					return err
+				}
+				state = &s
+			}
+			v, err := withTransactionsReviewService(cmd.Context(), opts, func(ctx context.Context, svc *reviewsvc.Service) (any, error) {
+				return svc.Approvals(ctx, limit, state)
+			})
+			if err != nil {
+				return err
+			}
+			rows := v.([]transactions.ApprovalStateRow)
+			if opts.OutputJSON {
+				return writeJSON(cmd, map[string]any{"ok": true, "count": len(rows), "rows": rows})
+			}
+			printTransactionApprovals(cmd, rows)
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum approval rows to show")
+	cmd.Flags().StringVar(&stateRaw, "state", "", "Filter by review state (pending|approved|rejected|deferred)")
+	return cmd
+}
+
+func newTransactionsResetReviewCmd(opts *cliOptions) *cobra.Command {
+	var planID int64
+	var itemID int64
+	cmd := &cobra.Command{
+		Use:   "reset-review",
+		Short: "Reset review state to pending for a plan or a single item",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if planID <= 0 {
+				return fmt.Errorf("--plan-id must be > 0")
+			}
+			var itemPtr *int64
+			if cmd.Flags().Changed("item") {
+				if itemID <= 0 {
+					return fmt.Errorf("--item must be > 0")
+				}
+				itemPtr = &itemID
+			}
+			v, err := withTransactionsReviewService(cmd.Context(), opts, func(ctx context.Context, svc *reviewsvc.Service) (any, error) {
+				return svc.Reset(ctx, planID, itemPtr)
+			})
+			if err != nil {
+				return err
+			}
+			if opts.OutputJSON {
+				return writeJSON(cmd, map[string]any{"ok": true, "result": v})
+			}
+			switch x := v.(type) {
+			case *transactions.ReviewDecision:
+				fmt.Fprintf(cmd.OutOrStdout(), "Plan %d item %d reset: %s -> %s\n", x.PlanID, x.TransactionPlanItemID, x.PreviousState, x.NewState)
+			case map[string]any:
+				fmt.Fprintf(cmd.OutOrStdout(), "Plan %d reset to pending (changed items: %v)\n", planID, x["changed_count"])
+			default:
+				fmt.Fprintf(cmd.OutOrStdout(), "Plan %d review reset completed.\n", planID)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().Int64Var(&planID, "plan-id", 0, "Transaction plan ID")
+	cmd.Flags().Int64Var(&itemID, "item", 0, "Optional transaction plan item ID")
+	return cmd
+}
+
 func withTransactionsService(ctx context.Context, opts *cliOptions, fn func(context.Context, *transvc.Service) (any, error)) (any, error) {
 	cfg, _, err := loadConfigWithOverrides(opts)
 	if err != nil {
@@ -273,6 +481,24 @@ func withTransactionsService(ctx context.Context, opts *cliOptions, fn func(cont
 	return fn(ctx, service)
 }
 
+func withTransactionsReviewService(ctx context.Context, opts *cliOptions, fn func(context.Context, *reviewsvc.Service) (any, error)) (any, error) {
+	cfg, _, err := loadConfigWithOverrides(opts)
+	if err != nil {
+		return nil, err
+	}
+	s, err := sqlite.Open(cfg.DBPath)
+	if err != nil {
+		return nil, err
+	}
+	defer s.Close()
+	if _, err := s.Migrate(ctx); err != nil {
+		return nil, err
+	}
+
+	service := reviewsvc.New(reviewrepo.New(s.DB()))
+	return fn(ctx, service)
+}
+
 func buildTransactionOptions(cmd *cobra.Command, fromRaw, toRaw string, topN int, syncRunID, importRunID, pitcherPlanID, pickupRunID *int64) (transactions.Options, error) {
 	from, to, err := parseWindow(fromRaw, toRaw)
 	if err != nil {
@@ -296,6 +522,21 @@ func buildTransactionOptions(cmd *cobra.Command, fromRaw, toRaw string, topN int
 		out.PickupRunID = &v
 	}
 	return out, nil
+}
+
+func parseReviewState(raw string) (transactions.ReviewState, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case string(transactions.ReviewStatePending):
+		return transactions.ReviewStatePending, nil
+	case string(transactions.ReviewStateApproved):
+		return transactions.ReviewStateApproved, nil
+	case string(transactions.ReviewStateRejected):
+		return transactions.ReviewStateRejected, nil
+	case string(transactions.ReviewStateDeferred):
+		return transactions.ReviewStateDeferred, nil
+	default:
+		return "", fmt.Errorf("invalid --state value %q (expected pending|approved|rejected|deferred)", raw)
+	}
 }
 
 func printTransactionPlan(cmd *cobra.Command, plan *transactions.Plan) {
@@ -349,7 +590,7 @@ func printTransactionRowsTable(cmd *cobra.Command, rows []transactions.PlanItem)
 		return
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "BUCKET\tADD\tDROP\tDELTA_FPTS\tADD_FPTS\tDROP_FPTS\tADD_STARTS\tDROP_STARTS\tFLAGS")
+	fmt.Fprintln(w, "BUCKET\tADD\tDROP\tDELTA_PER_START\tADD_FPTS\tDROP_FPTS\tADD_STARTS\tDROP_STARTS\tFLAGS")
 	for _, row := range rows {
 		addTotal := "-"
 		if row.AddTotalProjectedFPTS != nil {
@@ -374,7 +615,7 @@ func printTransactionCompare(cmd *cobra.Command, rows []transactions.PlanItem) {
 		return
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ADD\tDROP\tBUCKET\tDELTA\tNOTES")
+	fmt.Fprintln(w, "ADD\tDROP\tBUCKET\tDELTA_PER_START\tNOTES")
 	for _, row := range rows {
 		delta := "-"
 		if row.DeltaFPTS != nil {
@@ -401,6 +642,117 @@ func printTransactionExplain(cmd *cobra.Command, plan *transactions.Plan) {
 			fmt.Fprintf(cmd.OutOrStdout(), "  flags: %s\n", strings.Join(row.Flags, ","))
 		}
 	}
+}
+
+func printTransactionPlanReview(cmd *cobra.Command, review *transactions.PlanReview) {
+	if review == nil || review.Plan == nil {
+		fmt.Fprintln(cmd.OutOrStdout(), "No review data found.")
+		return
+	}
+	plan := review.Plan
+	fmt.Fprintf(cmd.OutOrStdout(), "Transaction Plan Review: %d\n", plan.ID)
+	fmt.Fprintf(cmd.OutOrStdout(), "Window: %s to %s\n\n", plan.WindowStart, plan.WindowEnd)
+
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "ITEM\tSTATE\tBUCKET\tADD\tDROP\tDELTA\tNOTE\tUPDATED")
+	for _, row := range review.Items {
+		delta := "-"
+		if row.DeltaFPTS != nil {
+			delta = fmt.Sprintf("%+.1f", *row.DeltaFPTS)
+		}
+		updated := "-"
+		if !row.ReviewUpdated.IsZero() {
+			updated = row.ReviewUpdated.Format(time.RFC3339)
+		}
+		fmt.Fprintf(
+			w,
+			"%d\t%s\t%s\t%s (%s)\t%s (%s)\t%s\t%s\t%s\n",
+			row.ID,
+			row.ReviewState,
+			row.Bucket,
+			row.AddPlayerName,
+			firstNonEmpty(row.AddPlayerTeam, "-"),
+			row.DropPlayerName,
+			firstNonEmpty(row.DropPlayerTeam, "-"),
+			delta,
+			firstNonEmpty(row.ReviewNote, "-"),
+			updated,
+		)
+	}
+	w.Flush()
+
+	fmt.Fprintln(cmd.OutOrStdout())
+	fmt.Fprintln(cmd.OutOrStdout(), "State Summary")
+	sw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	fmt.Fprintln(sw, "STATE\tCOUNT")
+	for _, state := range []transactions.ReviewState{
+		transactions.ReviewStatePending,
+		transactions.ReviewStateApproved,
+		transactions.ReviewStateRejected,
+		transactions.ReviewStateDeferred,
+	} {
+		fmt.Fprintf(sw, "%s\t%d\n", state, review.StateCounts[state])
+	}
+	sw.Flush()
+}
+
+func printTransactionQueue(cmd *cobra.Command, rows []transactions.ApprovalQueueItem) {
+	if len(rows) == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), "(queue empty)")
+		return
+	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "ITEM\tPLAN\tSTATE\tADD\tDROP\tDELTA\tAPPROVED_AT\tNOTE")
+	for _, row := range rows {
+		delta := "-"
+		if row.DeltaFPTS != nil {
+			delta = fmt.Sprintf("%+.1f", *row.DeltaFPTS)
+		}
+		fmt.Fprintf(
+			w,
+			"%d\t%d\t%s\t%s (%s)\t%s (%s)\t%s\t%s\t%s\n",
+			row.TransactionPlanItemID,
+			row.PlanID,
+			row.State,
+			row.AddPlayerName,
+			firstNonEmpty(row.AddPlayerTeam, "-"),
+			row.DropPlayerName,
+			firstNonEmpty(row.DropPlayerTeam, "-"),
+			delta,
+			row.ApprovedAt.Format(time.RFC3339),
+			firstNonEmpty(row.Note, "-"),
+		)
+	}
+	w.Flush()
+}
+
+func printTransactionApprovals(cmd *cobra.Command, rows []transactions.ApprovalStateRow) {
+	if len(rows) == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), "(no review state rows found)")
+		return
+	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "ITEM\tPLAN\tSTATE\tBUCKET\tADD\tDROP\tDELTA\tUPDATED\tNOTE")
+	for _, row := range rows {
+		delta := "-"
+		if row.DeltaFPTS != nil {
+			delta = fmt.Sprintf("%+.1f", *row.DeltaFPTS)
+		}
+		fmt.Fprintf(
+			w,
+			"%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			row.TransactionPlanItemID,
+			row.PlanID,
+			row.CurrentState,
+			row.Bucket,
+			row.AddPlayerName,
+			row.DropPlayerName,
+			delta,
+			row.UpdatedAt.Format(time.RFC3339),
+			firstNonEmpty(row.Note, "-"),
+		)
+	}
+	w.Flush()
 }
 
 func groupMoves(items []transactions.PlanItem) map[transactions.Bucket][]transactions.PlanItem {
