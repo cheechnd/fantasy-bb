@@ -15,6 +15,8 @@ import (
 	exerepo "fantasy-baseball/internal/execute/repository"
 	exesvc "fantasy-baseball/internal/execute/service"
 	"fantasy-baseball/internal/store/sqlite"
+	adhocrepo "fantasy-baseball/internal/transactions/adhoc/repository"
+	adhocsvc "fantasy-baseball/internal/transactions/adhoc/service"
 	tranrepo "fantasy-baseball/internal/transactions/repository"
 	reviewrepo "fantasy-baseball/internal/transactions/review/repository"
 
@@ -36,6 +38,10 @@ func newExecuteCmd(opts *cliOptions) *cobra.Command {
 	transactionCmd.GroupID = "write"
 	confirmCmd := newExecuteConfirmCmd(opts)
 	confirmCmd.GroupID = "write"
+	adHocCmd := newExecuteAdHocCmd(opts)
+	adHocCmd.GroupID = "write"
+	adHocConfirmCmd := newExecuteAdHocConfirmCmd(opts)
+	adHocConfirmCmd.GroupID = "write"
 	queueCmd := newExecuteQueueCmd(opts)
 	queueCmd.GroupID = "inspect"
 	lastCmd := newExecuteLastCmd(opts)
@@ -52,7 +58,7 @@ func newExecuteCmd(opts *cliOptions) *cobra.Command {
 	pendingCmd.GroupID = "inspect"
 	reconcileCmd := newExecuteReconcileCmd(opts)
 	reconcileCmd.GroupID = "inspect"
-	cmd.AddCommand(preflightCmd, dryRunCmd, transactionCmd, confirmCmd, queueCmd, lastCmd, showCmd, historyCmd, resultCmd, verifyCmd, pendingCmd, reconcileCmd)
+	cmd.AddCommand(preflightCmd, dryRunCmd, transactionCmd, confirmCmd, adHocCmd, adHocConfirmCmd, queueCmd, lastCmd, showCmd, historyCmd, resultCmd, verifyCmd, pendingCmd, reconcileCmd)
 	return cmd
 }
 
@@ -254,6 +260,90 @@ func newExecuteConfirmCmd(opts *cliOptions) *cobra.Command {
 		},
 	}
 	cmd.Flags().Int64Var(&itemID, "item", 0, "Approved queue item ID to execute")
+	return cmd
+}
+
+func newExecuteAdHocCmd(opts *cliOptions) *cobra.Command {
+	var requestID int64
+	var confirm bool
+	cmd := &cobra.Command{
+		Use:   "ad-hoc",
+		Short: "Prepare or execute one resolved ad hoc add/drop request",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if requestID <= 0 {
+				return fmt.Errorf("--request-id must be > 0")
+			}
+			v, err := withAdHocAndRealExecuteService(cmd.Context(), opts, func(ctx context.Context, cfg config.Config, adhoc *adhocsvc.Service, real *exerealsvc.Service) (any, error) {
+				req, itemID, err := adhoc.EnsureExecutionCandidate(ctx, requestID)
+				if err != nil {
+					return nil, err
+				}
+				res, err := real.ExecuteOne(ctx, cfg, execute.RealExecutionOptions{
+					ItemID:  itemID,
+					Confirm: confirm,
+				})
+				if err != nil {
+					return nil, err
+				}
+				if res.Attempt != nil {
+					_ = adhoc.LinkExecutionResult(ctx, req.ID, res.Attempt.ID, res.Attempt.ExecutionStatus == execute.ExecutionStatusSucceeded)
+				}
+				return res, nil
+			})
+			if err != nil {
+				return err
+			}
+			res := v.(*execute.RealExecutionResult)
+			if opts.OutputJSON {
+				return writeJSON(cmd, res)
+			}
+			printRealExecutionResult(cmd, res)
+			return nil
+		},
+	}
+	cmd.Flags().Int64Var(&requestID, "request-id", 0, "Ad hoc request ID")
+	cmd.Flags().BoolVar(&confirm, "confirm", false, "Actually perform the real write attempt")
+	return cmd
+}
+
+func newExecuteAdHocConfirmCmd(opts *cliOptions) *cobra.Command {
+	var requestID int64
+	cmd := &cobra.Command{
+		Use:   "ad-hoc-confirm",
+		Short: "Execute one resolved ad hoc request with explicit confirmation",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if requestID <= 0 {
+				return fmt.Errorf("--request-id must be > 0")
+			}
+			v, err := withAdHocAndRealExecuteService(cmd.Context(), opts, func(ctx context.Context, cfg config.Config, adhoc *adhocsvc.Service, real *exerealsvc.Service) (any, error) {
+				req, itemID, err := adhoc.EnsureExecutionCandidate(ctx, requestID)
+				if err != nil {
+					return nil, err
+				}
+				res, err := real.ExecuteOne(ctx, cfg, execute.RealExecutionOptions{
+					ItemID:  itemID,
+					Confirm: true,
+				})
+				if err != nil {
+					return nil, err
+				}
+				if res.Attempt != nil {
+					_ = adhoc.LinkExecutionResult(ctx, req.ID, res.Attempt.ID, res.Attempt.ExecutionStatus == execute.ExecutionStatusSucceeded)
+				}
+				return res, nil
+			})
+			if err != nil {
+				return err
+			}
+			res := v.(*execute.RealExecutionResult)
+			if opts.OutputJSON {
+				return writeJSON(cmd, res)
+			}
+			printRealExecutionResult(cmd, res)
+			return nil
+		},
+	}
+	cmd.Flags().Int64Var(&requestID, "request-id", 0, "Ad hoc request ID")
 	return cmd
 }
 
@@ -460,6 +550,57 @@ func withRealExecuteService(ctx context.Context, opts *cliOptions, fn func(conte
 	return fn(ctx, cfg, realSvc)
 }
 
+func withAdHocAndRealExecuteService(ctx context.Context, opts *cliOptions, fn func(context.Context, config.Config, *adhocsvc.Service, *exerealsvc.Service) (any, error)) (any, error) {
+	cfg, _, err := loadConfigWithOverrides(opts)
+	if err != nil {
+		return nil, err
+	}
+	s, err := sqlite.Open(cfg.DBPath)
+	if err != nil {
+		return nil, err
+	}
+	defer s.Close()
+	if _, err := s.Migrate(ctx); err != nil {
+		return nil, err
+	}
+
+	preflightSvc := exesvc.New(
+		exerepo.New(s.DB()),
+		reviewrepo.New(s.DB()),
+		esrepo.New(s.DB()),
+		tranrepo.New(s.DB()),
+		execute.ServiceConfig{
+			DefaultLimit:                 cfg.Execution.Preflight.DefaultLimit,
+			MaxLimit:                     cfg.Execution.Preflight.MaxLimit,
+			CandidateRefreshLimit:        cfg.Execution.Preflight.CandidateRefreshLimit,
+			StaleHoursThreshold:          cfg.Execution.Preflight.StaleHoursThreshold,
+			RequireLiveRosterCheck:       cfg.Execution.Preflight.RequireLiveRosterCheck,
+			RequireLiveAvailabilityCheck: cfg.Execution.Preflight.RequireLiveAvailabilityCheck,
+		},
+	)
+	realSvc := exerealsvc.New(
+		preflightSvc,
+		reviewrepo.New(s.DB()),
+		tranrepo.New(s.DB()),
+		exerealrepo.New(s.DB()),
+		exerealsvc.NewESPNWriter(time.Duration(cfg.ESPN.TimeoutSeconds)*time.Second),
+		exerealsvc.NewESPNVerifier(time.Duration(cfg.Execution.Real.VerificationTimeoutSeconds)*time.Second),
+	)
+	adHocSvc := adhocsvc.New(
+		adhocrepo.New(s.DB()),
+		esrepo.New(s.DB()),
+		tranrepo.New(s.DB()),
+		reviewrepo.New(s.DB()),
+		adhocsvc.Config{
+			Enabled:                    cfg.Transactions.AdHoc.Enabled,
+			MaxRecentRequests:          cfg.Transactions.AdHoc.MaxRecentRequests,
+			RequirePitchersOnly:        cfg.Transactions.AdHoc.RequirePitchersOnly,
+			ReuseBoundedCandidateLimit: cfg.Transactions.AdHoc.ReuseBoundedCandidateLimit,
+		},
+	)
+	return fn(ctx, cfg, adHocSvc, realSvc)
+}
+
 func optionalInt64(cmd *cobra.Command, name string, value int64) *int64 {
 	if cmd.Flags().Changed(name) {
 		v := value
@@ -652,6 +793,11 @@ func printExecutionAttempt(cmd *cobra.Command, attempt *execute.Attempt) {
 	}
 	if attempt.LastVerifiedAt != nil {
 		fmt.Fprintf(cmd.OutOrStdout(), "Last verified: %s\n", attempt.LastVerifiedAt.Format(time.RFC3339))
+	}
+	if note, ok := attempt.Details["approved_note"].(string); ok && strings.HasPrefix(note, "ad_hoc_request:") {
+		fmt.Fprintf(cmd.OutOrStdout(), "Source: ad_hoc (%s)\n", strings.TrimPrefix(note, "ad_hoc_request:"))
+	} else {
+		fmt.Fprintln(cmd.OutOrStdout(), "Source: approved_plan_item")
 	}
 	if msg := strings.TrimSpace(attempt.AmbiguousReason); msg != "" {
 		fmt.Fprintf(cmd.OutOrStdout(), "Ambiguous reason: %s\n", msg)

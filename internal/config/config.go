@@ -114,6 +114,7 @@ type PickupPitchersConfig struct {
 
 type TransactionsConfig struct {
 	Pitchers TransactionPitchersConfig `json:"pitchers"`
+	AdHoc    TransactionAdHocConfig    `json:"ad_hoc"`
 }
 
 type TransactionPitchersConfig struct {
@@ -126,6 +127,13 @@ type TransactionPitchersConfig struct {
 	UncertaintyPenaltyMissingProj  float64 `json:"uncertainty_penalty_missing_projection"`
 	UncertaintyPenaltyAmbiguous    float64 `json:"uncertainty_penalty_ambiguous_match"`
 	AllowCompareAgainstLikelyStart bool    `json:"allow_compare_against_likely_start"`
+}
+
+type TransactionAdHocConfig struct {
+	Enabled                    bool `json:"enabled"`
+	MaxRecentRequests          int  `json:"max_recent_requests"`
+	RequirePitchersOnly        bool `json:"require_pitchers_only"`
+	ReuseBoundedCandidateLimit int  `json:"reuse_bounded_candidate_limit"`
 }
 
 type FeaturesConfig struct {
@@ -224,6 +232,12 @@ func Default() Config {
 				UncertaintyPenaltyMissingProj:  3.0,
 				UncertaintyPenaltyAmbiguous:    4.0,
 				AllowCompareAgainstLikelyStart: false,
+			},
+			AdHoc: TransactionAdHocConfig{
+				Enabled:                    true,
+				MaxRecentRequests:          25,
+				RequirePitchersOnly:        true,
+				ReuseBoundedCandidateLimit: 25,
 			},
 		},
 		Features: FeaturesConfig{
@@ -435,6 +449,12 @@ func (c Config) Validate() error {
 	}
 	if c.Transactions.Pitchers.UncertaintyPenaltyAmbiguous < 0 {
 		problems = append(problems, "transactions.pitchers.uncertainty_penalty_ambiguous_match must be >= 0")
+	}
+	if c.Transactions.AdHoc.MaxRecentRequests <= 0 || c.Transactions.AdHoc.MaxRecentRequests > 500 {
+		problems = append(problems, "transactions.ad_hoc.max_recent_requests must be between 1 and 500")
+	}
+	if c.Transactions.AdHoc.ReuseBoundedCandidateLimit <= 0 || c.Transactions.AdHoc.ReuseBoundedCandidateLimit > 200 {
+		problems = append(problems, "transactions.ad_hoc.reuse_bounded_candidate_limit must be between 1 and 200")
 	}
 	if c.Execution.Preflight.DefaultLimit <= 0 {
 		problems = append(problems, "execution.preflight.default_limit must be > 0")

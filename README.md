@@ -21,6 +21,7 @@ It ingests probable starter projections into SQLite, syncs your ESPN roster in r
 - adds dry-run execution preflight runs for approved items (no ESPN writes)
 - executes one explicitly confirmed approved add/drop move for real with immediate preflight gating and verification
 - hardens real execution with duplicate-protection, ambiguous outcome handling, re-verification, and reconciliation tools
+- adds ad hoc manual pitcher add/drop requests that run through the same safety pipeline as planned moves
 
 ## What it does not do
 
@@ -91,6 +92,10 @@ Fetch bounded free-agent pitchers and build pickup recommendations:
 ./fb execute pending
 ./fb execute verify --execution-id 1
 ./fb execute reconcile --execution-id 1
+./fb transactions ad-hoc --add "Aaron Nola" --drop "Shota Imanaga"
+./fb transactions ad-hoc-list
+./fb execute ad-hoc --request-id 4
+./fb execute ad-hoc-confirm --request-id 4
 ```
 
 ## Typical workflow
@@ -186,6 +191,17 @@ Fetch bounded free-agent pitchers and build pickup recommendations:
 ./fb execute pending
 ./fb execute verify --execution-id 1
 ./fb execute reconcile --execution-id 1
+```
+
+### 10. Ad hoc manual move (same safety path, no bypass)
+
+```bash
+./fb transactions ad-hoc --add "Aaron Nola" --drop "Shota Imanaga"
+./fb transactions ad-hoc-show --request-id 4
+./fb execute ad-hoc --request-id 4
+./fb execute ad-hoc --request-id 4 --confirm
+# equivalent:
+./fb execute ad-hoc-confirm --request-id 4
 ```
 
 Safety rules:
@@ -362,8 +378,13 @@ Pitcher analysis uses ESPN snapshots only. By default it uses the latest sync, o
 - `fb execute pending [--limit <n>]`
 - `fb execute verify --execution-id <id>`
 - `fb execute reconcile --execution-id <id>`
+- `fb execute ad-hoc --request-id <id> [--confirm]`
+- `fb execute ad-hoc-confirm --request-id <id>`
 - `fb execute last`
 - `fb execute show --run-id <id>`
+- `fb transactions ad-hoc --add "<player>" --drop "<player>"`
+- `fb transactions ad-hoc-show --request-id <id>`
+- `fb transactions ad-hoc-list [--state <state>] [--limit <n>]`
 
 Global flags (all commands):
 - `--json`

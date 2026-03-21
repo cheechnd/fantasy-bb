@@ -48,6 +48,12 @@
       "uncertainty_penalty_missing_projection": 3.0,
       "uncertainty_penalty_ambiguous_match": 4.0,
       "allow_compare_against_likely_start": false
+    },
+    "ad_hoc": {
+      "enabled": true,
+      "max_recent_requests": 25,
+      "require_pitchers_only": true,
+      "reuse_bounded_candidate_limit": 25
     }
   },
   "execution": {

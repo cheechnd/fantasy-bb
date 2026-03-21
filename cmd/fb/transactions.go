@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"text/tabwriter"
@@ -13,6 +14,8 @@ import (
 	pitchplan "fantasy-baseball/internal/pitchers/planner"
 	"fantasy-baseball/internal/store/sqlite"
 	"fantasy-baseball/internal/transactions"
+	adhocrepo "fantasy-baseball/internal/transactions/adhoc/repository"
+	adhocsvc "fantasy-baseball/internal/transactions/adhoc/service"
 	tranrepo "fantasy-baseball/internal/transactions/repository"
 	reviewrepo "fantasy-baseball/internal/transactions/review/repository"
 	reviewsvc "fantasy-baseball/internal/transactions/review/service"
@@ -25,6 +28,7 @@ func newTransactionsCmd(opts *cliOptions) *cobra.Command {
 	cmd := &cobra.Command{Use: "transactions", Short: "Read-only add/drop transaction planning"}
 	cmd.AddGroup(
 		&cobra.Group{ID: "generate", Title: "Generate"},
+		&cobra.Group{ID: "adhoc", Title: "Ad Hoc"},
 		&cobra.Group{ID: "review", Title: "Review Workflow"},
 		&cobra.Group{ID: "inspect", Title: "Inspection"},
 		&cobra.Group{ID: "explain", Title: "Explain"},
@@ -55,11 +59,105 @@ func newTransactionsCmd(opts *cliOptions) *cobra.Command {
 	approvalsCmd.GroupID = "review"
 	resetReviewCmd := newTransactionsResetReviewCmd(opts)
 	resetReviewCmd.GroupID = "review"
+	adHocCmd := newTransactionsAdHocCmd(opts)
+	adHocCmd.GroupID = "adhoc"
+	adHocShowCmd := newTransactionsAdHocShowCmd(opts)
+	adHocShowCmd.GroupID = "adhoc"
+	adHocListCmd := newTransactionsAdHocListCmd(opts)
+	adHocListCmd.GroupID = "adhoc"
 	cmd.AddCommand(
 		planCmd, topCmd, compareCmd,
+		adHocCmd, adHocShowCmd, adHocListCmd,
 		reviewCmd, approveCmd, rejectCmd, deferCmd, queueCmd, approvalsCmd, resetReviewCmd,
 		lastCmd, showCmd, explainCmd,
 	)
+	return cmd
+}
+
+func newTransactionsAdHocCmd(opts *cliOptions) *cobra.Command {
+	var addName, dropName string
+	cmd := &cobra.Command{
+		Use:   "ad-hoc",
+		Short: "Create and resolve a manual ad hoc pitcher add/drop request",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			v, err := withAdHocService(cmd.Context(), opts, func(ctx context.Context, svc *adhocsvc.Service) (any, error) {
+				return svc.CreateAndResolve(ctx, addName, dropName)
+			})
+			if err != nil {
+				return err
+			}
+			req := v.(*transactions.AdHocRequest)
+			if opts.OutputJSON {
+				return writeJSON(cmd, req)
+			}
+			printAdHocRequest(cmd, req)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&addName, "add", "", "Add player name")
+	cmd.Flags().StringVar(&dropName, "drop", "", "Drop player name")
+	return cmd
+}
+
+func newTransactionsAdHocShowCmd(opts *cliOptions) *cobra.Command {
+	var requestID int64
+	cmd := &cobra.Command{
+		Use:   "ad-hoc-show",
+		Short: "Show a saved ad hoc transaction request",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if requestID <= 0 {
+				return fmt.Errorf("--request-id must be > 0")
+			}
+			v, err := withAdHocService(cmd.Context(), opts, func(ctx context.Context, svc *adhocsvc.Service) (any, error) {
+				return svc.ByID(ctx, requestID)
+			})
+			if err != nil {
+				return err
+			}
+			req := v.(*transactions.AdHocRequest)
+			if req == nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "Ad hoc request %d not found.\n", requestID)
+				return nil
+			}
+			if opts.OutputJSON {
+				return writeJSON(cmd, req)
+			}
+			printAdHocRequest(cmd, req)
+			return nil
+		},
+	}
+	cmd.Flags().Int64Var(&requestID, "request-id", 0, "Ad hoc request ID")
+	return cmd
+}
+
+func newTransactionsAdHocListCmd(opts *cliOptions) *cobra.Command {
+	var limit int
+	var stateRaw string
+	cmd := &cobra.Command{
+		Use:   "ad-hoc-list",
+		Short: "List recent ad hoc transaction requests",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var state *transactions.AdHocRequestState
+			if strings.TrimSpace(stateRaw) != "" {
+				s := transactions.AdHocRequestState(strings.TrimSpace(stateRaw))
+				state = &s
+			}
+			v, err := withAdHocService(cmd.Context(), opts, func(ctx context.Context, svc *adhocsvc.Service) (any, error) {
+				return svc.List(ctx, limit, state)
+			})
+			if err != nil {
+				return err
+			}
+			rows := v.([]transactions.AdHocRequest)
+			if opts.OutputJSON {
+				return writeJSON(cmd, map[string]any{"count": len(rows), "requests": rows})
+			}
+			printAdHocRequests(cmd, rows)
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&limit, "limit", 25, "Maximum requests to show")
+	cmd.Flags().StringVar(&stateRaw, "state", "", "Optional state filter")
 	return cmd
 }
 
@@ -499,6 +597,34 @@ func withTransactionsReviewService(ctx context.Context, opts *cliOptions, fn fun
 	return fn(ctx, service)
 }
 
+func withAdHocService(ctx context.Context, opts *cliOptions, fn func(context.Context, *adhocsvc.Service) (any, error)) (any, error) {
+	cfg, _, err := loadConfigWithOverrides(opts)
+	if err != nil {
+		return nil, err
+	}
+	s, err := sqlite.Open(cfg.DBPath)
+	if err != nil {
+		return nil, err
+	}
+	defer s.Close()
+	if _, err := s.Migrate(ctx); err != nil {
+		return nil, err
+	}
+	service := adhocsvc.New(
+		adhocrepo.New(s.DB()),
+		esrepo.New(s.DB()),
+		tranrepo.New(s.DB()),
+		reviewrepo.New(s.DB()),
+		adhocsvc.Config{
+			Enabled:                    cfg.Transactions.AdHoc.Enabled,
+			MaxRecentRequests:          cfg.Transactions.AdHoc.MaxRecentRequests,
+			RequirePitchersOnly:        cfg.Transactions.AdHoc.RequirePitchersOnly,
+			ReuseBoundedCandidateLimit: cfg.Transactions.AdHoc.ReuseBoundedCandidateLimit,
+		},
+	)
+	return fn(ctx, service)
+}
+
 func buildTransactionOptions(cmd *cobra.Command, fromRaw, toRaw string, topN int, syncRunID, importRunID, pitcherPlanID, pickupRunID *int64) (transactions.Options, error) {
 	from, to, err := parseWindow(fromRaw, toRaw)
 	if err != nil {
@@ -782,6 +908,44 @@ func printTransactionApprovals(cmd *cobra.Command, rows []transactions.ApprovalS
 			row.UpdatedAt.Format(time.RFC3339),
 			firstNonEmpty(row.Note, "-"),
 		)
+	}
+	w.Flush()
+}
+
+func printAdHocRequest(cmd *cobra.Command, req *transactions.AdHocRequest) {
+	if req == nil {
+		fmt.Fprintln(cmd.OutOrStdout(), "Ad hoc request not found.")
+		return
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Ad Hoc Request: %d\n", req.ID)
+	fmt.Fprintf(cmd.OutOrStdout(), "Requested: add %s / drop %s\n", req.RequestedAddPlayerName, req.RequestedDropPlayerName)
+	fmt.Fprintf(cmd.OutOrStdout(), "State: %s\n", req.RequestState)
+	fmt.Fprintf(cmd.OutOrStdout(), "Resolution: %s\n", req.ResolutionStatus)
+	if req.ResolvedAddPlayerName != "" || req.ResolvedDropPlayerName != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "Resolved: add %s / drop %s\n", firstNonEmpty(req.ResolvedAddPlayerName, "-"), firstNonEmpty(req.ResolvedDropPlayerName, "-"))
+	}
+	if len(req.ResolutionNotes) > 0 {
+		if b, err := json.MarshalIndent(req.ResolutionNotes, "", "  "); err == nil {
+			fmt.Fprintf(cmd.OutOrStdout(), "Notes: %s\n", string(b))
+		}
+	}
+	if req.LinkedPlanItemID != nil {
+		fmt.Fprintf(cmd.OutOrStdout(), "Linked plan item: %d\n", *req.LinkedPlanItemID)
+	}
+	if req.LinkedExecutionAttemptID != nil {
+		fmt.Fprintf(cmd.OutOrStdout(), "Linked execution attempt: %d\n", *req.LinkedExecutionAttemptID)
+	}
+}
+
+func printAdHocRequests(cmd *cobra.Command, rows []transactions.AdHocRequest) {
+	if len(rows) == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), "(no ad hoc requests found)")
+		return
+	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "REQUEST\tADD\tDROP\tSTATE\tRESOLUTION\tUPDATED")
+	for _, r := range rows {
+		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n", r.ID, r.RequestedAddPlayerName, r.RequestedDropPlayerName, r.RequestState, r.ResolutionStatus, r.UpdatedAt.Format(time.RFC3339))
 	}
 	w.Flush()
 }

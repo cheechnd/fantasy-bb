@@ -146,3 +146,51 @@ type CreatePlanInput struct {
 	Summary                   map[string]interface{}
 	Items                     []PlanItem
 }
+
+type AdHocRequestState string
+
+const (
+	AdHocStateCreated    AdHocRequestState = "created"
+	AdHocStateResolved   AdHocRequestState = "resolved"
+	AdHocStateUnresolved AdHocRequestState = "unresolved"
+	AdHocStatePreflight  AdHocRequestState = "preflighted"
+	AdHocStateExecuted   AdHocRequestState = "executed"
+	AdHocStateFailed     AdHocRequestState = "failed"
+)
+
+type AdHocResolutionStatus string
+
+const (
+	AdHocResolutionResolved    AdHocResolutionStatus = "resolved"
+	AdHocResolutionAmbiguous   AdHocResolutionStatus = "ambiguous"
+	AdHocResolutionUnresolved  AdHocResolutionStatus = "unresolved"
+	AdHocResolutionInvalidType AdHocResolutionStatus = "invalid_target_type"
+)
+
+type AdHocRequest struct {
+	ID                       int64                 `json:"id"`
+	RequestedAddPlayerName   string                `json:"requested_add_player_name"`
+	RequestedDropPlayerName  string                `json:"requested_drop_player_name"`
+	NormalizedAddLookup      string                `json:"normalized_add_lookup"`
+	NormalizedDropLookup     string                `json:"normalized_drop_lookup"`
+	ResolvedAddPlayerName    string                `json:"resolved_add_player_name,omitempty"`
+	ResolvedAddESPNPlayerID  *int64                `json:"resolved_add_espn_player_id,omitempty"`
+	ResolvedDropPlayerName   string                `json:"resolved_drop_player_name,omitempty"`
+	ResolvedDropESPNPlayerID *int64                `json:"resolved_drop_espn_player_id,omitempty"`
+	RequestState             AdHocRequestState     `json:"request_state"`
+	ResolutionStatus         AdHocResolutionStatus `json:"resolution_status"`
+	ResolutionNotes          map[string]any        `json:"resolution_notes,omitempty"`
+	LinkedPlanID             *int64                `json:"linked_plan_id,omitempty"`
+	LinkedPlanItemID         *int64                `json:"linked_plan_item_id,omitempty"`
+	LinkedExecutionAttemptID *int64                `json:"linked_execution_attempt_id,omitempty"`
+	CreatedAt                time.Time             `json:"created_at"`
+	UpdatedAt                time.Time             `json:"updated_at"`
+}
+
+type AdHocRequestEvent struct {
+	ID        int64          `json:"id"`
+	RequestID int64          `json:"request_id"`
+	EventType string         `json:"event_type"`
+	EventData map[string]any `json:"event_data,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
+}
