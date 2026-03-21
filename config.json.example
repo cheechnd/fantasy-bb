@@ -38,6 +38,19 @@
       "risky_monitor_min_total_fpts": 6.0
     }
   },
+  "transactions": {
+    "pitchers": {
+      "top_move_limit": 10,
+      "max_pairings": 25,
+      "strong_move_delta_fpts": 5.0,
+      "marginal_move_delta_fpts": 1.5,
+      "risky_move_min_delta_fpts": 0.5,
+      "uncertainty_penalty_tbd": 2.0,
+      "uncertainty_penalty_missing_projection": 3.0,
+      "uncertainty_penalty_ambiguous_match": 4.0,
+      "allow_compare_against_likely_start": false
+    }
+  },
   "execution": {
     "dry_run": true,
     "require_confirmation": true

@@ -22,15 +22,30 @@ import (
 
 func newPitchersCmd(opts *cliOptions) *cobra.Command {
 	cmd := &cobra.Command{Use: "pitchers", Short: "ESPN roster-aware pitcher analysis"}
-	cmd.AddCommand(newPitchersAnalyzeWeekCmd(opts))
-	cmd.AddCommand(newPitchersTwoStartCmd(opts))
-	cmd.AddCommand(newPitchersReportCmd(opts))
-	cmd.AddCommand(newPitchersLastReportCmd(opts))
-	cmd.AddCommand(newPitchersExplainMatchesCmd(opts))
-	cmd.AddCommand(newPitchersPlanCmd(opts))
-	cmd.AddCommand(newPitchersStartSitCmd(opts))
-	cmd.AddCommand(newPitchersPlanLastCmd(opts))
-	cmd.AddCommand(newPitchersPlanShowCmd(opts))
+	cmd.AddGroup(
+		&cobra.Group{ID: "analysis", Title: "Analysis"},
+		&cobra.Group{ID: "planning", Title: "Planning"},
+		&cobra.Group{ID: "inspect", Title: "Inspection"},
+	)
+	analyzeCmd := newPitchersAnalyzeWeekCmd(opts)
+	analyzeCmd.GroupID = "analysis"
+	twoStartCmd := newPitchersTwoStartCmd(opts)
+	twoStartCmd.GroupID = "analysis"
+	reportCmd := newPitchersReportCmd(opts)
+	reportCmd.GroupID = "analysis"
+	explainMatchesCmd := newPitchersExplainMatchesCmd(opts)
+	explainMatchesCmd.GroupID = "analysis"
+	lastReportCmd := newPitchersLastReportCmd(opts)
+	lastReportCmd.GroupID = "inspect"
+	planCmd := newPitchersPlanCmd(opts)
+	planCmd.GroupID = "planning"
+	startSitCmd := newPitchersStartSitCmd(opts)
+	startSitCmd.GroupID = "planning"
+	planLastCmd := newPitchersPlanLastCmd(opts)
+	planLastCmd.GroupID = "inspect"
+	planShowCmd := newPitchersPlanShowCmd(opts)
+	planShowCmd.GroupID = "inspect"
+	cmd.AddCommand(analyzeCmd, twoStartCmd, reportCmd, explainMatchesCmd, lastReportCmd, planCmd, startSitCmd, planLastCmd, planShowCmd)
 	return cmd
 }
 
@@ -368,7 +383,7 @@ func newPitchersPlanLastCmd(opts *cliOptions) *cobra.Command {
 func newPitchersPlanShowCmd(opts *cliOptions) *cobra.Command {
 	var planID int64
 	cmd := &cobra.Command{
-		Use:   "plan-show --plan-id <id>",
+		Use:   "plan-show",
 		Short: "Show a specific saved pitcher plan",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if planID <= 0 {

@@ -17,12 +17,24 @@ import (
 
 func newESPNCmd(opts *cliOptions) *cobra.Command {
 	cmd := &cobra.Command{Use: "espn", Short: "Read-only ESPN ingestion and inspection"}
-	cmd.AddCommand(newESPNValidateCmd(opts))
-	cmd.AddCommand(newESPNSyncCmd(opts))
-	cmd.AddCommand(newESPNFreeAgentsCmd(opts))
-	cmd.AddCommand(newESPNShowCmd(opts))
-	cmd.AddCommand(newESPNSourceStatusCmd(opts))
-	cmd.AddCommand(newESPNWarningsCmd(opts))
+	cmd.AddGroup(
+		&cobra.Group{ID: "checks", Title: "Checks"},
+		&cobra.Group{ID: "ingest", Title: "Ingestion"},
+		&cobra.Group{ID: "inspect", Title: "Inspection"},
+	)
+	validateCmd := newESPNValidateCmd(opts)
+	validateCmd.GroupID = "checks"
+	syncCmd := newESPNSyncCmd(opts)
+	syncCmd.GroupID = "ingest"
+	freeAgentsCmd := newESPNFreeAgentsCmd(opts)
+	freeAgentsCmd.GroupID = "ingest"
+	showCmd := newESPNShowCmd(opts)
+	showCmd.GroupID = "inspect"
+	statusCmd := newESPNSourceStatusCmd(opts)
+	statusCmd.GroupID = "inspect"
+	warningsCmd := newESPNWarningsCmd(opts)
+	warningsCmd.GroupID = "inspect"
+	cmd.AddCommand(validateCmd, syncCmd, freeAgentsCmd, showCmd, statusCmd, warningsCmd)
 	return cmd
 }
 
@@ -65,13 +77,19 @@ func newESPNValidateCmd(opts *cliOptions) *cobra.Command {
 
 func newESPNSyncCmd(opts *cliOptions) *cobra.Command {
 	cmd := &cobra.Command{Use: "sync", Short: "Sync read-only ESPN snapshots"}
-	cmd.AddCommand(newESPNSyncRosterCmd(opts))
+	cmd.AddGroup(&cobra.Group{ID: "sync", Title: "Sync Commands"})
+	rosterCmd := newESPNSyncRosterCmd(opts)
+	rosterCmd.GroupID = "sync"
+	cmd.AddCommand(rosterCmd)
 	return cmd
 }
 
 func newESPNFreeAgentsCmd(opts *cliOptions) *cobra.Command {
 	cmd := &cobra.Command{Use: "free-agents", Short: "Bounded read-only ESPN free-agent ingestion"}
-	cmd.AddCommand(newESPNFreeAgentsPitchersCmd(opts))
+	cmd.AddGroup(&cobra.Group{ID: "ingest", Title: "Candidate Ingestion"})
+	pitchersCmd := newESPNFreeAgentsPitchersCmd(opts)
+	pitchersCmd.GroupID = "ingest"
+	cmd.AddCommand(pitchersCmd)
 	return cmd
 }
 
@@ -159,9 +177,17 @@ func newESPNSyncRosterCmd(opts *cliOptions) *cobra.Command {
 
 func newESPNShowCmd(opts *cliOptions) *cobra.Command {
 	cmd := &cobra.Command{Use: "show", Short: "Show stored ESPN snapshots"}
-	cmd.AddCommand(newESPNShowRosterCmd(opts))
-	cmd.AddCommand(newESPNShowLeagueCmd(opts))
-	cmd.AddCommand(newESPNShowFreeAgentsCmd(opts))
+	cmd.AddGroup(
+		&cobra.Group{ID: "core", Title: "Core Snapshots"},
+		&cobra.Group{ID: "candidates", Title: "Candidate Snapshots"},
+	)
+	rosterCmd := newESPNShowRosterCmd(opts)
+	rosterCmd.GroupID = "core"
+	leagueCmd := newESPNShowLeagueCmd(opts)
+	leagueCmd.GroupID = "core"
+	freeAgentsCmd := newESPNShowFreeAgentsCmd(opts)
+	freeAgentsCmd.GroupID = "candidates"
+	cmd.AddCommand(rosterCmd, leagueCmd, freeAgentsCmd)
 	return cmd
 }
 

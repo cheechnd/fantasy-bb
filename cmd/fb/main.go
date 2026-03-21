@@ -55,20 +55,36 @@ func newRootCmd() *cobra.Command {
 	root.PersistentFlags().StringVar(&opts.LogLevel, "log-level", "", "Override log level (env: FB_LOG_LEVEL)")
 	root.PersistentFlags().StringVar(&opts.Environment, "environment", "", "Override runtime environment (env: FB_ENVIRONMENT)")
 	root.PersistentFlags().BoolVar(&opts.OutputJSON, "json", false, "Output results as JSON")
-	root.PersistentFlags().BoolVar(&opts.DryRun, "dry-run", false, "Preview actions without writing state")
-	root.PersistentFlags().BoolVar(&opts.RequireConfirmation, "require-confirmation", true, "Require confirmation for write actions")
 
-	root.AddCommand(
-		newVersionCmd(opts),
-		newInitCmd(opts),
-		newConfigCmd(opts),
-		newDBCmd(opts),
-		newHealthcheckCmd(opts),
-		newForecasterCmd(opts),
-		newESPNCmd(opts),
-		newPitchersCmd(opts),
-		newPickupsCmd(opts),
+	root.AddGroup(
+		&cobra.Group{ID: "core", Title: "Core Commands"},
+		&cobra.Group{ID: "infra", Title: "Infrastructure Commands"},
+		&cobra.Group{ID: "sources", Title: "Source Data Commands"},
+		&cobra.Group{ID: "team", Title: "Team Decision Commands"},
 	)
+
+	versionCmd := newVersionCmd(opts)
+	versionCmd.GroupID = "core"
+	healthCmd := newHealthcheckCmd(opts)
+	healthCmd.GroupID = "core"
+	initCmd := newInitCmd(opts)
+	initCmd.GroupID = "infra"
+	configCmd := newConfigCmd(opts)
+	configCmd.GroupID = "infra"
+	dbCmd := newDBCmd(opts)
+	dbCmd.GroupID = "infra"
+	forecasterCmd := newForecasterCmd(opts)
+	forecasterCmd.GroupID = "sources"
+	espnCmd := newESPNCmd(opts)
+	espnCmd.GroupID = "sources"
+	pitchersCmd := newPitchersCmd(opts)
+	pitchersCmd.GroupID = "team"
+	pickupsCmd := newPickupsCmd(opts)
+	pickupsCmd.GroupID = "team"
+	transactionsCmd := newTransactionsCmd(opts)
+	transactionsCmd.GroupID = "team"
+
+	root.AddCommand(versionCmd, healthCmd, initCmd, configCmd, dbCmd, forecasterCmd, espnCmd, pitchersCmd, pickupsCmd, transactionsCmd)
 
 	return root
 }
@@ -90,7 +106,7 @@ func newVersionCmd(opts *cliOptions) *cobra.Command {
 }
 
 func newInitCmd(opts *cliOptions) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize local app directories, config, and database",
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -201,11 +217,15 @@ func newInitCmd(opts *cliOptions) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Preview actions without writing state")
+	cmd.Flags().BoolVar(&opts.RequireConfirmation, "require-confirmation", true, "Require confirmation for write actions")
+	return cmd
 }
 
 func newConfigCmd(opts *cliOptions) *cobra.Command {
 	cfgCmd := &cobra.Command{Use: "config", Short: "Config operations"}
-	cfgCmd.AddCommand(&cobra.Command{
+	cfgCmd.AddGroup(&cobra.Group{ID: "inspect", Title: "Inspection"})
+	showCmd := &cobra.Command{
 		Use:   "show",
 		Short: "Show effective loaded config",
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -224,14 +244,20 @@ func newConfigCmd(opts *cliOptions) *cobra.Command {
 			_, err = fmt.Fprintln(cmd.OutOrStdout(), string(b))
 			return err
 		},
-	})
+	}
+	showCmd.GroupID = "inspect"
+	cfgCmd.AddCommand(showCmd)
 	return cfgCmd
 }
 
 func newDBCmd(opts *cliOptions) *cobra.Command {
 	dbCmd := &cobra.Command{Use: "db", Short: "Database operations"}
+	dbCmd.AddGroup(
+		&cobra.Group{ID: "maint", Title: "Maintenance"},
+		&cobra.Group{ID: "inspect", Title: "Inspection"},
+	)
 
-	dbCmd.AddCommand(&cobra.Command{
+	migrateCmd := &cobra.Command{
 		Use:   "migrate",
 		Short: "Apply pending database migrations",
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -283,9 +309,13 @@ func newDBCmd(opts *cliOptions) *cobra.Command {
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Applied %d migration(s).\n", len(applied))
 			return err
 		},
-	})
+	}
+	migrateCmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Preview actions without writing state")
+	migrateCmd.Flags().BoolVar(&opts.RequireConfirmation, "require-confirmation", true, "Require confirmation for write actions")
+	migrateCmd.GroupID = "maint"
+	dbCmd.AddCommand(migrateCmd)
 
-	dbCmd.AddCommand(&cobra.Command{
+	statusCmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show database path and migration status",
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -342,7 +372,9 @@ func newDBCmd(opts *cliOptions) *cobra.Command {
 			}
 			return nil
 		},
-	})
+	}
+	statusCmd.GroupID = "inspect"
+	dbCmd.AddCommand(statusCmd)
 
 	return dbCmd
 }

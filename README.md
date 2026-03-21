@@ -16,10 +16,12 @@ It ingests probable starter projections into SQLite, syncs your ESPN roster in r
 - saves analysis runs/results for later inspection
 - builds saved weekly pitcher plans with deterministic start/sit buckets
 - generates saved read-only pickup/streamer recommendations with upgrade comparisons
+- generates saved read-only add/drop transaction plans with deterministic move buckets
 
 ## What it does not do
 
 - lineup/add-drop execution
+- transaction execution/waiver submission/FAAB bidding
 - browser automation
 - web dashboard
 
@@ -68,8 +70,9 @@ Fetch bounded free-agent pitchers and build pickup recommendations:
 ./fb espn free-agents pitchers --limit 25
 ./fb pickups recommend --from 2026-09-15 --to 2026-09-22
 ./fb pickups top-streamers --from 2026-09-15 --to 2026-09-22 --top 15
-./fb pickups compare --from 2026-09-15 --to 2026-09-22
 ./fb pickups last
+./fb transactions plan --from 2026-09-15 --to 2026-09-22
+./fb transactions top --from 2026-09-15 --to 2026-09-22
 ```
 
 ## Typical workflow
@@ -115,9 +118,19 @@ Fetch bounded free-agent pitchers and build pickup recommendations:
 ./fb espn free-agents pitchers --limit 25
 ./fb pickups recommend
 ./fb pickups top-streamers --top 20
-./fb pickups compare --top 20
 ./fb pickups last
 ./fb pickups show --recommendation-id 1
+```
+
+### 6. Generate transaction plans (read-only add/drop proposals)
+
+```bash
+./fb transactions plan --top 10
+./fb transactions top --top 10
+./fb transactions compare --top 10
+./fb transactions last
+./fb transactions show --plan-id 1
+./fb transactions explain --plan-id 1
 ```
 
 Recommendations are deterministic and inspectable:
@@ -128,11 +141,17 @@ Recommendations are deterministic and inspectable:
 - `risky_monitor`: interesting but uncertain (`TBD`, missing projection, etc.)
 - `unmatched`: candidate could not be matched to forecaster starts
 
+Transaction move buckets:
+
+- `strong_move`: clear projected weekly upgrade with acceptable certainty
+- `marginal_move`: positive projected upgrade, but smaller
+- `risky_move`: intriguing move with meaningful uncertainty
+- `watch_only`: low-confidence or low-delta option to monitor
+
 ## Interpreting output
 
 - `Top overall candidates`: best free-agent options in the selected window.
 - `Best streamers`: options above streamer threshold for the window.
-- `Best upgrades`: candidates that clear delta thresholds versus weak roster options.
 - `Risky / monitor`: candidates with uncertainty (`TBD`, missing projection, injury/status risk).
 - `Unmatched`: candidate could not be mapped to probable-start rows in the selected window.
 
@@ -207,13 +226,20 @@ Thresholds and penalties are configurable under `planning.pitchers` in `config.j
 ### Pickups
 - `fb pickups recommend [--from YYYY-MM-DD --to YYYY-MM-DD --sync-run <id> --import-run <id> --candidate-run <id> --top <n>]`
 - `fb pickups top-streamers [--min-total-fpts <n>]`
-- `fb pickups compare`
 - `fb pickups last`
 - `fb pickups show --recommendation-id <id>`
 
 Pitcher analysis uses ESPN snapshots only. By default it uses the latest sync, or `--sync-run <id>` when provided.
 
 `pickups` commands are ESPN-backed and read-only. They use latest ESPN sync + forecaster import + candidate run by default unless overridden with run IDs.
+
+### Transactions
+- `fb transactions plan [--from YYYY-MM-DD --to YYYY-MM-DD --sync-run <id> --import-run <id> --pitcher-plan-id <id> --pickup-run <id> --top <n>]`
+- `fb transactions top [same source/window flags]`
+- `fb transactions compare [same source/window flags]`
+- `fb transactions last`
+- `fb transactions show --plan-id <id>`
+- `fb transactions explain --plan-id <id>`
 
 Global flags (all commands):
 - `--json`
@@ -235,6 +261,7 @@ SQLite is the system of record. Key tables:
 - ESPN bounded candidate ingestion: `espn_candidate_runs`, `espn_free_agent_candidates`
 - saved planning artifacts: `pitcher_plans`, `pitcher_plan_items`
 - pickup recommendation artifacts: `pickup_recommendation_runs`, `pickup_recommendation_items`
+- transaction planning artifacts: `transaction_plans`, `transaction_plan_items`
 
 ## ESPN credentials
 
@@ -262,6 +289,18 @@ Pickup recommendation tuning is configurable under `pickups.pitchers` in `config
 - `strong_upgrade_delta_fpts`
 - `marginal_upgrade_delta_fpts`
 - `risky_monitor_min_total_fpts`
+
+Transaction planning tuning is configurable under `transactions.pitchers` in `config.json`:
+
+- `top_move_limit`
+- `max_pairings`
+- `strong_move_delta_fpts`
+- `marginal_move_delta_fpts`
+- `risky_move_min_delta_fpts`
+- `uncertainty_penalty_tbd`
+- `uncertainty_penalty_missing_projection`
+- `uncertainty_penalty_ambiguous_match`
+- `allow_compare_against_likely_start`
 
 ## Development
 

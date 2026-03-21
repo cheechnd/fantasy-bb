@@ -75,7 +75,7 @@ func (s *Service) Recommend(ctx context.Context, opts pickups.RecommendOptions) 
 		Summary: map[string]any{
 			"top_candidates": len(result.TopCandidates),
 			"streamers":      len(result.TopStreamers),
-			"upgrades":       len(result.Upgrades),
+			"upgrades":       0,
 			"risky_monitor":  len(result.RiskyMonitor),
 			"unmatched":      len(result.Unmatched),
 		},
@@ -122,8 +122,8 @@ func (s *Service) Compare(ctx context.Context, opts pickups.RecommendOptions) (p
 		CandidateRunID:      res.CandidateRunID,
 		WindowStart:         res.WindowStart,
 		WindowEnd:           res.WindowEnd,
-		Upgrades:            res.Upgrades,
-		Items:               res.Upgrades,
+		Upgrades:            []pickups.RecommendationItem{},
+		Items:               []pickups.RecommendationItem{},
 	}, nil
 }
 
@@ -324,25 +324,8 @@ func (s *Service) projectCandidates(candidates []espnCandidateRow, starts []fore
 }
 
 func (s *Service) buildRecommendations(cands []pickups.CandidateProjection, roster []pitchers.PitcherProjection, weakRoster []pitchers.RosterInput, topN int, opts pickups.RecommendOptions) pickups.RecommendResult {
-	rosterByName := map[string]pitchers.PitcherProjection{}
-	for _, r := range roster {
-		rosterByName[matching.NormalizeName(r.PlayerName)] = r
-	}
-	weakProjections := []pitchers.PitcherProjection{}
-	for _, w := range weakRoster {
-		if rp, ok := rosterByName[matching.NormalizeName(w.PlayerName)]; ok {
-			weakProjections = append(weakProjections, rp)
-		}
-	}
-	if len(weakProjections) == 0 {
-		weakProjections = append(weakProjections, roster...)
-	}
-	sort.SliceStable(weakProjections, func(i, j int) bool {
-		if weakProjections[i].TotalProjectedFPTS != weakProjections[j].TotalProjectedFPTS {
-			return weakProjections[i].TotalProjectedFPTS < weakProjections[j].TotalProjectedFPTS
-		}
-		return weakProjections[i].PlayerName < weakProjections[j].PlayerName
-	})
+	_ = roster
+	_ = weakRoster
 
 	items := []pickups.RecommendationItem{}
 	appendRanked := func(itemType pickups.ItemType, rows []pickups.RecommendationItem) {
@@ -384,22 +367,6 @@ func (s *Service) buildRecommendations(cands []pickups.CandidateProjection, rost
 			streamers = append(streamers, base)
 		}
 
-		if len(weakProjections) > 0 {
-			target := weakProjections[0]
-			delta := c.TotalProjectedFPTS - target.TotalProjectedFPTS
-			if delta >= s.cfg.MarginalUpgradeDeltaFPTS {
-				u := base
-				u.ItemType = pickups.ItemTypeUpgrade
-				u.ComparisonTargetName = target.PlayerName
-				u.ComparisonDeltaFPTS = &delta
-				if delta >= s.cfg.StrongUpgradeDeltaFPTS {
-					u.Notes = append(u.Notes, "strong upgrade")
-				} else {
-					u.Notes = append(u.Notes, "marginal upgrade")
-				}
-				upgrades = append(upgrades, u)
-			}
-		}
 	}
 
 	trim := func(rows []pickups.RecommendationItem) []pickups.RecommendationItem {
@@ -416,7 +383,6 @@ func (s *Service) buildRecommendations(cands []pickups.CandidateProjection, rost
 
 	appendRanked(pickups.ItemTypeTopCandidate, topCandidates)
 	appendRanked(pickups.ItemTypeStreamer, streamers)
-	appendRanked(pickups.ItemTypeUpgrade, upgrades)
 	appendRanked(pickups.ItemTypeRiskyMonitor, risky)
 	appendRanked(pickups.ItemTypeUnmatched, unmatched)
 

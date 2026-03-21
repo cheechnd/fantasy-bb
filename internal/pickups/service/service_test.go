@@ -71,11 +71,8 @@ func TestRecommendBuildsAndPersistsCategories(t *testing.T) {
 	if len(res.Unmatched) == 0 || res.Unmatched[0].PlayerName != "Unknown Arm" {
 		t.Fatalf("expected unmatched candidate, got %+v", res.Unmatched)
 	}
-	if len(res.Upgrades) == 0 {
-		t.Fatalf("expected at least one upgrade")
-	}
-	if res.Upgrades[0].ComparisonTargetName == "" || res.Upgrades[0].ComparisonDeltaFPTS == nil {
-		t.Fatalf("expected comparison details on upgrade: %+v", res.Upgrades[0])
+	if len(res.Upgrades) != 0 {
+		t.Fatalf("expected no upgrades in pickups recommend, got %+v", res.Upgrades)
 	}
 
 	run, items, err := svc.Last(context.Background())
@@ -169,14 +166,8 @@ func TestCompareReturnsUpgradeRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compare: %v", err)
 	}
-	if len(res.Upgrades) == 0 {
-		t.Fatalf("expected upgrade rows")
-	}
-	if res.Upgrades[0].ItemType != pickups.ItemTypeUpgrade {
-		t.Fatalf("expected upgrade item type, got %s", res.Upgrades[0].ItemType)
-	}
-	if res.Upgrades[0].ComparisonDeltaFPTS == nil || *res.Upgrades[0].ComparisonDeltaFPTS <= 0 {
-		t.Fatalf("expected positive upgrade delta, got %+v", res.Upgrades[0])
+	if len(res.Upgrades) != 0 {
+		t.Fatalf("expected no upgrade rows in pickups compare, got %+v", res.Upgrades)
 	}
 }
 

@@ -21,13 +21,27 @@ const defaultForecasterURL = "https://www.espn.com/fantasy/baseball/story/_/id/3
 
 func newForecasterCmd(opts *cliOptions) *cobra.Command {
 	fc := &cobra.Command{Use: "forecaster", Short: "Forecaster probable-start import and analysis"}
-	fc.AddCommand(newForecasterImportCmd(opts))
-	fc.AddCommand(newForecasterListCmd(opts))
-	fc.AddCommand(newForecasterShowWeekCmd(opts))
-	fc.AddCommand(newForecasterTopCmd(opts))
-	fc.AddCommand(newForecasterClearCmd(opts))
-	fc.AddCommand(newForecasterSourceStatusCmd(opts))
-	fc.AddCommand(newForecasterWarningsCmd(opts))
+	fc.AddGroup(
+		&cobra.Group{ID: "ingest", Title: "Ingestion"},
+		&cobra.Group{ID: "analyze", Title: "Analysis Views"},
+		&cobra.Group{ID: "maint", Title: "Maintenance"},
+		&cobra.Group{ID: "inspect", Title: "Inspection"},
+	)
+	importCmd := newForecasterImportCmd(opts)
+	importCmd.GroupID = "ingest"
+	listCmd := newForecasterListCmd(opts)
+	listCmd.GroupID = "analyze"
+	showWeekCmd := newForecasterShowWeekCmd(opts)
+	showWeekCmd.GroupID = "analyze"
+	topCmd := newForecasterTopCmd(opts)
+	topCmd.GroupID = "analyze"
+	clearCmd := newForecasterClearCmd(opts)
+	clearCmd.GroupID = "maint"
+	statusCmd := newForecasterSourceStatusCmd(opts)
+	statusCmd.GroupID = "inspect"
+	warningsCmd := newForecasterWarningsCmd(opts)
+	warningsCmd.GroupID = "inspect"
+	fc.AddCommand(importCmd, listCmd, showWeekCmd, topCmd, clearCmd, statusCmd, warningsCmd)
 	return fc
 }
 
@@ -276,6 +290,8 @@ func newForecasterClearCmd(opts *cliOptions) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "Confirm data deletion")
+	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Preview actions without writing state")
+	cmd.Flags().BoolVar(&opts.RequireConfirmation, "require-confirmation", true, "Require confirmation for write actions")
 	return cmd
 }
 

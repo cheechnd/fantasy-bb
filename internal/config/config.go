@@ -18,17 +18,18 @@ const (
 )
 
 type Config struct {
-	AppDir      string          `json:"app_dir"`
-	DBPath      string          `json:"db_path"`
-	LogLevel    string          `json:"log_level"`
-	Environment string          `json:"environment"`
-	League      LeagueConfig    `json:"league"`
-	Auth        AuthConfig      `json:"auth"`
-	ESPN        ESPNConfig      `json:"espn"`
-	Execution   ExecutionConfig `json:"execution"`
-	Planning    PlanningConfig  `json:"planning"`
-	Pickups     PickupsConfig   `json:"pickups"`
-	Features    FeaturesConfig  `json:"features"`
+	AppDir       string             `json:"app_dir"`
+	DBPath       string             `json:"db_path"`
+	LogLevel     string             `json:"log_level"`
+	Environment  string             `json:"environment"`
+	League       LeagueConfig       `json:"league"`
+	Auth         AuthConfig         `json:"auth"`
+	ESPN         ESPNConfig         `json:"espn"`
+	Execution    ExecutionConfig    `json:"execution"`
+	Planning     PlanningConfig     `json:"planning"`
+	Pickups      PickupsConfig      `json:"pickups"`
+	Transactions TransactionsConfig `json:"transactions"`
+	Features     FeaturesConfig     `json:"features"`
 }
 
 type LeagueConfig struct {
@@ -77,12 +78,28 @@ type PickupsConfig struct {
 }
 
 type PickupPitchersConfig struct {
-	DefaultCandidateLimit   int     `json:"default_candidate_limit"`
-	MaxCandidateLimit       int     `json:"max_candidate_limit"`
-	MinStreamerTotalFPTS    float64 `json:"min_streamer_total_fpts"`
-	StrongUpgradeDeltaFPTS  float64 `json:"strong_upgrade_delta_fpts"`
+	DefaultCandidateLimit    int     `json:"default_candidate_limit"`
+	MaxCandidateLimit        int     `json:"max_candidate_limit"`
+	MinStreamerTotalFPTS     float64 `json:"min_streamer_total_fpts"`
+	StrongUpgradeDeltaFPTS   float64 `json:"strong_upgrade_delta_fpts"`
 	MarginalUpgradeDeltaFPTS float64 `json:"marginal_upgrade_delta_fpts"`
 	RiskyMonitorMinTotalFPTS float64 `json:"risky_monitor_min_total_fpts"`
+}
+
+type TransactionsConfig struct {
+	Pitchers TransactionPitchersConfig `json:"pitchers"`
+}
+
+type TransactionPitchersConfig struct {
+	TopMoveLimit                   int     `json:"top_move_limit"`
+	MaxPairings                    int     `json:"max_pairings"`
+	StrongMoveDeltaFPTS            float64 `json:"strong_move_delta_fpts"`
+	MarginalMoveDeltaFPTS          float64 `json:"marginal_move_delta_fpts"`
+	RiskyMoveMinDeltaFPTS          float64 `json:"risky_move_min_delta_fpts"`
+	UncertaintyPenaltyTBD          float64 `json:"uncertainty_penalty_tbd"`
+	UncertaintyPenaltyMissingProj  float64 `json:"uncertainty_penalty_missing_projection"`
+	UncertaintyPenaltyAmbiguous    float64 `json:"uncertainty_penalty_ambiguous_match"`
+	AllowCompareAgainstLikelyStart bool    `json:"allow_compare_against_likely_start"`
 }
 
 type FeaturesConfig struct {
@@ -148,6 +165,19 @@ func Default() Config {
 				StrongUpgradeDeltaFPTS:   5.0,
 				MarginalUpgradeDeltaFPTS: 1.5,
 				RiskyMonitorMinTotalFPTS: 6.0,
+			},
+		},
+		Transactions: TransactionsConfig{
+			Pitchers: TransactionPitchersConfig{
+				TopMoveLimit:                   10,
+				MaxPairings:                    25,
+				StrongMoveDeltaFPTS:            5.0,
+				MarginalMoveDeltaFPTS:          1.5,
+				RiskyMoveMinDeltaFPTS:          0.5,
+				UncertaintyPenaltyTBD:          2.0,
+				UncertaintyPenaltyMissingProj:  3.0,
+				UncertaintyPenaltyAmbiguous:    4.0,
+				AllowCompareAgainstLikelyStart: false,
 			},
 		},
 		Features: FeaturesConfig{
@@ -332,6 +362,36 @@ func (c Config) Validate() error {
 	}
 	if c.Pickups.Pitchers.RiskyMonitorMinTotalFPTS < 0 {
 		problems = append(problems, "pickups.pitchers.risky_monitor_min_total_fpts must be >= 0")
+	}
+	if c.Transactions.Pitchers.TopMoveLimit <= 0 {
+		problems = append(problems, "transactions.pitchers.top_move_limit must be > 0")
+	}
+	if c.Transactions.Pitchers.MaxPairings <= 0 {
+		problems = append(problems, "transactions.pitchers.max_pairings must be > 0")
+	}
+	if c.Transactions.Pitchers.StrongMoveDeltaFPTS < 0 {
+		problems = append(problems, "transactions.pitchers.strong_move_delta_fpts must be >= 0")
+	}
+	if c.Transactions.Pitchers.MarginalMoveDeltaFPTS < 0 {
+		problems = append(problems, "transactions.pitchers.marginal_move_delta_fpts must be >= 0")
+	}
+	if c.Transactions.Pitchers.RiskyMoveMinDeltaFPTS < 0 {
+		problems = append(problems, "transactions.pitchers.risky_move_min_delta_fpts must be >= 0")
+	}
+	if c.Transactions.Pitchers.StrongMoveDeltaFPTS < c.Transactions.Pitchers.MarginalMoveDeltaFPTS {
+		problems = append(problems, "transactions.pitchers.strong_move_delta_fpts must be >= marginal_move_delta_fpts")
+	}
+	if c.Transactions.Pitchers.MarginalMoveDeltaFPTS < c.Transactions.Pitchers.RiskyMoveMinDeltaFPTS {
+		problems = append(problems, "transactions.pitchers.marginal_move_delta_fpts must be >= risky_move_min_delta_fpts")
+	}
+	if c.Transactions.Pitchers.UncertaintyPenaltyTBD < 0 {
+		problems = append(problems, "transactions.pitchers.uncertainty_penalty_tbd must be >= 0")
+	}
+	if c.Transactions.Pitchers.UncertaintyPenaltyMissingProj < 0 {
+		problems = append(problems, "transactions.pitchers.uncertainty_penalty_missing_projection must be >= 0")
+	}
+	if c.Transactions.Pitchers.UncertaintyPenaltyAmbiguous < 0 {
+		problems = append(problems, "transactions.pitchers.uncertainty_penalty_ambiguous_match must be >= 0")
 	}
 
 	if len(problems) > 0 {

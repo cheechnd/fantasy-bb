@@ -21,11 +21,19 @@ import (
 
 func newPickupsCmd(opts *cliOptions) *cobra.Command {
 	cmd := &cobra.Command{Use: "pickups", Short: "Read-only pickup and streamer recommendations"}
-	cmd.AddCommand(newPickupsRecommendCmd(opts))
-	cmd.AddCommand(newPickupsTopStreamersCmd(opts))
-	cmd.AddCommand(newPickupsCompareCmd(opts))
-	cmd.AddCommand(newPickupsLastCmd(opts))
-	cmd.AddCommand(newPickupsShowCmd(opts))
+	cmd.AddGroup(
+		&cobra.Group{ID: "generate", Title: "Generate"},
+		&cobra.Group{ID: "inspect", Title: "Inspection"},
+	)
+	recommendCmd := newPickupsRecommendCmd(opts)
+	recommendCmd.GroupID = "generate"
+	topStreamersCmd := newPickupsTopStreamersCmd(opts)
+	topStreamersCmd.GroupID = "generate"
+	lastCmd := newPickupsLastCmd(opts)
+	lastCmd.GroupID = "inspect"
+	showCmd := newPickupsShowCmd(opts)
+	showCmd.GroupID = "inspect"
+	cmd.AddCommand(recommendCmd, topStreamersCmd, lastCmd, showCmd)
 	return cmd
 }
 
@@ -101,41 +109,6 @@ func newPickupsTopStreamersCmd(opts *cliOptions) *cobra.Command {
 	return cmd
 }
 
-func newPickupsCompareCmd(opts *cliOptions) *cobra.Command {
-	var fromRaw, toRaw string
-	var topN int
-	var syncRunID, importRunID, candidateRunID int64
-	cmd := &cobra.Command{
-		Use:   "compare",
-		Short: "Compare pickup candidates against weak roster options",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			v, err := withPickupsService(cmd.Context(), opts, func(ctx context.Context, svc *picksvc.Service) (any, error) {
-				opts2, err := buildPickupOptions(cmd, fromRaw, toRaw, topN, &syncRunID, &importRunID, &candidateRunID, nil)
-				if err != nil {
-					return nil, err
-				}
-				return svc.Compare(ctx, opts2)
-			})
-			if err != nil {
-				return err
-			}
-			result := v.(pickups.RecommendResult)
-			if opts.OutputJSON {
-				return writeJSON(cmd, result)
-			}
-			printPickupItemsTable(cmd, result.Upgrades)
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&fromRaw, "from", "", "Window start date (YYYY-MM-DD)")
-	cmd.Flags().StringVar(&toRaw, "to", "", "Window end date (YYYY-MM-DD)")
-	cmd.Flags().Int64Var(&syncRunID, "sync-run", 0, "ESPN sync run ID (defaults to latest)")
-	cmd.Flags().Int64Var(&importRunID, "import-run", 0, "Forecaster import run ID (defaults to latest)")
-	cmd.Flags().Int64Var(&candidateRunID, "candidate-run", 0, "Candidate run ID (defaults to latest)")
-	cmd.Flags().IntVar(&topN, "top", 10, "Top comparison rows")
-	return cmd
-}
-
 func newPickupsLastCmd(opts *cliOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "last",
@@ -171,7 +144,7 @@ func newPickupsLastCmd(opts *cliOptions) *cobra.Command {
 func newPickupsShowCmd(opts *cliOptions) *cobra.Command {
 	var recommendationID int64
 	cmd := &cobra.Command{
-		Use:   "show --recommendation-id <id>",
+		Use:   "show",
 		Short: "Show a specific saved pickup recommendation",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if recommendationID <= 0 {
@@ -265,9 +238,6 @@ func printPickupRecommendation(cmd *cobra.Command, r pickups.RecommendResult) {
 	fmt.Fprintln(cmd.OutOrStdout())
 	fmt.Fprintln(cmd.OutOrStdout(), "Best streamers")
 	printPickupItemsTable(cmd, r.TopStreamers)
-	fmt.Fprintln(cmd.OutOrStdout())
-	fmt.Fprintln(cmd.OutOrStdout(), "Best upgrades")
-	printPickupItemsTable(cmd, r.Upgrades)
 	fmt.Fprintln(cmd.OutOrStdout())
 	fmt.Fprintln(cmd.OutOrStdout(), "Risky / monitor")
 	printPickupItemsTable(cmd, r.RiskyMonitor)
