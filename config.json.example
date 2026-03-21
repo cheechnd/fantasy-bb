@@ -56,6 +56,15 @@
       "reuse_bounded_candidate_limit": 25
     }
   },
+  "lineup": {
+    "pitchers": {
+      "enabled": true,
+      "auto_generate_from_pitcher_plan": true,
+      "allow_monitor_actions": false,
+      "require_confirmation": true,
+      "block_on_ambiguous_slot_mapping": true
+    }
+  },
   "execution": {
     "dry_run": true,
     "require_confirmation": true,

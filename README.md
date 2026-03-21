@@ -22,11 +22,12 @@ It ingests probable starter projections into SQLite, syncs your ESPN roster in r
 - executes one explicitly confirmed approved add/drop move for real with immediate preflight gating and verification
 - hardens real execution with duplicate-protection, ambiguous outcome handling, re-verification, and reconciliation tools
 - adds ad hoc manual pitcher add/drop requests that run through the same safety pipeline as planned moves
+- adds pitcher lineup planning/review/preflight and single-item lineup execution with verification/audit
 
 ## What it does not do
 
-- lineup execution
 - batch transaction execution
+- hitter lineup logic
 - waiver submission/FAAB bidding automation
 - browser automation
 - web dashboard
@@ -96,6 +97,11 @@ Fetch bounded free-agent pitchers and build pickup recommendations:
 ./fb transactions ad-hoc-list
 ./fb execute ad-hoc --request-id 4
 ./fb execute ad-hoc-confirm --request-id 4
+./fb lineup pitchers plan
+./fb lineup pitchers review --plan-id 1
+./fb lineup pitchers approve --plan-id 1 --item 2 --note "start this week"
+./fb lineup pitchers preflight
+./fb lineup pitchers execute --item 2 --confirm
 ```
 
 ## Typical workflow
@@ -202,6 +208,22 @@ Fetch bounded free-agent pitchers and build pickup recommendations:
 ./fb execute ad-hoc --request-id 4 --confirm
 # equivalent:
 ./fb execute ad-hoc-confirm --request-id 4
+```
+
+### 11. Pitcher lineup actions (same safety model)
+
+```bash
+./fb lineup pitchers plan
+./fb lineup pitchers show --plan-id 1
+./fb lineup pitchers review --plan-id 1
+./fb lineup pitchers approve --plan-id 1 --item 2 --note "start this week"
+./fb lineup pitchers queue
+./fb lineup pitchers preflight
+./fb lineup pitchers execute --item 2
+./fb lineup pitchers execute --item 2 --confirm
+./fb lineup pitchers confirm --item 2
+./fb lineup pitchers history
+./fb lineup pitchers result --execution-id 1
 ```
 
 Safety rules:
@@ -385,6 +407,18 @@ Pitcher analysis uses ESPN snapshots only. By default it uses the latest sync, o
 - `fb transactions ad-hoc --add "<player>" --drop "<player>"`
 - `fb transactions ad-hoc-show --request-id <id>`
 - `fb transactions ad-hoc-list [--state <state>] [--limit <n>]`
+- `fb lineup pitchers plan [--pitcher-plan-id <id> --sync-run <id>]`
+- `fb lineup pitchers show [--plan-id <id>]`
+- `fb lineup pitchers review --plan-id <id>`
+- `fb lineup pitchers approve --plan-id <id> --item <item-id> [--note <text>]`
+- `fb lineup pitchers reject --plan-id <id> --item <item-id> [--note <text>]`
+- `fb lineup pitchers defer --plan-id <id> --item <item-id> [--note <text>]`
+- `fb lineup pitchers queue [--limit <n>]`
+- `fb lineup pitchers preflight [--item <approved-item-id>] [--limit <n>]`
+- `fb lineup pitchers execute --item <approved-item-id> [--confirm]`
+- `fb lineup pitchers confirm --item <approved-item-id>`
+- `fb lineup pitchers history [--limit <n>]`
+- `fb lineup pitchers result --execution-id <id>`
 
 Global flags (all commands):
 - `--json`
@@ -408,6 +442,8 @@ SQLite is the system of record. Key tables:
 - transaction review workflow: `transaction_review_states`, `transaction_review_history`
 - execution preflight artifacts: `execution_runs`, `execution_run_items`
 - real execution artifacts: `execution_attempts`, `execution_attempt_events`
+- lineup planning/review artifacts: `lineup_plans`, `lineup_plan_items`, `lineup_review_states`, `lineup_review_history`
+- lineup execution artifacts: `lineup_execution_attempts`, `lineup_execution_attempt_events`
 
 ## ESPN credentials
 
@@ -447,6 +483,14 @@ Transaction planning tuning is configurable under `transactions.pitchers` in `co
 - `uncertainty_penalty_missing_projection`
 - `uncertainty_penalty_ambiguous_match`
 - `allow_compare_against_likely_start`
+
+Pitcher lineup controls are configurable under `lineup.pitchers`:
+
+- `enabled`
+- `auto_generate_from_pitcher_plan`
+- `allow_monitor_actions`
+- `require_confirmation`
+- `block_on_ambiguous_slot_mapping`
 
 Real single-item execution tuning is configurable under `execution.real`:
 

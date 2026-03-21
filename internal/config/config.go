@@ -29,6 +29,7 @@ type Config struct {
 	Planning     PlanningConfig     `json:"planning"`
 	Pickups      PickupsConfig      `json:"pickups"`
 	Transactions TransactionsConfig `json:"transactions"`
+	Lineup       LineupConfig       `json:"lineup"`
 	Features     FeaturesConfig     `json:"features"`
 }
 
@@ -69,10 +70,10 @@ type ExecutionRealConfig struct {
 }
 
 type ExecutionHardeningConfig struct {
-	BlockOnPriorSuccess                 bool `json:"block_on_prior_success"`
-	BlockOnAmbiguousPriorAttempt        bool `json:"block_on_ambiguous_prior_attempt"`
-	VerificationRecheckLimit            int  `json:"verification_recheck_limit"`
-	VerificationPendingWindowSeconds    int  `json:"verification_pending_window_seconds"`
+	BlockOnPriorSuccess                  bool `json:"block_on_prior_success"`
+	BlockOnAmbiguousPriorAttempt         bool `json:"block_on_ambiguous_prior_attempt"`
+	VerificationRecheckLimit             int  `json:"verification_recheck_limit"`
+	VerificationPendingWindowSeconds     int  `json:"verification_pending_window_seconds"`
 	TreatMixedReconciliationInconclusive bool `json:"treat_mixed_reconciliation_as_inconclusive"`
 }
 
@@ -134,6 +135,18 @@ type TransactionAdHocConfig struct {
 	MaxRecentRequests          int  `json:"max_recent_requests"`
 	RequirePitchersOnly        bool `json:"require_pitchers_only"`
 	ReuseBoundedCandidateLimit int  `json:"reuse_bounded_candidate_limit"`
+}
+
+type LineupConfig struct {
+	Pitchers LineupPitchersConfig `json:"pitchers"`
+}
+
+type LineupPitchersConfig struct {
+	Enabled                     bool `json:"enabled"`
+	AutoGenerateFromPitcherPlan bool `json:"auto_generate_from_pitcher_plan"`
+	AllowMonitorActions         bool `json:"allow_monitor_actions"`
+	RequireConfirmation         bool `json:"require_confirmation"`
+	BlockOnAmbiguousSlotMapping bool `json:"block_on_ambiguous_slot_mapping"`
 }
 
 type FeaturesConfig struct {
@@ -238,6 +251,15 @@ func Default() Config {
 				MaxRecentRequests:          25,
 				RequirePitchersOnly:        true,
 				ReuseBoundedCandidateLimit: 25,
+			},
+		},
+		Lineup: LineupConfig{
+			Pitchers: LineupPitchersConfig{
+				Enabled:                     true,
+				AutoGenerateFromPitcherPlan: true,
+				AllowMonitorActions:         false,
+				RequireConfirmation:         true,
+				BlockOnAmbiguousSlotMapping: true,
 			},
 		},
 		Features: FeaturesConfig{
@@ -479,6 +501,9 @@ func (c Config) Validate() error {
 	}
 	if c.Execution.Hardening.VerificationPendingWindowSeconds < 0 || c.Execution.Hardening.VerificationPendingWindowSeconds > 600 {
 		problems = append(problems, "execution.hardening.verification_pending_window_seconds must be between 0 and 600")
+	}
+	if c.Lineup.Pitchers.RequireConfirmation && !c.Execution.Real.RequireConfirmation {
+		problems = append(problems, "lineup.pitchers.require_confirmation requires execution.real.require_confirmation=true")
 	}
 
 	if len(problems) > 0 {
