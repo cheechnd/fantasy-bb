@@ -144,7 +144,7 @@ Validate setup:
 ./fb transactions execute preflight --item 3
 ./fb transactions execute transaction --item 3
 ./fb transactions execute transaction --item 3 --confirm
-./fb transactions execute result --execution-id 1
+./fb transactions execute history --execution-id 1
 
 ./fb lineup pitchers plan
 ./fb lineup pitchers review --plan-id 1
@@ -246,7 +246,7 @@ Examples:
 ```bash
 ./fb doctor --json
 ./fb monitor summary --json
-./fb transactions execute result --execution-id 8 --json
+./fb transactions execute history --execution-id 8 --json
 ./fb lineup pitchers queue --json
 ```
 

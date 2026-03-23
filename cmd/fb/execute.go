@@ -42,12 +42,8 @@ func newExecuteCmd(opts *cliOptions) *cobra.Command {
 	queueCmd.GroupID = "inspect"
 	lastCmd := newExecuteLastCmd(opts)
 	lastCmd.GroupID = "inspect"
-	showCmd := newExecuteShowCmd(opts)
-	showCmd.GroupID = "inspect"
 	historyCmd := newExecuteHistoryCmd(opts)
 	historyCmd.GroupID = "inspect"
-	resultCmd := newExecuteResultCmd(opts)
-	resultCmd.GroupID = "inspect"
 	verifyCmd := newExecuteVerifyCmd(opts)
 	verifyCmd.GroupID = "inspect"
 	resolveCmd := newExecuteResolveCmd(opts)
@@ -56,7 +52,7 @@ func newExecuteCmd(opts *cliOptions) *cobra.Command {
 	pendingCmd.GroupID = "inspect"
 	reconcileCmd := newExecuteReconcileCmd(opts)
 	reconcileCmd.GroupID = "inspect"
-	cmd.AddCommand(preflightCmd, dryRunCmd, transactionCmd, adHocCmd, queueCmd, lastCmd, showCmd, historyCmd, resultCmd, verifyCmd, resolveCmd, pendingCmd, reconcileCmd)
+	cmd.AddCommand(preflightCmd, dryRunCmd, transactionCmd, adHocCmd, queueCmd, lastCmd, historyCmd, verifyCmd, resolveCmd, pendingCmd, reconcileCmd)
 	return cmd
 }
 
@@ -143,11 +139,15 @@ func newExecuteQueueCmd(opts *cliOptions) *cobra.Command {
 }
 
 func newExecuteLastCmd(opts *cliOptions) *cobra.Command {
+	var runID int64
 	cmd := &cobra.Command{
 		Use:   "last",
-		Short: "Show latest preflight/dry-run execution run",
+		Short: "Show execution run (latest by default)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			v, err := withExecuteService(cmd.Context(), opts, func(ctx context.Context, svc *exesvc.Service) (any, error) {
+				if runID > 0 {
+					return svc.Show(ctx, runID)
+				}
 				return svc.Last(ctx)
 			})
 			if err != nil {
@@ -158,6 +158,10 @@ func newExecuteLastCmd(opts *cliOptions) *cobra.Command {
 				return writeJSON(cmd, map[string]any{"run": run})
 			}
 			if run == nil {
+				if runID > 0 {
+					fmt.Fprintf(cmd.OutOrStdout(), "Execution run %d not found.\n", runID)
+					return nil
+				}
 				fmt.Fprintln(cmd.OutOrStdout(), "No execution runs found.")
 				return nil
 			}
@@ -165,37 +169,7 @@ func newExecuteLastCmd(opts *cliOptions) *cobra.Command {
 			return nil
 		},
 	}
-	return cmd
-}
-
-func newExecuteShowCmd(opts *cliOptions) *cobra.Command {
-	var runID int64
-	cmd := &cobra.Command{
-		Use:   "show",
-		Short: "Show a specific execution run",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if runID <= 0 {
-				return fmt.Errorf("--run-id must be > 0")
-			}
-			v, err := withExecuteService(cmd.Context(), opts, func(ctx context.Context, svc *exesvc.Service) (any, error) {
-				return svc.Show(ctx, runID)
-			})
-			if err != nil {
-				return err
-			}
-			run := v.(*execute.Run)
-			if opts.OutputJSON {
-				return writeJSON(cmd, map[string]any{"run": run})
-			}
-			if run == nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "Execution run %d not found.\n", runID)
-				return nil
-			}
-			printExecutionRun(cmd, run)
-			return nil
-		},
-	}
-	cmd.Flags().Int64Var(&runID, "run-id", 0, "Execution run ID")
+	cmd.Flags().Int64Var(&runID, "run-id", 0, "Execution run ID (defaults to latest)")
 	return cmd
 }
 
@@ -276,10 +250,29 @@ func newExecuteAdHocCmd(opts *cliOptions) *cobra.Command {
 
 func newExecuteHistoryCmd(opts *cliOptions) *cobra.Command {
 	var limit int
+	var attemptID int64
 	cmd := &cobra.Command{
 		Use:   "history",
-		Short: "Show real execution attempt history",
+		Short: "Show execution attempts (list or one by --execution-id)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if attemptID > 0 {
+				v, err := withRealExecuteService(cmd.Context(), opts, func(ctx context.Context, _ config.Config, svc *exerealsvc.Service) (any, error) {
+					return svc.ByID(ctx, attemptID)
+				})
+				if err != nil {
+					return err
+				}
+				attempt := v.(*execute.Attempt)
+				if opts.OutputJSON {
+					return writeJSON(cmd, map[string]any{"attempt": attempt})
+				}
+				if attempt == nil {
+					fmt.Fprintf(cmd.OutOrStdout(), "Execution attempt %d not found.\n", attemptID)
+					return nil
+				}
+				printExecutionAttempt(cmd, attempt)
+				return nil
+			}
 			v, err := withRealExecuteService(cmd.Context(), opts, func(ctx context.Context, _ config.Config, svc *exerealsvc.Service) (any, error) {
 				return svc.History(ctx, limit)
 			})
@@ -295,37 +288,7 @@ func newExecuteHistoryCmd(opts *cliOptions) *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVar(&limit, "limit", 20, "Maximum attempts to show")
-	return cmd
-}
-
-func newExecuteResultCmd(opts *cliOptions) *cobra.Command {
-	var attemptID int64
-	cmd := &cobra.Command{
-		Use:   "result",
-		Short: "Show details for a specific real execution attempt",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if attemptID <= 0 {
-				return fmt.Errorf("--execution-id must be > 0")
-			}
-			v, err := withRealExecuteService(cmd.Context(), opts, func(ctx context.Context, _ config.Config, svc *exerealsvc.Service) (any, error) {
-				return svc.ByID(ctx, attemptID)
-			})
-			if err != nil {
-				return err
-			}
-			attempt := v.(*execute.Attempt)
-			if opts.OutputJSON {
-				return writeJSON(cmd, map[string]any{"attempt": attempt})
-			}
-			if attempt == nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "Execution attempt %d not found.\n", attemptID)
-				return nil
-			}
-			printExecutionAttempt(cmd, attempt)
-			return nil
-		},
-	}
-	cmd.Flags().Int64Var(&attemptID, "execution-id", 0, "Execution attempt ID")
+	cmd.Flags().Int64Var(&attemptID, "execution-id", 0, "Execution attempt ID (shows one attempt)")
 	return cmd
 }
 
