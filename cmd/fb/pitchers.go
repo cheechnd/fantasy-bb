@@ -29,8 +29,6 @@ func newPitchersCmd(opts *cliOptions) *cobra.Command {
 	)
 	analyzeCmd := newPitchersAnalyzeWeekCmd(opts)
 	analyzeCmd.GroupID = "analysis"
-	twoStartCmd := newPitchersTwoStartCmd(opts)
-	twoStartCmd.GroupID = "analysis"
 	reportCmd := newPitchersReportCmd(opts)
 	reportCmd.GroupID = "analysis"
 	explainMatchesCmd := newPitchersExplainMatchesCmd(opts)
@@ -41,7 +39,7 @@ func newPitchersCmd(opts *cliOptions) *cobra.Command {
 	planCmd.GroupID = "planning"
 	planLastCmd := newPitchersPlanLastCmd(opts)
 	planLastCmd.GroupID = "inspect"
-	cmd.AddCommand(analyzeCmd, twoStartCmd, reportCmd, explainMatchesCmd, lastReportCmd, planCmd, planLastCmd)
+	cmd.AddCommand(analyzeCmd, reportCmd, explainMatchesCmd, lastReportCmd, planCmd, planLastCmd)
 	return cmd
 }
 
@@ -74,45 +72,6 @@ func newPitchersAnalyzeWeekCmd(opts *cliOptions) *cobra.Command {
 				return writeJSON(cmd, report)
 			}
 			printPitcherReport(cmd, report)
-			return nil
-		},
-	}
-	cmd.Flags().Int64Var(&syncRunID, "sync-run", 0, "ESPN sync run ID (defaults to latest)")
-	cmd.Flags().StringVar(&fromRaw, "from", "", "Window start date (YYYY-MM-DD)")
-	cmd.Flags().StringVar(&toRaw, "to", "", "Window end date (YYYY-MM-DD)")
-	cmd.Flags().Int64Var(&importRunID, "import-run", 0, "Forecaster import run ID (defaults to latest)")
-	return cmd
-}
-
-func newPitchersTwoStartCmd(opts *cliOptions) *cobra.Command {
-	var fromRaw, toRaw string
-	var syncRunID int64
-	var importRunID int64
-	cmd := &cobra.Command{
-		Use:   "two-start",
-		Short: "Show ESPN rostered pitchers with 2+ projected starts",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			opts2, err := buildAnalysisOptions(cmd, fromRaw, toRaw, &importRunID)
-			if err != nil {
-				return err
-			}
-			r, err := withPitchersServices(cmd.Context(), opts, func(_ context.Context, svc *pitchsvc.Service, es *essvc.Service) (any, error) {
-				src, err := resolveESPNPitcherSource(cmd.Context(), cmd, es, syncRunID)
-				if err != nil {
-					return nil, err
-				}
-				opts2.RosterInputs = src.Inputs
-				opts2.RosterSource = src.Source
-				return svc.TwoStart(cmd.Context(), opts2)
-			})
-			if err != nil {
-				return err
-			}
-			report := r.(pitchers.AnalysisReport)
-			if opts.OutputJSON {
-				return writeJSON(cmd, report.TwoStartPitchers)
-			}
-			printProjectionTable(cmd, report.TwoStartPitchers)
 			return nil
 		},
 	}
