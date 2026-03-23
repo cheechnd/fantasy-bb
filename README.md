@@ -17,6 +17,13 @@ It keeps your workflow in SQLite, uses deterministic rules, and gates write acti
 - Monitoring for stale/blocked/invalidated artifacts
 - Operator diagnostics via `fb doctor`
 
+### Write capabilities in v1
+- Real writes are limited to **single-item** ESPN mutations:
+  - transaction add/drop via `fb transactions run` / `fb transactions run-ad-hoc`
+  - pitcher lineup slot move via `fb lineup pitchers run`
+- Planning/recommendation/monitoring commands remain non-mutating.
+- ESPN ingestion commands (`fb espn ...`) are read-only data pulls.
+
 ### Intentionally out of scope
 - Hitters
 - Batch/unattended execution
