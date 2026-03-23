@@ -18,7 +18,6 @@ func newMonitorCmd(opts *cliOptions) *cobra.Command {
 	cmd.AddGroup(
 		&cobra.Group{ID: "overview", Title: "Overview"},
 		&cobra.Group{ID: "artifacts", Title: "Artifact Checks"},
-		&cobra.Group{ID: "inspect", Title: "Inspection"},
 	)
 
 	summaryCmd := newMonitorSummaryCmd(opts)
@@ -35,10 +34,7 @@ func newMonitorCmd(opts *cliOptions) *cobra.Command {
 	adhocCmd.GroupID = "artifacts"
 	executionCmd := newMonitorExecutionCmd(opts)
 	executionCmd.GroupID = "artifacts"
-	showCmd := newMonitorShowCmd(opts)
-	showCmd.GroupID = "inspect"
-
-	cmd.AddCommand(summaryCmd, plansCmd, lineupCmd, pickupsCmd, approvalsCmd, adhocCmd, executionCmd, showCmd)
+	cmd.AddCommand(summaryCmd, plansCmd, lineupCmd, pickupsCmd, approvalsCmd, adhocCmd, executionCmd)
 	return cmd
 }
 
@@ -65,12 +61,16 @@ func newMonitorSummaryCmd(opts *cliOptions) *cobra.Command {
 
 func newMonitorPlansCmd(opts *cliOptions) *cobra.Command {
 	var limit int
+	var artifactID int64
 	var latestOnly bool
 	cmd := &cobra.Command{
 		Use:   "plans",
 		Short: "Evaluate pitcher plan freshness against current roster/forecaster context",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			v, err := withMonitorService(cmd.Context(), opts, func(ctx context.Context, svc *monitor.Service) (any, error) {
+				if artifactID > 0 {
+					return svc.Show(ctx, "plan", artifactID)
+				}
 				return svc.Plans(ctx, monitor.EvaluateOptions{Limit: limit, LatestOnly: latestOnly})
 			})
 			if err != nil {
@@ -84,6 +84,7 @@ func newMonitorPlansCmd(opts *cliOptions) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().Int64Var(&artifactID, "id", 0, "Specific plan artifact ID")
 	cmd.Flags().IntVar(&limit, "limit", 20, "Maximum artifacts to evaluate")
 	cmd.Flags().BoolVar(&latestOnly, "latest-only", false, "Evaluate latest artifact only")
 	return cmd
@@ -91,12 +92,24 @@ func newMonitorPlansCmd(opts *cliOptions) *cobra.Command {
 
 func newMonitorLineupCmd(opts *cliOptions) *cobra.Command {
 	var limit int
+	var artifactID int64
+	var artifactType string
 	var latestOnly bool
 	cmd := &cobra.Command{
 		Use:   "lineup",
 		Short: "Evaluate lineup plans and approved lineup actions against live roster slots",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			v, err := withMonitorService(cmd.Context(), opts, func(ctx context.Context, svc *monitor.Service) (any, error) {
+				if artifactID > 0 {
+					t := strings.ToLower(strings.TrimSpace(artifactType))
+					if t == "" {
+						t = "lineup_plan"
+					}
+					if t != "lineup_plan" && t != "lineup_approval" {
+						return nil, fmt.Errorf("invalid --type value %q (expected lineup_plan|lineup_approval)", t)
+					}
+					return svc.Show(ctx, t, artifactID)
+				}
 				return svc.Lineup(ctx, monitor.EvaluateOptions{Limit: limit, LatestOnly: latestOnly})
 			})
 			if err != nil {
@@ -110,6 +123,8 @@ func newMonitorLineupCmd(opts *cliOptions) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().Int64Var(&artifactID, "id", 0, "Specific lineup artifact ID")
+	cmd.Flags().StringVar(&artifactType, "type", "lineup_plan", "Artifact type when --id is set: lineup_plan|lineup_approval")
 	cmd.Flags().IntVar(&limit, "limit", 20, "Maximum artifacts to evaluate")
 	cmd.Flags().BoolVar(&latestOnly, "latest-only", false, "Evaluate latest artifact only")
 	return cmd
@@ -117,12 +132,16 @@ func newMonitorLineupCmd(opts *cliOptions) *cobra.Command {
 
 func newMonitorPickupsCmd(opts *cliOptions) *cobra.Command {
 	var limit int
+	var artifactID int64
 	var latestOnly bool
 	cmd := &cobra.Command{
 		Use:   "pickups",
 		Short: "Evaluate pickup recommendations and candidate pool freshness",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			v, err := withMonitorService(cmd.Context(), opts, func(ctx context.Context, svc *monitor.Service) (any, error) {
+				if artifactID > 0 {
+					return svc.Show(ctx, "pickup", artifactID)
+				}
 				return svc.Pickups(ctx, monitor.EvaluateOptions{Limit: limit, LatestOnly: latestOnly})
 			})
 			if err != nil {
@@ -136,6 +155,7 @@ func newMonitorPickupsCmd(opts *cliOptions) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().Int64Var(&artifactID, "id", 0, "Specific pickup artifact ID")
 	cmd.Flags().IntVar(&limit, "limit", 20, "Maximum artifacts to evaluate")
 	cmd.Flags().BoolVar(&latestOnly, "latest-only", false, "Evaluate latest artifact only")
 	return cmd
@@ -143,11 +163,23 @@ func newMonitorPickupsCmd(opts *cliOptions) *cobra.Command {
 
 func newMonitorApprovalsCmd(opts *cliOptions) *cobra.Command {
 	var limit int
+	var artifactID int64
+	var artifactType string
 	cmd := &cobra.Command{
 		Use:   "approvals",
 		Short: "Evaluate approved transaction/lineup items for current actionability",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			v, err := withMonitorService(cmd.Context(), opts, func(ctx context.Context, svc *monitor.Service) (any, error) {
+				if artifactID > 0 {
+					t := strings.ToLower(strings.TrimSpace(artifactType))
+					if t == "" {
+						t = "approval"
+					}
+					if t != "approval" && t != "lineup_approval" {
+						return nil, fmt.Errorf("invalid --type value %q (expected approval|lineup_approval)", t)
+					}
+					return svc.Show(ctx, t, artifactID)
+				}
 				return svc.Approvals(ctx, monitor.EvaluateOptions{Limit: limit})
 			})
 			if err != nil {
@@ -161,17 +193,23 @@ func newMonitorApprovalsCmd(opts *cliOptions) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().Int64Var(&artifactID, "id", 0, "Specific approval artifact ID")
+	cmd.Flags().StringVar(&artifactType, "type", "approval", "Artifact type when --id is set: approval|lineup_approval")
 	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum approved artifacts to evaluate")
 	return cmd
 }
 
 func newMonitorAdHocCmd(opts *cliOptions) *cobra.Command {
 	var limit int
+	var artifactID int64
 	cmd := &cobra.Command{
 		Use:   "ad-hoc",
 		Short: "Evaluate ad hoc add/drop requests for current validity",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			v, err := withMonitorService(cmd.Context(), opts, func(ctx context.Context, svc *monitor.Service) (any, error) {
+				if artifactID > 0 {
+					return svc.Show(ctx, "ad_hoc", artifactID)
+				}
 				return svc.AdHoc(ctx, monitor.EvaluateOptions{Limit: limit})
 			})
 			if err != nil {
@@ -185,17 +223,22 @@ func newMonitorAdHocCmd(opts *cliOptions) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().Int64Var(&artifactID, "id", 0, "Specific ad hoc request artifact ID")
 	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum requests to evaluate")
 	return cmd
 }
 
 func newMonitorExecutionCmd(opts *cliOptions) *cobra.Command {
 	var limit int
+	var artifactID int64
 	cmd := &cobra.Command{
 		Use:   "execution",
 		Short: "Show unresolved or follow-up-needed execution attempts",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			v, err := withMonitorService(cmd.Context(), opts, func(ctx context.Context, svc *monitor.Service) (any, error) {
+				if artifactID > 0 {
+					return svc.Show(ctx, "execution", artifactID)
+				}
 				return svc.Execution(ctx, monitor.EvaluateOptions{Limit: limit})
 			})
 			if err != nil {
@@ -209,39 +252,8 @@ func newMonitorExecutionCmd(opts *cliOptions) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().Int64Var(&artifactID, "id", 0, "Specific execution artifact ID")
 	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum execution attempts to evaluate")
-	return cmd
-}
-
-func newMonitorShowCmd(opts *cliOptions) *cobra.Command {
-	var typ string
-	var id int64
-	cmd := &cobra.Command{
-		Use:   "show",
-		Short: "Show detailed monitoring evaluation for a single artifact",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if strings.TrimSpace(typ) == "" {
-				return fmt.Errorf("--type is required")
-			}
-			if id <= 0 {
-				return fmt.Errorf("--id must be > 0")
-			}
-			v, err := withMonitorService(cmd.Context(), opts, func(ctx context.Context, svc *monitor.Service) (any, error) {
-				return svc.Show(ctx, typ, id)
-			})
-			if err != nil {
-				return err
-			}
-			run := v.(*monitor.Run)
-			if opts.OutputJSON {
-				return writeJSON(cmd, map[string]any{"run": run})
-			}
-			printMonitorRunTable(cmd, run)
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&typ, "type", "", "Artifact type: plan|lineup_plan|pickup|approval|lineup_approval|ad_hoc|execution")
-	cmd.Flags().Int64Var(&id, "id", 0, "Artifact ID")
 	return cmd
 }
 

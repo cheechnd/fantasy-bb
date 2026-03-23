@@ -46,9 +46,7 @@ func newLineupCmd(opts *cliOptions) *cobra.Command {
 	runCmd.GroupID = "run"
 	historyCmd := newLineupPitchersHistoryCmd(opts)
 	historyCmd.GroupID = "inspect"
-	resultCmd := newLineupPitchersResultCmd(opts)
-	resultCmd.GroupID = "inspect"
-	pitchersCmd.AddCommand(planCmd, adHocCmd, reviewCmd, approveCmd, rejectCmd, deferCmd, queueCmd, preflightCmd, runCmd, historyCmd, resultCmd)
+	pitchersCmd.AddCommand(planCmd, adHocCmd, reviewCmd, approveCmd, rejectCmd, deferCmd, queueCmd, preflightCmd, runCmd, historyCmd)
 	cmd.AddCommand(pitchersCmd)
 	return cmd
 }
@@ -254,10 +252,29 @@ func newLineupPitchersRunCmd(opts *cliOptions) *cobra.Command {
 
 func newLineupPitchersHistoryCmd(opts *cliOptions) *cobra.Command {
 	var limit int
+	var executionID int64
 	cmd := &cobra.Command{
 		Use:   "history",
-		Short: "Show past lineup execution attempts",
+		Short: "Show lineup execution attempts (list or one by --execution-id)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if executionID > 0 {
+				v, err := withLineupService(cmd.Context(), opts, func(ctx context.Context, _ config.Config, svc *lp.Service) (any, error) {
+					return svc.ExecutionResult(ctx, executionID)
+				})
+				if err != nil {
+					return err
+				}
+				a, _ := v.(*lp.ExecutionAttempt)
+				if opts.OutputJSON {
+					return writeJSON(cmd, map[string]any{"attempt": a})
+				}
+				if a == nil {
+					fmt.Fprintf(cmd.OutOrStdout(), "Lineup execution %d not found.\n", executionID)
+					return nil
+				}
+				printLineupResult(cmd, a)
+				return nil
+			}
 			v, err := withLineupService(cmd.Context(), opts, func(ctx context.Context, _ config.Config, svc *lp.Service) (any, error) {
 				return svc.ExecutionHistory(ctx, limit)
 			})
@@ -273,37 +290,7 @@ func newLineupPitchersHistoryCmd(opts *cliOptions) *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVar(&limit, "limit", 20, "Maximum rows")
-	return cmd
-}
-
-func newLineupPitchersResultCmd(opts *cliOptions) *cobra.Command {
-	var executionID int64
-	cmd := &cobra.Command{
-		Use:   "result",
-		Short: "Show details for one lineup execution attempt",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if executionID <= 0 {
-				return fmt.Errorf("--execution-id must be > 0")
-			}
-			v, err := withLineupService(cmd.Context(), opts, func(ctx context.Context, _ config.Config, svc *lp.Service) (any, error) {
-				return svc.ExecutionResult(ctx, executionID)
-			})
-			if err != nil {
-				return err
-			}
-			a, _ := v.(*lp.ExecutionAttempt)
-			if opts.OutputJSON {
-				return writeJSON(cmd, map[string]any{"attempt": a})
-			}
-			if a == nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "Lineup execution %d not found.\n", executionID)
-				return nil
-			}
-			printLineupResult(cmd, a)
-			return nil
-		},
-	}
-	cmd.Flags().Int64Var(&executionID, "execution-id", 0, "Lineup execution attempt ID")
+	cmd.Flags().Int64Var(&executionID, "execution-id", 0, "Lineup execution attempt ID (shows one attempt)")
 	return cmd
 }
 
