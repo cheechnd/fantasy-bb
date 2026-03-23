@@ -23,7 +23,7 @@ func newLineupCmd(opts *cliOptions) *cobra.Command {
 		&cobra.Group{ID: "plan", Title: "Plan"},
 		&cobra.Group{ID: "adhoc", Title: "Ad Hoc"},
 		&cobra.Group{ID: "review", Title: "Review"},
-		&cobra.Group{ID: "run", Title: "Preflight / Execute"},
+		&cobra.Group{ID: "run", Title: "Preflight / Run"},
 		&cobra.Group{ID: "inspect", Title: "Inspection"},
 	)
 	planCmd := newLineupPitchersPlanCmd(opts)
@@ -42,13 +42,13 @@ func newLineupCmd(opts *cliOptions) *cobra.Command {
 	queueCmd.GroupID = "review"
 	preflightCmd := newLineupPitchersPreflightCmd(opts)
 	preflightCmd.GroupID = "run"
-	executeCmd := newLineupPitchersExecuteCmd(opts)
-	executeCmd.GroupID = "run"
+	runCmd := newLineupPitchersRunCmd(opts)
+	runCmd.GroupID = "run"
 	historyCmd := newLineupPitchersHistoryCmd(opts)
 	historyCmd.GroupID = "inspect"
 	resultCmd := newLineupPitchersResultCmd(opts)
 	resultCmd.GroupID = "inspect"
-	pitchersCmd.AddCommand(planCmd, adHocCmd, reviewCmd, approveCmd, rejectCmd, deferCmd, queueCmd, preflightCmd, executeCmd, historyCmd, resultCmd)
+	pitchersCmd.AddCommand(planCmd, adHocCmd, reviewCmd, approveCmd, rejectCmd, deferCmd, queueCmd, preflightCmd, runCmd, historyCmd, resultCmd)
 	cmd.AddCommand(pitchersCmd)
 	return cmd
 }
@@ -219,12 +219,12 @@ func newLineupPitchersPreflightCmd(opts *cliOptions) *cobra.Command {
 	return cmd
 }
 
-func newLineupPitchersExecuteCmd(opts *cliOptions) *cobra.Command {
+func newLineupPitchersRunCmd(opts *cliOptions) *cobra.Command {
 	var itemID int64
 	var confirm bool
 	cmd := &cobra.Command{
-		Use:   "execute",
-		Short: "Prepare or execute one approved pitcher lineup action",
+		Use:   "run",
+		Short: "Prepare or run one approved pitcher lineup action",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if itemID <= 0 {
 				return fmt.Errorf("--item must be > 0")

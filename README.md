@@ -108,7 +108,7 @@ Validate setup:
 ./fb transactions run --item <approved_item_id> --confirm
 
 ./fb lineup pitchers preflight
-./fb lineup pitchers execute --item <approved_lineup_item_id> --confirm
+./fb lineup pitchers run --item <approved_lineup_item_id> --confirm
 ```
 
 5. Verify and monitor
@@ -149,7 +149,7 @@ Validate setup:
 ./fb lineup pitchers plan
 ./fb lineup pitchers review --plan-id 1
 ./fb lineup pitchers approve --plan-id 1 --item 2
-./fb lineup pitchers execute --item 2 --confirm
+./fb lineup pitchers run --item 2 --confirm
 
 ./fb monitor summary
 ./fb doctor
@@ -254,4 +254,4 @@ Examples:
 
 - `fb healthcheck` is retained as a basic legacy check command.
 - `fb doctor` is the preferred v1 operator readiness command.
-- Existing workflow focuses on `fb transactions run` and `fb lineup pitchers execute` for real writes.
+- Existing workflow focuses on `fb transactions run` and `fb lineup pitchers run` for real writes.
