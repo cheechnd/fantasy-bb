@@ -161,7 +161,7 @@ Use when you already know the move.
 
 ```bash
 ./fb transactions ad-hoc --add "Aaron Nola" --drop "Shota Imanaga"
-./fb transactions ad-hoc-show --request-id 4
+./fb transactions ad-hoc-list --request-id 4
 ./fb transactions execute ad-hoc --request-id 4
 ./fb transactions execute ad-hoc --request-id 4 --confirm
 ```

@@ -36,10 +36,6 @@ func newTransactionsCmd(opts *cliOptions) *cobra.Command {
 	)
 	planCmd := newTransactionsPlanCmd(opts)
 	planCmd.GroupID = "generate"
-	topCmd := newTransactionsTopCmd(opts)
-	topCmd.GroupID = "generate"
-	compareCmd := newTransactionsCompareCmd(opts)
-	compareCmd.GroupID = "generate"
 	lastCmd := newTransactionsLastCmd(opts)
 	lastCmd.GroupID = "inspect"
 	explainCmd := newTransactionsExplainCmd(opts)
@@ -60,15 +56,13 @@ func newTransactionsCmd(opts *cliOptions) *cobra.Command {
 	resetReviewCmd.GroupID = "review"
 	adHocCmd := newTransactionsAdHocCmd(opts)
 	adHocCmd.GroupID = "adhoc"
-	adHocShowCmd := newTransactionsAdHocShowCmd(opts)
-	adHocShowCmd.GroupID = "adhoc"
 	adHocListCmd := newTransactionsAdHocListCmd(opts)
 	adHocListCmd.GroupID = "adhoc"
 	executeCmd := newExecuteCmd(opts)
 	executeCmd.GroupID = "execute"
 	cmd.AddCommand(
-		planCmd, topCmd, compareCmd,
-		adHocCmd, adHocShowCmd, adHocListCmd,
+		planCmd,
+		adHocCmd, adHocListCmd,
 		executeCmd,
 		reviewCmd, approveCmd, rejectCmd, deferCmd, queueCmd, approvalsCmd, resetReviewCmd,
 		lastCmd, explainCmd,
@@ -101,44 +95,35 @@ func newTransactionsAdHocCmd(opts *cliOptions) *cobra.Command {
 	return cmd
 }
 
-func newTransactionsAdHocShowCmd(opts *cliOptions) *cobra.Command {
-	var requestID int64
-	cmd := &cobra.Command{
-		Use:   "ad-hoc-show",
-		Short: "Show a saved ad hoc transaction request",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if requestID <= 0 {
-				return fmt.Errorf("--request-id must be > 0")
-			}
-			v, err := withAdHocService(cmd.Context(), opts, func(ctx context.Context, svc *adhocsvc.Service) (any, error) {
-				return svc.ByID(ctx, requestID)
-			})
-			if err != nil {
-				return err
-			}
-			req := v.(*transactions.AdHocRequest)
-			if req == nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "Ad hoc request %d not found.\n", requestID)
-				return nil
-			}
-			if opts.OutputJSON {
-				return writeJSON(cmd, req)
-			}
-			printAdHocRequest(cmd, req)
-			return nil
-		},
-	}
-	cmd.Flags().Int64Var(&requestID, "request-id", 0, "Ad hoc request ID")
-	return cmd
-}
-
 func newTransactionsAdHocListCmd(opts *cliOptions) *cobra.Command {
 	var limit int
+	var requestID int64
 	var stateRaw string
 	cmd := &cobra.Command{
 		Use:   "ad-hoc-list",
-		Short: "List recent ad hoc transaction requests",
+		Short: "List ad hoc requests or show one by --request-id",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if requestID > 0 {
+				v, err := withAdHocService(cmd.Context(), opts, func(ctx context.Context, svc *adhocsvc.Service) (any, error) {
+					return svc.ByID(ctx, requestID)
+				})
+				if err != nil {
+					return err
+				}
+				req := v.(*transactions.AdHocRequest)
+				if req == nil {
+					if opts.OutputJSON {
+						return writeJSON(cmd, map[string]any{"request": nil})
+					}
+					fmt.Fprintf(cmd.OutOrStdout(), "Ad hoc request %d not found.\n", requestID)
+					return nil
+				}
+				if opts.OutputJSON {
+					return writeJSON(cmd, map[string]any{"request": req})
+				}
+				printAdHocRequest(cmd, req)
+				return nil
+			}
 			var state *transactions.AdHocRequestState
 			if strings.TrimSpace(stateRaw) != "" {
 				s := transactions.AdHocRequestState(strings.TrimSpace(stateRaw))
@@ -158,6 +143,7 @@ func newTransactionsAdHocListCmd(opts *cliOptions) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().Int64Var(&requestID, "request-id", 0, "Show one ad hoc request by ID")
 	cmd.Flags().IntVar(&limit, "limit", 25, "Maximum requests to show")
 	cmd.Flags().StringVar(&stateRaw, "state", "", "Optional state filter")
 	return cmd
@@ -167,10 +153,18 @@ func newTransactionsPlanCmd(opts *cliOptions) *cobra.Command {
 	var fromRaw, toRaw string
 	var syncRunID, importRunID, pitcherPlanID, pickupRunID int64
 	var topN int
+	var view string
 	cmd := &cobra.Command{
 		Use:   "plan",
-		Short: "Generate and save a full read-only add/drop transaction plan",
+		Short: "Generate and save add/drop transaction plan (full/top/compare view)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			view = strings.ToLower(strings.TrimSpace(view))
+			if view == "" {
+				view = "full"
+			}
+			if view != "full" && view != "top" && view != "compare" {
+				return fmt.Errorf("invalid --view value %q (expected full|top|compare)", view)
+			}
 			v, err := withTransactionsService(cmd.Context(), opts, func(ctx context.Context, svc *transvc.Service) (any, error) {
 				opts2, err := buildTransactionOptions(cmd, fromRaw, toRaw, topN, &syncRunID, &importRunID, &pitcherPlanID, &pickupRunID)
 				if err != nil {
@@ -183,9 +177,19 @@ func newTransactionsPlanCmd(opts *cliOptions) *cobra.Command {
 			}
 			plan := v.(*transactions.Plan)
 			if opts.OutputJSON {
-				return writeJSON(cmd, plan)
+				if view == "top" {
+					return writeJSON(cmd, map[string]any{"plan": plan, "rows": filterTopTransactionRows(plan.Items), "view": view})
+				}
+				return writeJSON(cmd, map[string]any{"plan": plan, "view": view})
 			}
-			printTransactionPlan(cmd, plan)
+			switch view {
+			case "top":
+				printTransactionRowsTable(cmd, filterTopTransactionRows(plan.Items))
+			case "compare":
+				printTransactionCompare(cmd, plan.Items)
+			default:
+				printTransactionPlan(cmd, plan)
+			}
 			return nil
 		},
 	}
@@ -196,79 +200,7 @@ func newTransactionsPlanCmd(opts *cliOptions) *cobra.Command {
 	cmd.Flags().Int64Var(&pitcherPlanID, "pitcher-plan-id", 0, "Pitcher plan ID (defaults to latest)")
 	cmd.Flags().Int64Var(&pickupRunID, "pickup-run", 0, "Pickup recommendation run ID (defaults to latest)")
 	cmd.Flags().IntVar(&topN, "top", 10, "Top move rows to keep in saved plan")
-	return cmd
-}
-
-func newTransactionsTopCmd(opts *cliOptions) *cobra.Command {
-	var fromRaw, toRaw string
-	var syncRunID, importRunID, pitcherPlanID, pickupRunID int64
-	var topN int
-	cmd := &cobra.Command{
-		Use:   "top",
-		Short: "Show top ranked add/drop proposals",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			v, err := withTransactionsService(cmd.Context(), opts, func(ctx context.Context, svc *transvc.Service) (any, error) {
-				opts2, err := buildTransactionOptions(cmd, fromRaw, toRaw, topN, &syncRunID, &importRunID, &pitcherPlanID, &pickupRunID)
-				if err != nil {
-					return nil, err
-				}
-				return svc.GenerateAndSave(ctx, opts2)
-			})
-			if err != nil {
-				return err
-			}
-			plan := v.(*transactions.Plan)
-			rows := filterTopTransactionRows(plan.Items)
-			if opts.OutputJSON {
-				return writeJSON(cmd, map[string]any{"plan": plan, "top": rows})
-			}
-			printTransactionRowsTable(cmd, rows)
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&fromRaw, "from", "", "Window start date (YYYY-MM-DD)")
-	cmd.Flags().StringVar(&toRaw, "to", "", "Window end date (YYYY-MM-DD)")
-	cmd.Flags().Int64Var(&syncRunID, "sync-run", 0, "ESPN sync run ID (defaults to latest artifact chain)")
-	cmd.Flags().Int64Var(&importRunID, "import-run", 0, "Forecaster import run ID (defaults to latest artifact chain)")
-	cmd.Flags().Int64Var(&pitcherPlanID, "pitcher-plan-id", 0, "Pitcher plan ID (defaults to latest)")
-	cmd.Flags().Int64Var(&pickupRunID, "pickup-run", 0, "Pickup recommendation run ID (defaults to latest)")
-	cmd.Flags().IntVar(&topN, "top", 10, "Top move rows")
-	return cmd
-}
-
-func newTransactionsCompareCmd(opts *cliOptions) *cobra.Command {
-	var fromRaw, toRaw string
-	var syncRunID, importRunID, pitcherPlanID, pickupRunID int64
-	var topN int
-	cmd := &cobra.Command{
-		Use:   "compare",
-		Short: "Show deterministic comparison reasoning for proposed add/drop moves",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			v, err := withTransactionsService(cmd.Context(), opts, func(ctx context.Context, svc *transvc.Service) (any, error) {
-				opts2, err := buildTransactionOptions(cmd, fromRaw, toRaw, topN, &syncRunID, &importRunID, &pitcherPlanID, &pickupRunID)
-				if err != nil {
-					return nil, err
-				}
-				return svc.GenerateAndSave(ctx, opts2)
-			})
-			if err != nil {
-				return err
-			}
-			plan := v.(*transactions.Plan)
-			if opts.OutputJSON {
-				return writeJSON(cmd, plan)
-			}
-			printTransactionCompare(cmd, plan.Items)
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&fromRaw, "from", "", "Window start date (YYYY-MM-DD)")
-	cmd.Flags().StringVar(&toRaw, "to", "", "Window end date (YYYY-MM-DD)")
-	cmd.Flags().Int64Var(&syncRunID, "sync-run", 0, "ESPN sync run ID (defaults to latest artifact chain)")
-	cmd.Flags().Int64Var(&importRunID, "import-run", 0, "Forecaster import run ID (defaults to latest artifact chain)")
-	cmd.Flags().Int64Var(&pitcherPlanID, "pitcher-plan-id", 0, "Pitcher plan ID (defaults to latest)")
-	cmd.Flags().Int64Var(&pickupRunID, "pickup-run", 0, "Pickup recommendation run ID (defaults to latest)")
-	cmd.Flags().IntVar(&topN, "top", 10, "Top move rows")
+	cmd.Flags().StringVar(&view, "view", "full", "View mode: full|top|compare")
 	return cmd
 }
 

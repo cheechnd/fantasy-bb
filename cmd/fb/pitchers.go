@@ -39,13 +39,9 @@ func newPitchersCmd(opts *cliOptions) *cobra.Command {
 	lastReportCmd.GroupID = "inspect"
 	planCmd := newPitchersPlanCmd(opts)
 	planCmd.GroupID = "planning"
-	startSitCmd := newPitchersStartSitCmd(opts)
-	startSitCmd.GroupID = "planning"
 	planLastCmd := newPitchersPlanLastCmd(opts)
 	planLastCmd.GroupID = "inspect"
-	planShowCmd := newPitchersPlanShowCmd(opts)
-	planShowCmd.GroupID = "inspect"
-	cmd.AddCommand(analyzeCmd, twoStartCmd, reportCmd, explainMatchesCmd, lastReportCmd, planCmd, startSitCmd, planLastCmd, planShowCmd)
+	cmd.AddCommand(analyzeCmd, twoStartCmd, reportCmd, explainMatchesCmd, lastReportCmd, planCmd, planLastCmd)
 	return cmd
 }
 
@@ -243,10 +239,18 @@ func newPitchersPlanCmd(opts *cliOptions) *cobra.Command {
 	var fromRaw, toRaw string
 	var syncRunID int64
 	var importRunID int64
+	var view string
 	cmd := &cobra.Command{
 		Use:   "plan",
-		Short: "Build and save a read-only weekly pitcher plan",
+		Short: "Build and save weekly pitcher plan (full or start-sit view)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			view = strings.ToLower(strings.TrimSpace(view))
+			if view == "" {
+				view = "full"
+			}
+			if view != "full" && view != "start-sit" {
+				return fmt.Errorf("invalid --view value %q (expected full|start-sit)", view)
+			}
 			analysisOpts, err := buildAnalysisOptions(cmd, fromRaw, toRaw, &importRunID)
 			if err != nil {
 				return err
@@ -286,7 +290,7 @@ func newPitchersPlanCmd(opts *cliOptions) *cobra.Command {
 			if opts.OutputJSON {
 				return writeJSON(cmd, payload)
 			}
-			printPitcherPlan(cmd, plan, false)
+			printPitcherPlan(cmd, plan, view == "start-sit")
 			return nil
 		},
 	}
@@ -294,72 +298,28 @@ func newPitchersPlanCmd(opts *cliOptions) *cobra.Command {
 	cmd.Flags().StringVar(&fromRaw, "from", "", "Window start date (YYYY-MM-DD)")
 	cmd.Flags().StringVar(&toRaw, "to", "", "Window end date (YYYY-MM-DD)")
 	cmd.Flags().Int64Var(&importRunID, "import-run", 0, "Forecaster import run ID (defaults to latest)")
-	return cmd
-}
-
-func newPitchersStartSitCmd(opts *cliOptions) *cobra.Command {
-	var fromRaw, toRaw string
-	var syncRunID int64
-	var importRunID int64
-	cmd := &cobra.Command{
-		Use:   "start-sit",
-		Short: "Build and save a focused start/sit pitcher view",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			analysisOpts, err := buildAnalysisOptions(cmd, fromRaw, toRaw, &importRunID)
-			if err != nil {
-				return err
-			}
-			v, err := withPitchersPlannerServices(cmd.Context(), opts, func(ctx context.Context, cfg config.Config, svc *pitchsvc.Service, es *essvc.Service, ps *planner.Service) (any, error) {
-				src, err := resolveESPNPitcherSource(ctx, cmd, es, syncRunID)
-				if err != nil {
-					return nil, err
-				}
-				analysisOpts.RosterInputs = src.Inputs
-				analysisOpts.RosterSource = src.Source
-				report, err := svc.Report(ctx, analysisOpts)
-				if err != nil {
-					return nil, err
-				}
-				syncRun := src.SyncRunID
-				plan, err := ps.GenerateAndSave(ctx, planner.GenerateInput{
-					SyncRunID:       &syncRun,
-					ImportRunID:     report.ImportRunID,
-					AnalysisRunID:   &report.AnalysisRunID,
-					WindowStart:     report.WindowStart,
-					WindowEnd:       report.WindowEnd,
-					Rules:           planningRulesFromConfig(cfg),
-					Analysis:        report,
-					RosterSnapshots: src.Snapshots,
-				})
-				if err != nil {
-					return nil, err
-				}
-				return plan, nil
-			})
-			if err != nil {
-				return err
-			}
-			plan := v.(*planner.Plan)
-			if opts.OutputJSON {
-				return writeJSON(cmd, plan)
-			}
-			printPitcherPlan(cmd, plan, true)
-			return nil
-		},
-	}
-	cmd.Flags().Int64Var(&syncRunID, "sync-run", 0, "ESPN sync run ID (defaults to latest)")
-	cmd.Flags().StringVar(&fromRaw, "from", "", "Window start date (YYYY-MM-DD)")
-	cmd.Flags().StringVar(&toRaw, "to", "", "Window end date (YYYY-MM-DD)")
-	cmd.Flags().Int64Var(&importRunID, "import-run", 0, "Forecaster import run ID (defaults to latest)")
+	cmd.Flags().StringVar(&view, "view", "full", "View mode: full|start-sit")
 	return cmd
 }
 
 func newPitchersPlanLastCmd(opts *cliOptions) *cobra.Command {
+	var planID int64
+	var view string
 	cmd := &cobra.Command{
 		Use:   "plan-last",
-		Short: "Show latest saved pitcher plan",
+		Short: "Show saved pitcher plan (latest by default)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			view = strings.ToLower(strings.TrimSpace(view))
+			if view == "" {
+				view = "full"
+			}
+			if view != "full" && view != "start-sit" {
+				return fmt.Errorf("invalid --view value %q (expected full|start-sit)", view)
+			}
 			v, err := withPitchersPlannerServices(cmd.Context(), opts, func(ctx context.Context, _ config.Config, _ *pitchsvc.Service, _ *essvc.Service, ps *planner.Service) (any, error) {
+				if planID > 0 {
+					return ps.ByID(ctx, planID)
+				}
 				return ps.Latest(ctx)
 			})
 			if err != nil {
@@ -370,44 +330,19 @@ func newPitchersPlanLastCmd(opts *cliOptions) *cobra.Command {
 				return writeJSON(cmd, map[string]any{"plan": plan})
 			}
 			if plan == nil {
+				if planID > 0 {
+					fmt.Fprintf(cmd.OutOrStdout(), "Pitcher plan %d not found.\n", planID)
+					return nil
+				}
 				fmt.Fprintln(cmd.OutOrStdout(), "No saved pitcher plans found.")
 				return nil
 			}
-			printPitcherPlan(cmd, plan, false)
-			return nil
-		},
-	}
-	return cmd
-}
-
-func newPitchersPlanShowCmd(opts *cliOptions) *cobra.Command {
-	var planID int64
-	cmd := &cobra.Command{
-		Use:   "plan-show",
-		Short: "Show a specific saved pitcher plan",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if planID <= 0 {
-				return fmt.Errorf("--plan-id must be > 0")
-			}
-			v, err := withPitchersPlannerServices(cmd.Context(), opts, func(ctx context.Context, _ config.Config, _ *pitchsvc.Service, _ *essvc.Service, ps *planner.Service) (any, error) {
-				return ps.ByID(ctx, planID)
-			})
-			if err != nil {
-				return err
-			}
-			plan, _ := v.(*planner.Plan)
-			if opts.OutputJSON {
-				return writeJSON(cmd, map[string]any{"plan": plan})
-			}
-			if plan == nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "Pitcher plan %d not found.\n", planID)
-				return nil
-			}
-			printPitcherPlan(cmd, plan, false)
+			printPitcherPlan(cmd, plan, view == "start-sit")
 			return nil
 		},
 	}
 	cmd.Flags().Int64Var(&planID, "plan-id", 0, "Pitcher plan ID")
+	cmd.Flags().StringVar(&view, "view", "full", "View mode: full|start-sit")
 	return cmd
 }
 

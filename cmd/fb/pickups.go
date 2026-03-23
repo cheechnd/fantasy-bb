@@ -27,28 +27,36 @@ func newPickupsCmd(opts *cliOptions) *cobra.Command {
 	)
 	recommendCmd := newPickupsRecommendCmd(opts)
 	recommendCmd.GroupID = "generate"
-	topStreamersCmd := newPickupsTopStreamersCmd(opts)
-	topStreamersCmd.GroupID = "generate"
 	lastCmd := newPickupsLastCmd(opts)
 	lastCmd.GroupID = "inspect"
-	showCmd := newPickupsShowCmd(opts)
-	showCmd.GroupID = "inspect"
-	cmd.AddCommand(recommendCmd, topStreamersCmd, lastCmd, showCmd)
+	cmd.AddCommand(recommendCmd, lastCmd)
 	return cmd
 }
 
 func newPickupsRecommendCmd(opts *cliOptions) *cobra.Command {
 	var fromRaw, toRaw string
 	var topN int
+	var view string
+	var minTotal float64
 	var syncRunID, importRunID, candidateRunID int64
 	cmd := &cobra.Command{
 		Use:   "recommend",
-		Short: "Generate pickup recommendation report",
+		Short: "Generate pickup recommendation report (full/top-streamers)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			view = strings.ToLower(strings.TrimSpace(view))
+			if view == "" {
+				view = "full"
+			}
+			if view != "full" && view != "top-streamers" {
+				return fmt.Errorf("invalid --view value %q (expected full|top-streamers)", view)
+			}
 			v, err := withPickupsService(cmd.Context(), opts, func(ctx context.Context, svc *picksvc.Service) (any, error) {
-				opts2, err := buildPickupOptions(cmd, fromRaw, toRaw, topN, &syncRunID, &importRunID, &candidateRunID, nil)
+				opts2, err := buildPickupOptions(cmd, fromRaw, toRaw, topN, &syncRunID, &importRunID, &candidateRunID, &minTotal)
 				if err != nil {
 					return nil, err
+				}
+				if view == "top-streamers" {
+					return svc.TopStreamers(ctx, opts2)
 				}
 				return svc.Recommend(ctx, opts2)
 			})
@@ -59,7 +67,11 @@ func newPickupsRecommendCmd(opts *cliOptions) *cobra.Command {
 			if opts.OutputJSON {
 				return writeJSON(cmd, result)
 			}
-			printPickupRecommendation(cmd, result)
+			if view == "top-streamers" {
+				printPickupItemsTable(cmd, result.TopStreamers)
+			} else {
+				printPickupRecommendation(cmd, result)
+			}
 			return nil
 		},
 	}
@@ -69,52 +81,25 @@ func newPickupsRecommendCmd(opts *cliOptions) *cobra.Command {
 	cmd.Flags().Int64Var(&importRunID, "import-run", 0, "Forecaster import run ID (defaults to latest)")
 	cmd.Flags().Int64Var(&candidateRunID, "candidate-run", 0, "Candidate run ID (defaults to latest)")
 	cmd.Flags().IntVar(&topN, "top", 10, "Top recommendations per section")
-	return cmd
-}
-
-func newPickupsTopStreamersCmd(opts *cliOptions) *cobra.Command {
-	var fromRaw, toRaw string
-	var topN int
-	var minTotal float64
-	var syncRunID, importRunID, candidateRunID int64
-	cmd := &cobra.Command{
-		Use:   "top-streamers",
-		Short: "Show top streamer candidates",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			v, err := withPickupsService(cmd.Context(), opts, func(ctx context.Context, svc *picksvc.Service) (any, error) {
-				opts2, err := buildPickupOptions(cmd, fromRaw, toRaw, topN, &syncRunID, &importRunID, &candidateRunID, &minTotal)
-				if err != nil {
-					return nil, err
-				}
-				return svc.TopStreamers(ctx, opts2)
-			})
-			if err != nil {
-				return err
-			}
-			result := v.(pickups.RecommendResult)
-			if opts.OutputJSON {
-				return writeJSON(cmd, result)
-			}
-			printPickupItemsTable(cmd, result.TopStreamers)
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&fromRaw, "from", "", "Window start date (YYYY-MM-DD)")
-	cmd.Flags().StringVar(&toRaw, "to", "", "Window end date (YYYY-MM-DD)")
-	cmd.Flags().Int64Var(&syncRunID, "sync-run", 0, "ESPN sync run ID (defaults to latest)")
-	cmd.Flags().Int64Var(&importRunID, "import-run", 0, "Forecaster import run ID (defaults to latest)")
-	cmd.Flags().Int64Var(&candidateRunID, "candidate-run", 0, "Candidate run ID (defaults to latest)")
-	cmd.Flags().IntVar(&topN, "top", 10, "Top streamer rows")
-	cmd.Flags().Float64Var(&minTotal, "min-total-fpts", 0, "Minimum total projected FPTS")
+	cmd.Flags().StringVar(&view, "view", "full", "View mode: full|top-streamers")
+	cmd.Flags().Float64Var(&minTotal, "min-total-fpts", 0, "Minimum total projected FPTS (used by top-streamers view)")
 	return cmd
 }
 
 func newPickupsLastCmd(opts *cliOptions) *cobra.Command {
+	var recommendationID int64
 	cmd := &cobra.Command{
 		Use:   "last",
-		Short: "Show latest saved pickup recommendation",
+		Short: "Show saved pickup recommendation (latest by default)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			v, err := withPickupsService(cmd.Context(), opts, func(ctx context.Context, svc *picksvc.Service) (any, error) {
+				if recommendationID > 0 {
+					run, items, err := svc.Show(ctx, recommendationID)
+					if err != nil {
+						return nil, err
+					}
+					return map[string]any{"run": run, "items": items}, nil
+				}
 				run, items, err := svc.Last(ctx)
 				if err != nil {
 					return nil, err
@@ -130,6 +115,10 @@ func newPickupsLastCmd(opts *cliOptions) *cobra.Command {
 			}
 			run, _ := payload["run"].(*pickups.RecommendationRun)
 			if run == nil {
+				if recommendationID > 0 {
+					fmt.Fprintf(cmd.OutOrStdout(), "Recommendation %d not found.\n", recommendationID)
+					return nil
+				}
 				fmt.Fprintln(cmd.OutOrStdout(), "No pickup recommendations found.")
 				return nil
 			}
@@ -138,43 +127,7 @@ func newPickupsLastCmd(opts *cliOptions) *cobra.Command {
 			return nil
 		},
 	}
-	return cmd
-}
-
-func newPickupsShowCmd(opts *cliOptions) *cobra.Command {
-	var recommendationID int64
-	cmd := &cobra.Command{
-		Use:   "show",
-		Short: "Show a specific saved pickup recommendation",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if recommendationID <= 0 {
-				return fmt.Errorf("--recommendation-id must be > 0")
-			}
-			v, err := withPickupsService(cmd.Context(), opts, func(ctx context.Context, svc *picksvc.Service) (any, error) {
-				run, items, err := svc.Show(ctx, recommendationID)
-				if err != nil {
-					return nil, err
-				}
-				return map[string]any{"run": run, "items": items}, nil
-			})
-			if err != nil {
-				return err
-			}
-			payload := v.(map[string]any)
-			if opts.OutputJSON {
-				return writeJSON(cmd, payload)
-			}
-			run, _ := payload["run"].(*pickups.RecommendationRun)
-			if run == nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "Recommendation %d not found.\n", recommendationID)
-				return nil
-			}
-			printPickupRun(cmd, run)
-			printPickupItemsTable(cmd, payload["items"].([]pickups.RecommendationItem))
-			return nil
-		},
-	}
-	cmd.Flags().Int64Var(&recommendationID, "recommendation-id", 0, "Recommendation run ID")
+	cmd.Flags().Int64Var(&recommendationID, "recommendation-id", 0, "Recommendation run ID (defaults to latest)")
 	return cmd
 }
 
