@@ -50,8 +50,6 @@ func newTransactionsCmd(opts *cliOptions) *cobra.Command {
 	deferCmd.GroupID = "review"
 	queueCmd := newTransactionsQueueCmd(opts)
 	queueCmd.GroupID = "review"
-	approvalsCmd := newTransactionsApprovalsCmd(opts)
-	approvalsCmd.GroupID = "review"
 	resetReviewCmd := newTransactionsResetReviewCmd(opts)
 	resetReviewCmd.GroupID = "review"
 	adHocCmd := newTransactionsAdHocCmd(opts)
@@ -84,7 +82,7 @@ func newTransactionsCmd(opts *cliOptions) *cobra.Command {
 		planCmd,
 		adHocCmd, adHocListCmd,
 		preflightCmd, dryRunCmd, runCmd, runAdHocCmd, execQueueCmd, execLastCmd, execHistoryCmd, execVerifyCmd, execResolveCmd, execPendingCmd, execReconcileCmd,
-		reviewCmd, approveCmd, rejectCmd, deferCmd, queueCmd, approvalsCmd, resetReviewCmd,
+		reviewCmd, approveCmd, rejectCmd, deferCmd, queueCmd, resetReviewCmd,
 		lastCmd, explainCmd,
 	)
 	return cmd
@@ -283,28 +281,51 @@ func newTransactionsExplainCmd(opts *cliOptions) *cobra.Command {
 
 func newTransactionsReviewCmd(opts *cliOptions) *cobra.Command {
 	var planID int64
+	var limit int
+	var stateRaw string
 	cmd := &cobra.Command{
 		Use:   "review",
-		Short: "Show a transaction plan with current review state per item",
+		Short: "Show review state (plan view with --plan-id, or cross-plan approvals)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if planID <= 0 {
-				return fmt.Errorf("--plan-id must be > 0")
+			if planID > 0 {
+				v, err := withTransactionsReviewService(cmd.Context(), opts, func(ctx context.Context, svc *reviewsvc.Service) (any, error) {
+					return svc.ReviewPlan(ctx, planID)
+				})
+				if err != nil {
+					return err
+				}
+				review := v.(*transactions.PlanReview)
+				if opts.OutputJSON {
+					return writeJSON(cmd, review)
+				}
+				printTransactionPlanReview(cmd, review)
+				return nil
+			}
+			var state *transactions.ReviewState
+			if cmd.Flags().Changed("state") {
+				s, err := parseReviewState(stateRaw)
+				if err != nil {
+					return err
+				}
+				state = &s
 			}
 			v, err := withTransactionsReviewService(cmd.Context(), opts, func(ctx context.Context, svc *reviewsvc.Service) (any, error) {
-				return svc.ReviewPlan(ctx, planID)
+				return svc.Approvals(ctx, limit, state)
 			})
 			if err != nil {
 				return err
 			}
-			review := v.(*transactions.PlanReview)
+			rows := v.([]transactions.ApprovalStateRow)
 			if opts.OutputJSON {
-				return writeJSON(cmd, review)
+				return writeJSON(cmd, map[string]any{"ok": true, "count": len(rows), "rows": rows})
 			}
-			printTransactionPlanReview(cmd, review)
+			printTransactionApprovals(cmd, rows)
 			return nil
 		},
 	}
-	cmd.Flags().Int64Var(&planID, "plan-id", 0, "Transaction plan ID")
+	cmd.Flags().Int64Var(&planID, "plan-id", 0, "Transaction plan ID (plan-scoped view)")
+	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum approval rows to show (cross-plan mode)")
+	cmd.Flags().StringVar(&stateRaw, "state", "", "Filter by review state (pending|approved|rejected|deferred) in cross-plan mode")
 	return cmd
 }
 
@@ -388,40 +409,6 @@ func newTransactionsQueueCmd(opts *cliOptions) *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVar(&limit, "limit", 20, "Maximum queued items to show")
-	return cmd
-}
-
-func newTransactionsApprovalsCmd(opts *cliOptions) *cobra.Command {
-	var limit int
-	var stateRaw string
-	cmd := &cobra.Command{
-		Use:   "approvals",
-		Short: "Show transaction review states across plans",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			var state *transactions.ReviewState
-			if cmd.Flags().Changed("state") {
-				s, err := parseReviewState(stateRaw)
-				if err != nil {
-					return err
-				}
-				state = &s
-			}
-			v, err := withTransactionsReviewService(cmd.Context(), opts, func(ctx context.Context, svc *reviewsvc.Service) (any, error) {
-				return svc.Approvals(ctx, limit, state)
-			})
-			if err != nil {
-				return err
-			}
-			rows := v.([]transactions.ApprovalStateRow)
-			if opts.OutputJSON {
-				return writeJSON(cmd, map[string]any{"ok": true, "count": len(rows), "rows": rows})
-			}
-			printTransactionApprovals(cmd, rows)
-			return nil
-		},
-	}
-	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum approval rows to show")
-	cmd.Flags().StringVar(&stateRaw, "state", "", "Filter by review state (pending|approved|rejected|deferred)")
 	return cmd
 }
 
