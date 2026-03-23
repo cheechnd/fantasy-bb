@@ -23,39 +23,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newExecuteCmd(opts *cliOptions) *cobra.Command {
-	cmd := &cobra.Command{Use: "execute", Short: "Transaction execution readiness and single-item real execution"}
-	cmd.AddGroup(
-		&cobra.Group{ID: "run", Title: "Run"},
-		&cobra.Group{ID: "write", Title: "Real Write"},
-		&cobra.Group{ID: "inspect", Title: "Inspection"},
-	)
-	preflightCmd := newExecutePreflightCmd(opts)
-	preflightCmd.GroupID = "run"
-	dryRunCmd := newExecuteDryRunCmd(opts)
-	dryRunCmd.GroupID = "run"
-	transactionCmd := newExecuteTransactionCmd(opts)
-	transactionCmd.GroupID = "write"
-	adHocCmd := newExecuteAdHocCmd(opts)
-	adHocCmd.GroupID = "write"
-	queueCmd := newExecuteQueueCmd(opts)
-	queueCmd.GroupID = "inspect"
-	lastCmd := newExecuteLastCmd(opts)
-	lastCmd.GroupID = "inspect"
-	historyCmd := newExecuteHistoryCmd(opts)
-	historyCmd.GroupID = "inspect"
-	verifyCmd := newExecuteVerifyCmd(opts)
-	verifyCmd.GroupID = "inspect"
-	resolveCmd := newExecuteResolveCmd(opts)
-	resolveCmd.GroupID = "inspect"
-	pendingCmd := newExecutePendingCmd(opts)
-	pendingCmd.GroupID = "inspect"
-	reconcileCmd := newExecuteReconcileCmd(opts)
-	reconcileCmd.GroupID = "inspect"
-	cmd.AddCommand(preflightCmd, dryRunCmd, transactionCmd, adHocCmd, queueCmd, lastCmd, historyCmd, verifyCmd, resolveCmd, pendingCmd, reconcileCmd)
-	return cmd
-}
-
 func newExecutePreflightCmd(opts *cliOptions) *cobra.Command {
 	var itemID int64
 	var limit int
@@ -117,7 +84,7 @@ func newExecuteDryRunCmd(opts *cliOptions) *cobra.Command {
 func newExecuteQueueCmd(opts *cliOptions) *cobra.Command {
 	var limit int
 	cmd := &cobra.Command{
-		Use:   "queue",
+		Use:   "execution-queue",
 		Short: "Show approved items with latest execution-readiness status",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			v, err := withExecuteService(cmd.Context(), opts, func(ctx context.Context, svc *exesvc.Service) (any, error) {
@@ -141,7 +108,7 @@ func newExecuteQueueCmd(opts *cliOptions) *cobra.Command {
 func newExecuteLastCmd(opts *cliOptions) *cobra.Command {
 	var runID int64
 	cmd := &cobra.Command{
-		Use:   "last",
+		Use:   "execution-last",
 		Short: "Show execution run (latest by default)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			v, err := withExecuteService(cmd.Context(), opts, func(ctx context.Context, svc *exesvc.Service) (any, error) {
@@ -177,7 +144,7 @@ func newExecuteTransactionCmd(opts *cliOptions) *cobra.Command {
 	var itemID int64
 	var confirm bool
 	cmd := &cobra.Command{
-		Use:   "transaction",
+		Use:   "run",
 		Short: "Prepare or execute one approved add/drop transaction",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if itemID <= 0 {
@@ -209,7 +176,7 @@ func newExecuteAdHocCmd(opts *cliOptions) *cobra.Command {
 	var requestID int64
 	var confirm bool
 	cmd := &cobra.Command{
-		Use:   "ad-hoc",
+		Use:   "run-ad-hoc",
 		Short: "Prepare or execute one resolved ad hoc add/drop request",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if requestID <= 0 {
@@ -252,7 +219,7 @@ func newExecuteHistoryCmd(opts *cliOptions) *cobra.Command {
 	var limit int
 	var attemptID int64
 	cmd := &cobra.Command{
-		Use:   "history",
+		Use:   "execution-history",
 		Short: "Show execution attempts (list or one by --execution-id)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if attemptID > 0 {
@@ -295,7 +262,7 @@ func newExecuteHistoryCmd(opts *cliOptions) *cobra.Command {
 func newExecuteVerifyCmd(opts *cliOptions) *cobra.Command {
 	var attemptID int64
 	cmd := &cobra.Command{
-		Use:   "verify",
+		Use:   "execution-verify",
 		Short: "Re-run verification checks for a prior execution attempt",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if attemptID <= 0 {
@@ -322,7 +289,7 @@ func newExecuteVerifyCmd(opts *cliOptions) *cobra.Command {
 func newExecutePendingCmd(opts *cliOptions) *cobra.Command {
 	var limit int
 	cmd := &cobra.Command{
-		Use:   "pending",
+		Use:   "execution-pending",
 		Short: "Show unresolved execution attempts (ambiguous/pending/unverified)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			v, err := withRealExecuteService(cmd.Context(), opts, func(ctx context.Context, _ config.Config, svc *exerealsvc.Service) (any, error) {
@@ -346,7 +313,7 @@ func newExecutePendingCmd(opts *cliOptions) *cobra.Command {
 func newExecuteResolveCmd(opts *cliOptions) *cobra.Command {
 	var attemptID int64
 	cmd := &cobra.Command{
-		Use:   "resolve",
+		Use:   "execution-resolve",
 		Short: "Run verify then reconcile (if needed) for one unresolved execution attempt",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if attemptID <= 0 {
@@ -396,7 +363,7 @@ func newExecuteResolveCmd(opts *cliOptions) *cobra.Command {
 func newExecuteReconcileCmd(opts *cliOptions) *cobra.Command {
 	var attemptID int64
 	cmd := &cobra.Command{
-		Use:   "reconcile",
+		Use:   "execution-reconcile",
 		Short: "Reconcile a prior unresolved execution attempt against live roster state",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if attemptID <= 0 {
@@ -790,10 +757,10 @@ func nextActionForAttempt(a execute.Attempt) string {
 		a.ExecutionStatus == execute.ExecutionStatusSubmitted ||
 		a.VerificationStatus == execute.VerificationStatusPending ||
 		a.VerificationStatus == execute.VerificationStatusUnverified:
-		return fmt.Sprintf("fb execute verify --execution-id %d", a.ID)
+		return fmt.Sprintf("fb transactions execution-verify --execution-id %d", a.ID)
 	case a.VerificationStatus == execute.VerificationStatusUnknown ||
 		a.VerificationStatus == execute.VerificationStatusVerificationFailed:
-		return fmt.Sprintf("fb execute resolve --execution-id %d", a.ID)
+		return fmt.Sprintf("fb transactions execution-resolve --execution-id %d", a.ID)
 	default:
 		return "-"
 	}

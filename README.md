@@ -103,9 +103,9 @@ Validate setup:
 
 4. Preflight and execute one item at a time
 ```bash
-./fb transactions execute preflight
-./fb transactions execute transaction --item <approved_item_id>
-./fb transactions execute transaction --item <approved_item_id> --confirm
+./fb transactions preflight
+./fb transactions run --item <approved_item_id>
+./fb transactions run --item <approved_item_id> --confirm
 
 ./fb lineup pitchers preflight
 ./fb lineup pitchers execute --item <approved_lineup_item_id> --confirm
@@ -113,9 +113,9 @@ Validate setup:
 
 5. Verify and monitor
 ```bash
-./fb transactions execute pending
-./fb transactions execute verify --execution-id <id>
-./fb transactions execute reconcile --execution-id <id>
+./fb transactions execution-pending
+./fb transactions execution-verify --execution-id <id>
+./fb transactions execution-reconcile --execution-id <id>
 
 ./fb monitor summary
 ./fb monitor approvals
@@ -141,10 +141,10 @@ Validate setup:
 ./fb transactions approve --plan-id 1 --item 3 --note "best weekly delta"
 ./fb transactions queue
 
-./fb transactions execute preflight --item 3
-./fb transactions execute transaction --item 3
-./fb transactions execute transaction --item 3 --confirm
-./fb transactions execute history --execution-id 1
+./fb transactions preflight --item 3
+./fb transactions run --item 3
+./fb transactions run --item 3 --confirm
+./fb transactions execution-history --execution-id 1
 
 ./fb lineup pitchers plan
 ./fb lineup pitchers review --plan-id 1
@@ -162,8 +162,8 @@ Use when you already know the move.
 ```bash
 ./fb transactions ad-hoc --add "Aaron Nola" --drop "Shota Imanaga"
 ./fb transactions ad-hoc-list --request-id 4
-./fb transactions execute ad-hoc --request-id 4
-./fb transactions execute ad-hoc --request-id 4 --confirm
+./fb transactions run-ad-hoc --request-id 4
+./fb transactions run-ad-hoc --request-id 4 --confirm
 ```
 
 Ad hoc still uses the same guardrails:
@@ -175,7 +175,7 @@ Ad hoc still uses the same guardrails:
 
 ## Monitoring vs Preflight
 
-- **Preflight** (`fb transactions execute preflight`, `fb lineup pitchers preflight`) checks current executability right now for queued items.
+- **Preflight** (`fb transactions preflight`, `fb lineup pitchers preflight`) checks current executability right now for queued items.
 - **Monitoring** (`fb monitor ...`) checks whether saved artifacts/approvals/execution outcomes have gone stale, blocked, or invalid over time.
 
 Use both.
@@ -219,16 +219,16 @@ Use both.
 ### Execution blocked
 - Check queue/preflight details:
 ```bash
-./fb transactions execute queue
-./fb transactions execute preflight --item <id>
+./fb transactions execution-queue
+./fb transactions preflight --item <id>
 ```
 - Re-run planning/approval if add is unavailable or drop is no longer rostered.
 
 ### Unresolved execution attempts
 ```bash
-./fb transactions execute pending
-./fb transactions execute verify --execution-id <id>
-./fb transactions execute reconcile --execution-id <id>
+./fb transactions execution-pending
+./fb transactions execution-verify --execution-id <id>
+./fb transactions execution-reconcile --execution-id <id>
 ```
 
 ### Overall readiness
@@ -246,7 +246,7 @@ Examples:
 ```bash
 ./fb doctor --json
 ./fb monitor summary --json
-./fb transactions execute history --execution-id 8 --json
+./fb transactions execution-history --execution-id 8 --json
 ./fb lineup pitchers queue --json
 ```
 
@@ -254,4 +254,4 @@ Examples:
 
 - `fb healthcheck` is retained as a basic legacy check command.
 - `fb doctor` is the preferred v1 operator readiness command.
-- Existing workflow focuses on `fb transactions execute` and `fb lineup pitchers execute` for real writes.
+- Existing workflow focuses on `fb transactions run` and `fb lineup pitchers execute` for real writes.

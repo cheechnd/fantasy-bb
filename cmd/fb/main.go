@@ -581,9 +581,9 @@ func newDoctorCmd(opts *cliOptions) *cobra.Command {
 			} else {
 				txPending, err := monRepo.PendingExecutions(ctx, 200)
 				if err != nil {
-					appendCheck("execution.unresolved_transactions", "warn", err.Error(), "run `fb transactions execute pending`")
+					appendCheck("execution.unresolved_transactions", "warn", err.Error(), "run `fb transactions execution-pending`")
 				} else if len(txPending) > 0 {
-					appendCheck("execution.unresolved_transactions", "warn", fmt.Sprintf("%d unresolved transaction execution attempt(s)", len(txPending)), "run `fb transactions execute pending`")
+					appendCheck("execution.unresolved_transactions", "warn", fmt.Sprintf("%d unresolved transaction execution attempt(s)", len(txPending)), "run `fb transactions execution-pending`")
 				} else {
 					appendCheck("execution.unresolved_transactions", "ok", "no unresolved transaction execution attempts", "")
 				}

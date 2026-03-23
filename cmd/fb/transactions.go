@@ -58,12 +58,32 @@ func newTransactionsCmd(opts *cliOptions) *cobra.Command {
 	adHocCmd.GroupID = "adhoc"
 	adHocListCmd := newTransactionsAdHocListCmd(opts)
 	adHocListCmd.GroupID = "adhoc"
-	executeCmd := newExecuteCmd(opts)
-	executeCmd.GroupID = "execute"
+	preflightCmd := newExecutePreflightCmd(opts)
+	preflightCmd.GroupID = "execute"
+	dryRunCmd := newExecuteDryRunCmd(opts)
+	dryRunCmd.GroupID = "execute"
+	runCmd := newExecuteTransactionCmd(opts)
+	runCmd.GroupID = "execute"
+	runAdHocCmd := newExecuteAdHocCmd(opts)
+	runAdHocCmd.GroupID = "execute"
+	execQueueCmd := newExecuteQueueCmd(opts)
+	execQueueCmd.GroupID = "execute"
+	execLastCmd := newExecuteLastCmd(opts)
+	execLastCmd.GroupID = "execute"
+	execHistoryCmd := newExecuteHistoryCmd(opts)
+	execHistoryCmd.GroupID = "execute"
+	execVerifyCmd := newExecuteVerifyCmd(opts)
+	execVerifyCmd.GroupID = "execute"
+	execResolveCmd := newExecuteResolveCmd(opts)
+	execResolveCmd.GroupID = "execute"
+	execPendingCmd := newExecutePendingCmd(opts)
+	execPendingCmd.GroupID = "execute"
+	execReconcileCmd := newExecuteReconcileCmd(opts)
+	execReconcileCmd.GroupID = "execute"
 	cmd.AddCommand(
 		planCmd,
 		adHocCmd, adHocListCmd,
-		executeCmd,
+		preflightCmd, dryRunCmd, runCmd, runAdHocCmd, execQueueCmd, execLastCmd, execHistoryCmd, execVerifyCmd, execResolveCmd, execPendingCmd, execReconcileCmd,
 		reviewCmd, approveCmd, rejectCmd, deferCmd, queueCmd, approvalsCmd, resetReviewCmd,
 		lastCmd, explainCmd,
 	)
