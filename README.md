@@ -103,6 +103,7 @@ Validate setup:
 ```bash
 ./fb transactions review --plan-id <id>
 ./fb transactions approve --plan-id <id> --item <id> --note "weekly gain"
+./fb transactions review --state approved --limit 25
 
 ./fb lineup pitchers review --plan-id <id>
 ./fb lineup pitchers approve --plan-id <id> --item <id>
@@ -127,6 +128,7 @@ Validate setup:
 ./fb monitor summary
 ./fb monitor approvals
 ./fb monitor execution
+./fb monitor approvals --id <approval_item_id>
 ```
 
 ## End-to-End Example (Copy/Paste)
@@ -180,12 +182,45 @@ Ad hoc still uses the same guardrails:
 - single-item execution
 - verification + audit
 
+## Ad Hoc Lineup Workflow
+
+Use when you already know a lineup move you want to make.
+
+```bash
+./fb lineup pitchers ad-hoc --player "Kris Bubic" --to-slot P
+./fb lineup pitchers review --plan-id <lineup_plan_id>
+./fb lineup pitchers approve --plan-id <lineup_plan_id> --item <lineup_item_id>
+./fb lineup pitchers preflight --item <lineup_item_id>
+./fb lineup pitchers run --item <lineup_item_id> --confirm
+```
+
 ## Monitoring vs Preflight
 
 - **Preflight** (`fb transactions preflight`, `fb lineup pitchers preflight`) checks current executability right now for queued items.
 - **Monitoring** (`fb monitor ...`) checks whether saved artifacts/approvals/execution outcomes have gone stale, blocked, or invalid over time.
 
 Use both.
+
+Single-artifact monitoring is done from each monitor command using `--id` (and `--type` where needed), for example:
+
+```bash
+./fb monitor plans --id 24
+./fb monitor pickups --id 12
+./fb monitor approvals --id 223 --type approval
+./fb monitor lineup --id 7 --type lineup_plan
+./fb monitor execution --id 9
+```
+
+## Useful View Modes
+
+Several commands provide focused views without needing separate subcommands:
+
+```bash
+./fb pitchers plan --view start-sit
+./fb pickups recommend --view top-streamers --min-total-fpts 8
+./fb transactions plan --view top
+./fb transactions plan --view compare
+```
 
 ## Status Vocabulary
 
