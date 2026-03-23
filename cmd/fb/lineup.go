@@ -21,14 +21,15 @@ func newLineupCmd(opts *cliOptions) *cobra.Command {
 	pitchersCmd := &cobra.Command{Use: "pitchers", Short: "Pitcher lineup actions"}
 	pitchersCmd.AddGroup(
 		&cobra.Group{ID: "plan", Title: "Plan"},
+		&cobra.Group{ID: "adhoc", Title: "Ad Hoc"},
 		&cobra.Group{ID: "review", Title: "Review"},
 		&cobra.Group{ID: "run", Title: "Preflight / Execute"},
 		&cobra.Group{ID: "inspect", Title: "Inspection"},
 	)
 	planCmd := newLineupPitchersPlanCmd(opts)
 	planCmd.GroupID = "plan"
-	showCmd := newLineupPitchersShowCmd(opts)
-	showCmd.GroupID = "inspect"
+	adHocCmd := newLineupPitchersAdHocCmd(opts)
+	adHocCmd.GroupID = "adhoc"
 	reviewCmd := newLineupPitchersReviewCmd(opts)
 	reviewCmd.GroupID = "review"
 	approveCmd := newLineupPitchersStateCmd(opts, "approve", "Mark lineup item approved", lp.ReviewStateApproved)
@@ -47,8 +48,36 @@ func newLineupCmd(opts *cliOptions) *cobra.Command {
 	historyCmd.GroupID = "inspect"
 	resultCmd := newLineupPitchersResultCmd(opts)
 	resultCmd.GroupID = "inspect"
-	pitchersCmd.AddCommand(planCmd, showCmd, reviewCmd, approveCmd, rejectCmd, deferCmd, queueCmd, preflightCmd, executeCmd, historyCmd, resultCmd)
+	pitchersCmd.AddCommand(planCmd, adHocCmd, reviewCmd, approveCmd, rejectCmd, deferCmd, queueCmd, preflightCmd, executeCmd, historyCmd, resultCmd)
 	cmd.AddCommand(pitchersCmd)
+	return cmd
+}
+
+func newLineupPitchersAdHocCmd(opts *cliOptions) *cobra.Command {
+	var playerName string
+	var toSlot string
+	var syncRunID int64
+	cmd := &cobra.Command{
+		Use:   "ad-hoc",
+		Short: "Create a single ad hoc lineup action plan for one pitcher",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			v, err := withLineupService(cmd.Context(), opts, func(ctx context.Context, _ config.Config, svc *lp.Service) (any, error) {
+				return svc.CreateAdHocPlan(ctx, playerName, toSlot, optionalInt64(cmd, "sync-run", syncRunID))
+			})
+			if err != nil {
+				return err
+			}
+			plan := v.(*lp.Plan)
+			if opts.OutputJSON {
+				return writeJSON(cmd, plan)
+			}
+			printLineupPlan(cmd, plan)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&playerName, "player", "", "Pitcher name on your roster")
+	cmd.Flags().StringVar(&toSlot, "to-slot", "", "Target slot: P|SP|RP|BE")
+	cmd.Flags().Int64Var(&syncRunID, "sync-run", 0, "ESPN sync run ID (defaults to latest)")
 	return cmd
 }
 
@@ -74,37 +103,6 @@ func newLineupPitchersPlanCmd(opts *cliOptions) *cobra.Command {
 	}
 	cmd.Flags().Int64Var(&pitcherPlanID, "pitcher-plan-id", 0, "Pitcher plan ID (defaults to latest)")
 	cmd.Flags().Int64Var(&syncRunID, "sync-run", 0, "ESPN sync run ID (defaults to pitcher plan sync or latest)")
-	return cmd
-}
-
-func newLineupPitchersShowCmd(opts *cliOptions) *cobra.Command {
-	var planID int64
-	cmd := &cobra.Command{
-		Use:   "show",
-		Short: "Show a saved pitcher lineup plan",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			v, err := withLineupService(cmd.Context(), opts, func(ctx context.Context, _ config.Config, svc *lp.Service) (any, error) {
-				if planID > 0 {
-					return svc.PlanByID(ctx, planID)
-				}
-				return svc.LatestPlan(ctx)
-			})
-			if err != nil {
-				return err
-			}
-			plan, _ := v.(*lp.Plan)
-			if opts.OutputJSON {
-				return writeJSON(cmd, map[string]any{"plan": plan})
-			}
-			if plan == nil {
-				fmt.Fprintln(cmd.OutOrStdout(), "No lineup plans found.")
-				return nil
-			}
-			printLineupPlan(cmd, plan)
-			return nil
-		},
-	}
-	cmd.Flags().Int64Var(&planID, "plan-id", 0, "Lineup plan ID (defaults to latest)")
 	return cmd
 }
 

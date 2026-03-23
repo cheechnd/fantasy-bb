@@ -42,8 +42,6 @@ func newTransactionsCmd(opts *cliOptions) *cobra.Command {
 	compareCmd.GroupID = "generate"
 	lastCmd := newTransactionsLastCmd(opts)
 	lastCmd.GroupID = "inspect"
-	showCmd := newTransactionsShowCmd(opts)
-	showCmd.GroupID = "inspect"
 	explainCmd := newTransactionsExplainCmd(opts)
 	explainCmd.GroupID = "explain"
 	reviewCmd := newTransactionsReviewCmd(opts)
@@ -73,7 +71,7 @@ func newTransactionsCmd(opts *cliOptions) *cobra.Command {
 		adHocCmd, adHocShowCmd, adHocListCmd,
 		executeCmd,
 		reviewCmd, approveCmd, rejectCmd, deferCmd, queueCmd, approvalsCmd, resetReviewCmd,
-		lastCmd, showCmd, explainCmd,
+		lastCmd, explainCmd,
 	)
 	return cmd
 }
@@ -297,37 +295,6 @@ func newTransactionsLastCmd(opts *cliOptions) *cobra.Command {
 			return nil
 		},
 	}
-	return cmd
-}
-
-func newTransactionsShowCmd(opts *cliOptions) *cobra.Command {
-	var planID int64
-	cmd := &cobra.Command{
-		Use:   "show",
-		Short: "Show a specific saved transaction plan",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if planID <= 0 {
-				return fmt.Errorf("--plan-id must be > 0")
-			}
-			v, err := withTransactionsService(cmd.Context(), opts, func(ctx context.Context, svc *transvc.Service) (any, error) {
-				return svc.ByID(ctx, planID)
-			})
-			if err != nil {
-				return err
-			}
-			plan, _ := v.(*transactions.Plan)
-			if opts.OutputJSON {
-				return writeJSON(cmd, map[string]any{"plan": plan})
-			}
-			if plan == nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "Transaction plan %d not found.\n", planID)
-				return nil
-			}
-			printTransactionPlan(cmd, plan)
-			return nil
-		},
-	}
-	cmd.Flags().Int64Var(&planID, "plan-id", 0, "Transaction plan ID")
 	return cmd
 }
 

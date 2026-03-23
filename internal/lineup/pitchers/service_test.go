@@ -157,6 +157,32 @@ func TestPreflightBlocksWhenTargetSlotFull(t *testing.T) {
 	}
 }
 
+func TestCreateAdHocPlanCreatesSingleAction(t *testing.T) {
+	svc, _, closeFn := testService(t)
+	defer closeFn()
+
+	plan, err := svc.CreateAdHocPlan(context.Background(), "Test Pitcher", "P", nil)
+	if err != nil {
+		t.Fatalf("CreateAdHocPlan: %v", err)
+	}
+	if plan == nil {
+		t.Fatalf("expected plan")
+	}
+	if plan.PitcherPlanID != nil {
+		t.Fatalf("expected ad hoc plan without pitcher plan id, got %v", *plan.PitcherPlanID)
+	}
+	if len(plan.Items) != 1 {
+		t.Fatalf("expected one plan item, got %d", len(plan.Items))
+	}
+	it := plan.Items[0]
+	if it.ActionType != ActionActivatePitcher {
+		t.Fatalf("expected activate action, got %s", it.ActionType)
+	}
+	if it.TargetSlot != "P" || it.CurrentSlot != "BE" {
+		t.Fatalf("unexpected slot transition %s -> %s", it.CurrentSlot, it.TargetSlot)
+	}
+}
+
 func TestBuildLineupItemsCreatesBenchSwapWhenSlotsFull(t *testing.T) {
 	totalStart := 20.0
 	totalDrop := 0.0

@@ -110,6 +110,82 @@ func (s *Service) GeneratePlan(ctx context.Context, pitcherPlanID, syncRunID *in
 	return plan, nil
 }
 
+func (s *Service) CreateAdHocPlan(ctx context.Context, playerName, toSlot string, syncRunID *int64) (*Plan, error) {
+	playerName = strings.TrimSpace(playerName)
+	if playerName == "" {
+		return nil, fmt.Errorf("--player is required")
+	}
+	targetSlot, err := normalizeAdHocTargetSlot(toSlot)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := s.espnRepo.LatestRoster(ctx, syncRunID, true)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("no ESPN pitcher roster snapshot found; run `fb espn sync roster` first")
+	}
+	resolvedSyncRunID := syncRunID
+	if resolvedSyncRunID == nil {
+		v := rows[0].SyncRunID
+		resolvedSyncRunID = &v
+	}
+
+	rosterByName := rosterIndex(rows)
+	row := findRosterRowByName(rosterByName, playerName)
+	if row == nil {
+		return nil, fmt.Errorf("pitcher %q not found on latest roster", playerName)
+	}
+	current := strings.ToUpper(strings.TrimSpace(row.RosterSlot))
+	if current == targetSlot {
+		return nil, fmt.Errorf("pitcher %q is already in slot %s", row.PlayerName, targetSlot)
+	}
+
+	actionType := ActionBenchPitcher
+	flags := []string{"ad_hoc_bench"}
+	if isActiveSlot(targetSlot) {
+		actionType = ActionActivatePitcher
+		flags = []string{"ad_hoc_activate"}
+	}
+	item := PlanItem{
+		ActionType:   actionType,
+		PlayerName:   row.PlayerName,
+		ESPNPlayerID: row.ESPNPlayerID,
+		CurrentSlot:  current,
+		TargetSlot:   targetSlot,
+		Rationale: map[string]any{
+			"source": "ad_hoc",
+			"input": map[string]any{
+				"player":  playerName,
+				"to_slot": targetSlot,
+			},
+		},
+		Flags:     flags,
+		CreatedAt: time.Now().UTC(),
+	}
+	summary := map[string]any{
+		"source": "ad_hoc",
+		"counts": map[string]int{
+			"ad_hoc_actions": 1,
+		},
+	}
+	planID, err := s.repo.SavePlan(ctx, nil, resolvedSyncRunID, "ad_hoc", summary, []PlanItem{item})
+	if err != nil {
+		return nil, err
+	}
+	plan, savedItems, err := s.repo.PlanByID(ctx, planID)
+	if err != nil {
+		return nil, err
+	}
+	if plan == nil {
+		return nil, fmt.Errorf("saved ad hoc lineup plan %d not found", planID)
+	}
+	plan.Items = savedItems
+	return plan, nil
+}
+
 func (s *Service) LatestPlan(ctx context.Context) (*Plan, error) {
 	p, items, err := s.repo.LatestPlan(ctx)
 	if err != nil || p == nil {
@@ -544,6 +620,18 @@ func isActiveSlot(slot string) bool {
 }
 
 func isTargetActive(action ActionType) bool { return action == ActionActivatePitcher }
+
+func normalizeAdHocTargetSlot(raw string) (string, error) {
+	s := strings.ToUpper(strings.TrimSpace(raw))
+	switch s {
+	case "P", "SP", "RP":
+		return s, nil
+	case "BE", "BENCH":
+		return "BE", nil
+	default:
+		return "", fmt.Errorf("--to-slot must be one of: P, SP, RP, BE")
+	}
+}
 
 func pitcherSlotCapacities(league *espn.LeagueSnapshot) map[string]int {
 	out := map[string]int{
