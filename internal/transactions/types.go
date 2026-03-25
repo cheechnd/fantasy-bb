@@ -124,16 +124,26 @@ type Options struct {
 }
 
 type ServiceConfig struct {
-	TopMoveLimit                   int
-	MaxPairings                    int
-	StrongMoveDeltaFPTS            float64
-	MarginalMoveDeltaFPTS          float64
-	RiskyMoveMinDeltaFPTS          float64
-	UncertaintyPenaltyTBD          float64
-	UncertaintyPenaltyMissingProj  float64
-	UncertaintyPenaltyAmbiguous    float64
-	AllowCompareAgainstLikelyStart bool
-	WontDropMinPercentOwned        float64
+	TopMoveLimit                     int
+	MaxPairings                      int
+	StrongMoveDeltaFPTS              float64
+	MarginalMoveDeltaFPTS            float64
+	RiskyMoveMinDeltaFPTS            float64
+	UncertaintyPenaltyTBD            float64
+	UncertaintyPenaltyMissingProj    float64
+	UncertaintyPenaltyAmbiguous      float64
+	AllowCompareAgainstLikelyStart   bool
+	WontDropMinPercentOwned          float64
+	PlanningAutoStartMinTotalFPTS    float64
+	PlanningLikelyStartMinTotalFPTS  float64
+	PlanningMonitorMinTotalFPTS      float64
+	PlanningTBDPenalty               float64
+	PlanningMissingProjectionPenalty float64
+	PlanningAmbiguousMatchPenalty    float64
+	PickupMinStreamerTotalFPTS       float64
+	PickupStrongUpgradeDeltaFPTS     float64
+	PickupMarginalUpgradeDeltaFPTS   float64
+	PickupRiskyMonitorMinTotalFPTS   float64
 }
 
 type CreatePlanInput struct {

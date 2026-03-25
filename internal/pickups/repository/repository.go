@@ -102,6 +102,31 @@ func (r *Repository) LatestRecommendation(ctx context.Context) (*pickups.Recomme
 	return run, items, nil
 }
 
+func (r *Repository) LatestRecommendationForSources(ctx context.Context, syncRunID, importRunID *int64) (*pickups.RecommendationRun, []pickups.RecommendationItem, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, sync_run_id, import_run_id, candidate_run_id,
+		       window_start, window_end, created_at, status,
+		       COALESCE(summary_json, '{}')
+		FROM pickup_recommendation_runs
+		WHERE (? IS NULL OR sync_run_id = ?)
+		  AND (? IS NULL OR import_run_id = ?)
+		ORDER BY id DESC
+		LIMIT 1
+	`, nullInt64(syncRunID), nullInt64(syncRunID), nullInt64(importRunID), nullInt64(importRunID))
+	run, err := scanRecommendationRun(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil, nil
+		}
+		return nil, nil, err
+	}
+	items, err := r.RecommendationItems(ctx, run.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return run, items, nil
+}
+
 func (r *Repository) RecommendationByID(ctx context.Context, runID int64) (*pickups.RecommendationRun, []pickups.RecommendationItem, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, sync_run_id, import_run_id, candidate_run_id,

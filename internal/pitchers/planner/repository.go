@@ -89,6 +89,31 @@ func (r *Repository) LatestPlan(ctx context.Context) (*Plan, []PlanItem, error) 
 	return plan, items, nil
 }
 
+func (r *Repository) LatestPlanForSources(ctx context.Context, syncRunID, importRunID *int64) (*Plan, []PlanItem, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, sync_run_id, import_run_id, analysis_run_id,
+		       window_start, window_end, created_at, status,
+		       COALESCE(plan_summary_json, '{}')
+		FROM pitcher_plans
+		WHERE (? IS NULL OR sync_run_id = ?)
+		  AND (? IS NULL OR import_run_id = ?)
+		ORDER BY id DESC
+		LIMIT 1
+	`, nullInt64(syncRunID), nullInt64(syncRunID), nullInt64(importRunID), nullInt64(importRunID))
+	plan, err := scanPlanRow(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil, nil
+		}
+		return nil, nil, err
+	}
+	items, err := r.PlanItems(ctx, plan.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return plan, items, nil
+}
+
 func (r *Repository) PlanByID(ctx context.Context, planID int64) (*Plan, []PlanItem, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, sync_run_id, import_run_id, analysis_run_id,

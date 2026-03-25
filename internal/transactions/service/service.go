@@ -13,35 +13,45 @@ import (
 	"fantasy-baseball/internal/forecaster"
 	"fantasy-baseball/internal/pickups"
 	pickrepo "fantasy-baseball/internal/pickups/repository"
+	picksvccfg "fantasy-baseball/internal/pickups/service"
+	"fantasy-baseball/internal/pitchers"
 	pitchplan "fantasy-baseball/internal/pitchers/planner"
+	pitchrepo "fantasy-baseball/internal/pitchers/repository"
+	pitchsvc "fantasy-baseball/internal/pitchers/service"
 	"fantasy-baseball/internal/transactions"
 	tranrepo "fantasy-baseball/internal/transactions/repository"
 )
 
 type Service struct {
-	foreRepo *forecaster.Repository
-	espnRepo *esrepo.Repository
-	planRepo *pitchplan.Repository
-	pickRepo *pickrepo.Repository
-	tranRepo *tranrepo.Repository
-	cfg      transactions.ServiceConfig
+	foreRepo  *forecaster.Repository
+	espnRepo  *esrepo.Repository
+	planRepo  *pitchplan.Repository
+	pitchRepo *pitchrepo.Repository
+	pickRepo  *pickrepo.Repository
+	tranRepo  *tranrepo.Repository
+	pitchSvc  *pitchsvc.Service
+	cfg       transactions.ServiceConfig
 }
 
 func New(
 	foreRepo *forecaster.Repository,
 	espnRepo *esrepo.Repository,
 	planRepo *pitchplan.Repository,
+	pitchRepo *pitchrepo.Repository,
 	pickRepo *pickrepo.Repository,
 	tranRepo *tranrepo.Repository,
 	cfg transactions.ServiceConfig,
 ) *Service {
+	ps := pitchsvc.New(foreRepo, pitchRepo)
 	return &Service{
-		foreRepo: foreRepo,
-		espnRepo: espnRepo,
-		planRepo: planRepo,
-		pickRepo: pickRepo,
-		tranRepo: tranRepo,
-		cfg:      cfg,
+		foreRepo:  foreRepo,
+		espnRepo:  espnRepo,
+		planRepo:  planRepo,
+		pitchRepo: pitchRepo,
+		pickRepo:  pickRepo,
+		tranRepo:  tranRepo,
+		pitchSvc:  ps,
+		cfg:       cfg,
 	}
 }
 
@@ -141,63 +151,8 @@ func (s *Service) resolveSources(ctx context.Context, opts transactions.Options)
 		windowEnd:   opts.To.Format("2006-01-02"),
 	}
 
-	var plan *pitchplan.Plan
-	if opts.PitcherPlanID != nil {
-		p, items, err := s.planRepo.PlanByID(ctx, *opts.PitcherPlanID)
-		if err != nil {
-			return out, err
-		}
-		if p != nil {
-			p.Items = items
-		}
-		plan = p
-	} else {
-		p, items, err := s.planRepo.LatestPlan(ctx)
-		if err != nil {
-			return out, err
-		}
-		if p != nil {
-			p.Items = items
-		}
-		plan = p
-	}
-	if plan == nil {
-		return out, fmt.Errorf("no pitcher plan found; run `fb pitchers plan` first")
-	}
-	out.plan = plan
-
-	var pickupRun *pickups.RecommendationRun
-	var pickupItems []pickups.RecommendationItem
-	if opts.PickupRunID != nil {
-		r, rows, err := s.pickRepo.RecommendationByID(ctx, *opts.PickupRunID)
-		if err != nil {
-			return out, err
-		}
-		pickupRun = r
-		pickupItems = rows
-	} else {
-		r, rows, err := s.pickRepo.LatestRecommendation(ctx)
-		if err != nil {
-			return out, err
-		}
-		pickupRun = r
-		pickupItems = rows
-	}
-	if pickupRun == nil {
-		return out, fmt.Errorf("no pickup recommendations found; run `fb pickups recommend` first")
-	}
-	if len(pickupItems) == 0 {
-		return out, fmt.Errorf("pickup recommendation run %d has no items", pickupRun.ID)
-	}
-	out.pickupRun = pickupRun
-	out.pickupItems = pickupItems
-
 	if opts.SyncRunID != nil {
 		out.syncRunID = opts.SyncRunID
-	} else if plan.SyncRunID != nil {
-		out.syncRunID = plan.SyncRunID
-	} else if pickupRun.SyncRunID != nil {
-		out.syncRunID = pickupRun.SyncRunID
 	} else {
 		latestSync, err := s.espnRepo.LatestSyncRun(ctx)
 		if err != nil {
@@ -211,10 +166,6 @@ func (s *Service) resolveSources(ctx context.Context, opts transactions.Options)
 
 	if opts.ImportRunID != nil {
 		out.importRunID = opts.ImportRunID
-	} else if plan.ImportRunID != nil {
-		out.importRunID = plan.ImportRunID
-	} else if pickupRun.ImportRunID != nil {
-		out.importRunID = pickupRun.ImportRunID
 	} else {
 		latestImport, err := s.foreRepo.LatestImportRun(ctx)
 		if err != nil {
@@ -224,6 +175,84 @@ func (s *Service) resolveSources(ctx context.Context, opts transactions.Options)
 			v := latestImport.ID
 			out.importRunID = &v
 		}
+	}
+
+	var plan *pitchplan.Plan
+	if opts.PitcherPlanID != nil {
+		p, items, err := s.planRepo.PlanByID(ctx, *opts.PitcherPlanID)
+		if err != nil {
+			return out, err
+		}
+		if p != nil {
+			p.Items = items
+		}
+		plan = p
+	} else {
+		p, items, err := s.planRepo.LatestPlanForSources(ctx, out.syncRunID, out.importRunID)
+		if err != nil {
+			return out, err
+		}
+		if p != nil {
+			p.Items = items
+		}
+		plan = p
+	}
+	if plan == nil {
+		p, err := s.generatePitcherPlanFromSources(ctx, opts, out.syncRunID, out.importRunID)
+		if err != nil {
+			if out.syncRunID != nil || out.importRunID != nil {
+				return out, fmt.Errorf("no pitcher plan found for current source context (sync_run=%v import_run=%v): %w", valueOrNil(out.syncRunID), valueOrNil(out.importRunID), err)
+			}
+			return out, err
+		}
+		plan = p
+	}
+	out.plan = plan
+
+	var pickupRun *pickups.RecommendationRun
+	var pickupItems []pickups.RecommendationItem
+	if opts.PickupRunID != nil {
+		r, rows, err := s.pickRepo.RecommendationByID(ctx, *opts.PickupRunID)
+		if err != nil {
+			return out, err
+		}
+		pickupRun = r
+		pickupItems = rows
+	} else {
+		r, rows, err := s.pickRepo.LatestRecommendationForSources(ctx, out.syncRunID, out.importRunID)
+		if err != nil {
+			return out, err
+		}
+		pickupRun = r
+		pickupItems = rows
+	}
+	if pickupRun == nil {
+		r, rows, err := s.generatePickupRecommendationsFromSources(ctx, opts, out.syncRunID, out.importRunID)
+		if err != nil {
+			if out.syncRunID != nil || out.importRunID != nil {
+				return out, fmt.Errorf("no pickup recommendations found for current source context (sync_run=%v import_run=%v): %w", valueOrNil(out.syncRunID), valueOrNil(out.importRunID), err)
+			}
+			return out, err
+		}
+		pickupRun = r
+		pickupItems = rows
+	}
+	if len(pickupItems) == 0 {
+		return out, fmt.Errorf("pickup recommendation run %d has no items", pickupRun.ID)
+	}
+	out.pickupRun = pickupRun
+	out.pickupItems = pickupItems
+
+	if out.syncRunID == nil && plan.SyncRunID != nil {
+		out.syncRunID = plan.SyncRunID
+	} else if out.syncRunID == nil && pickupRun.SyncRunID != nil {
+		out.syncRunID = pickupRun.SyncRunID
+	}
+
+	if out.importRunID == nil && plan.ImportRunID != nil {
+		out.importRunID = plan.ImportRunID
+	} else if out.importRunID == nil && pickupRun.ImportRunID != nil {
+		out.importRunID = pickupRun.ImportRunID
 	}
 
 	if plan.WindowStart != out.windowStart || plan.WindowEnd != out.windowEnd {
@@ -416,6 +445,118 @@ func pickFloat(m map[string]any, key string) (float64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func valueOrNil(v *int64) any {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
+
+func (s *Service) generatePitcherPlanFromSources(ctx context.Context, opts transactions.Options, syncRunID, importRunID *int64) (*pitchplan.Plan, error) {
+	if syncRunID == nil {
+		return nil, fmt.Errorf("no ESPN sync found; run `fb espn sync roster` first")
+	}
+	if importRunID == nil {
+		return nil, fmt.Errorf("no forecaster import found; run `fb forecaster import` first")
+	}
+	rosterRows, err := s.espnRepo.LatestRoster(ctx, syncRunID, true)
+	if err != nil {
+		return nil, err
+	}
+	if len(rosterRows) == 0 {
+		return nil, fmt.Errorf("no ESPN roster rows found for sync run %d", *syncRunID)
+	}
+	rosterInputs := make([]pitchers.RosterInput, 0, len(rosterRows))
+	for _, row := range rosterRows {
+		if strings.EqualFold(strings.TrimSpace(row.Role), "RP") {
+			continue
+		}
+		rosterInputs = append(rosterInputs, pitchers.RosterInput{
+			PlayerName: row.PlayerName,
+			MLBTeam:    row.MLBTeam,
+			Role:       row.Role,
+			Status:     strings.ToLower(strings.TrimSpace(row.StatusTag)),
+		})
+	}
+	report, err := s.pitchSvc.Report(ctx, pitchers.AnalysisOptions{
+		From:         opts.From,
+		To:           opts.To,
+		ImportRunID:  importRunID,
+		RosterInputs: rosterInputs,
+		RosterSource: fmt.Sprintf("espn:sync_run:%d", *syncRunID),
+	})
+	if err != nil {
+		return nil, err
+	}
+	items, summary := pitchplan.BuildPlanItems(report, rosterRows, pitchplan.RuleConfig{
+		AutoStartMinTotalFPTS:    s.cfg.PlanningAutoStartMinTotalFPTS,
+		LikelyStartMinTotalFPTS:  s.cfg.PlanningLikelyStartMinTotalFPTS,
+		MonitorMinTotalFPTS:      s.cfg.PlanningMonitorMinTotalFPTS,
+		TBDPenalty:               s.cfg.PlanningTBDPenalty,
+		MissingProjectionPenalty: s.cfg.PlanningMissingProjectionPenalty,
+		AmbiguousMatchPenalty:    s.cfg.PlanningAmbiguousMatchPenalty,
+	})
+	planID, err := s.planRepo.SavePlan(ctx, pitchplan.CreateInput{
+		SyncRunID:     syncRunID,
+		ImportRunID:   importRunID,
+		AnalysisRunID: &report.AnalysisRunID,
+		WindowStart:   opts.From.Format("2006-01-02"),
+		WindowEnd:     opts.To.Format("2006-01-02"),
+		Status:        "success",
+		Summary: map[string]any{
+			"counts": summary,
+			"source": "transactions_plan_auto",
+		},
+		Items: items,
+	})
+	if err != nil {
+		return nil, err
+	}
+	p, rows, err := s.planRepo.PlanByID(ctx, planID)
+	if err != nil {
+		return nil, err
+	}
+	if p == nil {
+		return nil, fmt.Errorf("saved pitcher plan %d not found", planID)
+	}
+	p.Items = rows
+	return p, nil
+}
+
+func (s *Service) generatePickupRecommendationsFromSources(ctx context.Context, opts transactions.Options, syncRunID, importRunID *int64) (*pickups.RecommendationRun, []pickups.RecommendationItem, error) {
+	if syncRunID == nil {
+		return nil, nil, fmt.Errorf("no ESPN sync found; run `fb espn sync roster` first")
+	}
+	if importRunID == nil {
+		return nil, nil, fmt.Errorf("no forecaster import found; run `fb forecaster import` first")
+	}
+	pickSvc := picksvccfg.New(s.foreRepo, s.espnRepo, s.pickRepo, s.pitchSvc, picksvccfg.Config{
+		MinStreamerTotalFPTS:     s.cfg.PickupMinStreamerTotalFPTS,
+		StrongUpgradeDeltaFPTS:   s.cfg.PickupStrongUpgradeDeltaFPTS,
+		MarginalUpgradeDeltaFPTS: s.cfg.PickupMarginalUpgradeDeltaFPTS,
+		RiskyMonitorMinTotalFPTS: s.cfg.PickupRiskyMonitorMinTotalFPTS,
+	})
+	topN := s.cfg.TopMoveLimit
+	if topN < 10 {
+		topN = 10
+	}
+	res, err := pickSvc.Recommend(ctx, pickups.RecommendOptions{
+		From:        opts.From,
+		To:          opts.To,
+		SyncRunID:   syncRunID,
+		ImportRunID: importRunID,
+		TopN:        topN,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	run, items, err := s.pickRepo.RecommendationByID(ctx, res.RecommendationRunID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return run, items, nil
 }
 
 func (s *Service) selectPickupCandidates(roster []pitchplan.PlanItem, rows []pickups.RecommendationItem) []pickupCandidate {

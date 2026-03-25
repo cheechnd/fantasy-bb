@@ -12,6 +12,7 @@ import (
 	"fantasy-baseball/internal/forecaster"
 	pickrepo "fantasy-baseball/internal/pickups/repository"
 	pitchplan "fantasy-baseball/internal/pitchers/planner"
+	pitchrepo "fantasy-baseball/internal/pitchers/repository"
 	"fantasy-baseball/internal/store/sqlite"
 	"fantasy-baseball/internal/transactions"
 	adhocrepo "fantasy-baseball/internal/transactions/adhoc/repository"
@@ -453,19 +454,30 @@ func withTransactionsService(ctx context.Context, opts *cliOptions, fn func(cont
 		forecaster.NewRepository(s.DB()),
 		esrepo.New(s.DB()),
 		pitchplan.NewRepository(s.DB()),
+		pitchrepo.New(s.DB()),
 		pickrepo.New(s.DB()),
 		tranrepo.New(s.DB()),
 		transactions.ServiceConfig{
-			TopMoveLimit:                   cfg.Transactions.Pitchers.TopMoveLimit,
-			MaxPairings:                    cfg.Transactions.Pitchers.MaxPairings,
-			StrongMoveDeltaFPTS:            cfg.Transactions.Pitchers.StrongMoveDeltaFPTS,
-			MarginalMoveDeltaFPTS:          cfg.Transactions.Pitchers.MarginalMoveDeltaFPTS,
-			RiskyMoveMinDeltaFPTS:          cfg.Transactions.Pitchers.RiskyMoveMinDeltaFPTS,
-			UncertaintyPenaltyTBD:          cfg.Transactions.Pitchers.UncertaintyPenaltyTBD,
-			UncertaintyPenaltyMissingProj:  cfg.Transactions.Pitchers.UncertaintyPenaltyMissingProj,
-			UncertaintyPenaltyAmbiguous:    cfg.Transactions.Pitchers.UncertaintyPenaltyAmbiguous,
-			AllowCompareAgainstLikelyStart: cfg.Transactions.Pitchers.AllowCompareAgainstLikelyStart,
-			WontDropMinPercentOwned:        cfg.Transactions.Pitchers.WontDropMinPercentOwned,
+			TopMoveLimit:                     cfg.Transactions.Pitchers.TopMoveLimit,
+			MaxPairings:                      cfg.Transactions.Pitchers.MaxPairings,
+			StrongMoveDeltaFPTS:              cfg.Transactions.Pitchers.StrongMoveDeltaFPTS,
+			MarginalMoveDeltaFPTS:            cfg.Transactions.Pitchers.MarginalMoveDeltaFPTS,
+			RiskyMoveMinDeltaFPTS:            cfg.Transactions.Pitchers.RiskyMoveMinDeltaFPTS,
+			UncertaintyPenaltyTBD:            cfg.Transactions.Pitchers.UncertaintyPenaltyTBD,
+			UncertaintyPenaltyMissingProj:    cfg.Transactions.Pitchers.UncertaintyPenaltyMissingProj,
+			UncertaintyPenaltyAmbiguous:      cfg.Transactions.Pitchers.UncertaintyPenaltyAmbiguous,
+			AllowCompareAgainstLikelyStart:   cfg.Transactions.Pitchers.AllowCompareAgainstLikelyStart,
+			WontDropMinPercentOwned:          cfg.Transactions.Pitchers.WontDropMinPercentOwned,
+			PlanningAutoStartMinTotalFPTS:    cfg.Planning.Pitchers.AutoStartMinTotalFPTS,
+			PlanningLikelyStartMinTotalFPTS:  cfg.Planning.Pitchers.LikelyStartMinTotalFPTS,
+			PlanningMonitorMinTotalFPTS:      cfg.Planning.Pitchers.MonitorMinTotalFPTS,
+			PlanningTBDPenalty:               cfg.Planning.Pitchers.TBDPenalty,
+			PlanningMissingProjectionPenalty: cfg.Planning.Pitchers.MissingProjectionPenalty,
+			PlanningAmbiguousMatchPenalty:    cfg.Planning.Pitchers.AmbiguousMatchPenalty,
+			PickupMinStreamerTotalFPTS:       cfg.Pickups.Pitchers.MinStreamerTotalFPTS,
+			PickupStrongUpgradeDeltaFPTS:     cfg.Pickups.Pitchers.StrongUpgradeDeltaFPTS,
+			PickupMarginalUpgradeDeltaFPTS:   cfg.Pickups.Pitchers.MarginalUpgradeDeltaFPTS,
+			PickupRiskyMonitorMinTotalFPTS:   cfg.Pickups.Pitchers.RiskyMonitorMinTotalFPTS,
 		},
 	)
 	return fn(ctx, service)

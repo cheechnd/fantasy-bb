@@ -11,6 +11,7 @@ import (
 	"fantasy-baseball/internal/pickups"
 	pickrepo "fantasy-baseball/internal/pickups/repository"
 	pitchplan "fantasy-baseball/internal/pitchers/planner"
+	pitchrepo "fantasy-baseball/internal/pitchers/repository"
 	"fantasy-baseball/internal/store/sqlite"
 	"fantasy-baseball/internal/transactions"
 	tranrepo "fantasy-baseball/internal/transactions/repository"
@@ -191,9 +192,10 @@ func seedServiceWithArtifacts(t *testing.T, store *sqlite.Store) (*Service, int6
 	foreRepo := forecaster.NewRepository(store.DB())
 	espnRepo := esrepo.New(store.DB())
 	planRepo := pitchplan.NewRepository(store.DB())
+	pitRepo := pitchrepo.New(store.DB())
 	pickRepo := pickrepo.New(store.DB())
 	tranRepo := tranrepo.New(store.DB())
-	svc := New(foreRepo, espnRepo, planRepo, pickRepo, tranRepo, defaultCfg())
+	svc := New(foreRepo, espnRepo, planRepo, pitRepo, pickRepo, tranRepo, defaultCfg())
 
 	planID, err := planRepo.SavePlan(context.Background(), pitchplan.CreateInput{
 		WindowStart: "2026-09-15",
