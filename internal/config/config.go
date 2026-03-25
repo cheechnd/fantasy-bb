@@ -204,9 +204,9 @@ func Default() Config {
 			DryRun:              true,
 			RequireConfirmation: true,
 			Preflight: ExecutionPreflightConfig{
-				DefaultLimit:                 10,
-				MaxLimit:                     25,
-				CandidateRefreshLimit:        25,
+				DefaultLimit:                 100,
+				MaxLimit:                     100,
+				CandidateRefreshLimit:        100,
 				StaleHoursThreshold:          12,
 				RequireLiveRosterCheck:       true,
 				RequireLiveAvailabilityCheck: true,
@@ -237,8 +237,8 @@ func Default() Config {
 		},
 		Pickups: PickupsConfig{
 			Pitchers: PickupPitchersConfig{
-				DefaultCandidateLimit:    25,
-				MaxCandidateLimit:        50,
+				DefaultCandidateLimit:    100,
+				MaxCandidateLimit:        100,
 				MinStreamerTotalFPTS:     8.0,
 				StrongUpgradeDeltaFPTS:   5.0,
 				MarginalUpgradeDeltaFPTS: 1.5,
@@ -261,7 +261,7 @@ func Default() Config {
 				Enabled:                    true,
 				MaxRecentRequests:          25,
 				RequirePitchersOnly:        true,
-				ReuseBoundedCandidateLimit: 25,
+				ReuseBoundedCandidateLimit: 100,
 			},
 		},
 		Lineup: LineupConfig{

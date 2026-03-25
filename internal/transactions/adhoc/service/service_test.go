@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -85,6 +86,42 @@ func TestEnsureExecutionCandidate(t *testing.T) {
 	}
 	if itemID <= 0 || updated.LinkedPlanItemID == nil {
 		t.Fatalf("expected linked plan item")
+	}
+}
+
+func TestCreateAndResolveUsesLatestRunCandidateCountNotAdHocLimit(t *testing.T) {
+	cands := make([]espn.FreeAgentCandidate, 0, 30)
+	for i := 0; i < 29; i++ {
+		name := fmt.Sprintf("Pitcher %02d", i)
+		cands = append(cands, espn.FreeAgentCandidate{
+			PlayerName:     name,
+			NormalizedName: "pitcher" + fmt.Sprintf("%02d", i),
+			IsPitcher:      true,
+			ESPNPlayerID:   ptr64(int64(1000 + i)),
+		})
+	}
+	cands = append(cands, espn.FreeAgentCandidate{
+		PlayerName:     "Zed Target",
+		NormalizedName: "zedtarget",
+		IsPitcher:      true,
+		ESPNPlayerID:   ptr64(2020),
+	})
+
+	svc, closeFn := seededService(t, seedInput{
+		roster: []espn.RosterSnapshot{{PlayerName: "Shota Imanaga", NormalizedName: "shotaimanaga", IsPitcher: true, ESPNPlayerID: ptr64(202)}},
+		cands:  cands,
+	})
+	defer closeFn()
+
+	req, err := svc.CreateAndResolve(context.Background(), "Zed Target", "Shota Imanaga")
+	if err != nil {
+		t.Fatalf("CreateAndResolve: %v", err)
+	}
+	if req.ResolutionStatus != transactions.AdHocResolutionResolved {
+		t.Fatalf("expected resolved, got %s", req.ResolutionStatus)
+	}
+	if req.ResolvedAddPlayerName != "Zed Target" {
+		t.Fatalf("expected resolved add target, got %q", req.ResolvedAddPlayerName)
 	}
 }
 

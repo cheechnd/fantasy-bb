@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"fantasy-baseball/internal/espn"
 	esrepo "fantasy-baseball/internal/espn/repository"
 	"fantasy-baseball/internal/pitchers/matching"
 	"fantasy-baseball/internal/transactions"
@@ -169,7 +170,29 @@ func (s *Service) resolve(ctx context.Context, requestID int64) (*transactions.A
 	if err != nil {
 		return nil, err
 	}
-	candidates, err := s.espnRepo.ListCandidates(ctx, nil, s.cfg.ReuseBoundedCandidateLimit)
+	latestCandidateRun, err := s.espnRepo.LatestCandidateRun(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Keep ad-hoc resolution aligned with `fb espn show free-agents` by pinning to
+	// a concrete latest run ID and reading enough rows to cover that run.
+	candidateLimit := s.cfg.ReuseBoundedCandidateLimit
+	if candidateLimit <= 0 {
+		candidateLimit = 200
+	}
+	var candidates []espn.FreeAgentCandidate
+	if latestCandidateRun != nil {
+		runID := latestCandidateRun.ID
+		if latestCandidateRun.CandidateCount > candidateLimit {
+			candidateLimit = latestCandidateRun.CandidateCount
+		}
+		if candidateLimit > 500 {
+			candidateLimit = 500
+		}
+		candidates, err = s.espnRepo.ListCandidates(ctx, &runID, candidateLimit)
+	} else {
+		candidates, err = s.espnRepo.ListCandidates(ctx, nil, candidateLimit)
+	}
 	if err != nil {
 		return nil, err
 	}
