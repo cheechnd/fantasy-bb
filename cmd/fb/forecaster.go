@@ -22,27 +22,83 @@ const defaultForecasterURL = "https://www.espn.com/fantasy/baseball/story/_/id/3
 func newForecasterCmd(opts *cliOptions) *cobra.Command {
 	fc := &cobra.Command{Use: "forecaster", Short: "Forecaster probable-start import and analysis"}
 	fc.AddGroup(
-		&cobra.Group{ID: "ingest", Title: "Ingestion"},
-		&cobra.Group{ID: "analyze", Title: "Analysis Views"},
+		&cobra.Group{ID: "sync", Title: "Sync"},
+		&cobra.Group{ID: "show", Title: "Show"},
 		&cobra.Group{ID: "maint", Title: "Maintenance"},
 		&cobra.Group{ID: "inspect", Title: "Inspection"},
 	)
-	importCmd := newForecasterImportCmd(opts)
-	importCmd.GroupID = "ingest"
-	listCmd := newForecasterListCmd(opts)
-	listCmd.GroupID = "analyze"
-	showWeekCmd := newForecasterShowWeekCmd(opts)
-	showWeekCmd.GroupID = "analyze"
-	topCmd := newForecasterTopCmd(opts)
-	topCmd.GroupID = "analyze"
+	syncCmd := newForecasterSyncCmd(opts)
+	syncCmd.GroupID = "sync"
+	showCmd := newForecasterShowCmd(opts)
+	showCmd.GroupID = "show"
 	clearCmd := newForecasterClearCmd(opts)
 	clearCmd.GroupID = "maint"
 	statusCmd := newForecasterSourceStatusCmd(opts)
 	statusCmd.GroupID = "inspect"
-	warningsCmd := newForecasterWarningsCmd(opts)
-	warningsCmd.GroupID = "inspect"
-	fc.AddCommand(importCmd, listCmd, showWeekCmd, topCmd, clearCmd, statusCmd, warningsCmd)
+	fc.AddCommand(syncCmd, showCmd, clearCmd, statusCmd)
 	return fc
+}
+
+func runForecasterImport(cmd *cobra.Command, opts *cliOptions, filePath, sourceURL string) error {
+	if cmd.Flags().Changed("url") && strings.TrimSpace(sourceURL) == "" {
+		sourceURL = defaultForecasterURL
+	}
+	if (filePath == "" && sourceURL == "") || (filePath != "" && sourceURL != "") {
+		return fmt.Errorf("provide exactly one of --file or --url")
+	}
+
+	ctx := cmd.Context()
+	cfg, _, err := loadConfigWithOverrides(opts)
+	if err != nil {
+		return err
+	}
+
+	store, err := sqlite.Open(cfg.DBPath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	if _, err := store.Migrate(ctx); err != nil {
+		return err
+	}
+
+	repo := forecaster.NewRepository(store.DB())
+	svc := service.New(repo)
+
+	var summary service.ImportSummary
+	if filePath != "" {
+		summary, err = svc.ImportFromFile(ctx, filePath)
+	} else {
+		summary, err = svc.ImportFromURL(ctx, sourceURL)
+	}
+	if err != nil {
+		return err
+	}
+
+	if opts.OutputJSON {
+		return writeJSON(cmd, map[string]any{
+			"ok":      true,
+			"command": "forecaster import",
+			"summary": summary,
+		})
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "Source: %s (%s)\n", summary.SourceIdentifier, summary.SourceType)
+	fmt.Fprintf(cmd.OutOrStdout(), "Imported at: %s\n", summary.ImportRun.ImportedAt.Format(time.RFC3339))
+	fmt.Fprintf(cmd.OutOrStdout(), "Raw team rows: %d\n", summary.RawRows)
+	fmt.Fprintf(cmd.OutOrStdout(), "Probable starts created: %d\n", summary.ProbableStartCount)
+	fmt.Fprintf(cmd.OutOrStdout(), "Warnings: %d\n", summary.WarningCount)
+	if summary.WarningCount > 0 {
+		limit := 5
+		if len(summary.Warnings) < limit {
+			limit = len(summary.Warnings)
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), "Warning sample:")
+		for i := 0; i < limit; i++ {
+			fmt.Fprintf(cmd.OutOrStdout(), "- [%s] %s\n", summary.Warnings[i].WarningType, summary.Warnings[i].Message)
+		}
+	}
+	return nil
 }
 
 func newForecasterImportCmd(opts *cliOptions) *cobra.Command {
@@ -53,71 +109,47 @@ func newForecasterImportCmd(opts *cliOptions) *cobra.Command {
 		Use:   "import",
 		Short: "Import a forecaster HTML source",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if cmd.Flags().Changed("url") && strings.TrimSpace(sourceURL) == "" {
-				sourceURL = defaultForecasterURL
-			}
-			if (filePath == "" && sourceURL == "") || (filePath != "" && sourceURL != "") {
-				return fmt.Errorf("provide exactly one of --file or --url")
-			}
-
-			ctx := cmd.Context()
-			cfg, _, err := loadConfigWithOverrides(opts)
-			if err != nil {
-				return err
-			}
-
-			store, err := sqlite.Open(cfg.DBPath)
-			if err != nil {
-				return err
-			}
-			defer store.Close()
-			if _, err := store.Migrate(ctx); err != nil {
-				return err
-			}
-
-			repo := forecaster.NewRepository(store.DB())
-			svc := service.New(repo)
-
-			var summary service.ImportSummary
-			if filePath != "" {
-				summary, err = svc.ImportFromFile(ctx, filePath)
-			} else {
-				summary, err = svc.ImportFromURL(ctx, sourceURL)
-			}
-			if err != nil {
-				return err
-			}
-
-			if opts.OutputJSON {
-				return writeJSON(cmd, map[string]any{
-					"ok":      true,
-					"command": "forecaster import",
-					"summary": summary,
-				})
-			}
-
-			fmt.Fprintf(cmd.OutOrStdout(), "Source: %s (%s)\n", summary.SourceIdentifier, summary.SourceType)
-			fmt.Fprintf(cmd.OutOrStdout(), "Imported at: %s\n", summary.ImportRun.ImportedAt.Format(time.RFC3339))
-			fmt.Fprintf(cmd.OutOrStdout(), "Raw team rows: %d\n", summary.RawRows)
-			fmt.Fprintf(cmd.OutOrStdout(), "Probable starts created: %d\n", summary.ProbableStartCount)
-			fmt.Fprintf(cmd.OutOrStdout(), "Warnings: %d\n", summary.WarningCount)
-			if summary.WarningCount > 0 {
-				limit := 5
-				if len(summary.Warnings) < limit {
-					limit = len(summary.Warnings)
-				}
-				fmt.Fprintln(cmd.OutOrStdout(), "Warning sample:")
-				for i := 0; i < limit; i++ {
-					fmt.Fprintf(cmd.OutOrStdout(), "- [%s] %s\n", summary.Warnings[i].WarningType, summary.Warnings[i].Message)
-				}
-			}
-			return nil
+			return runForecasterImport(cmd, opts, filePath, sourceURL)
 		},
 	}
 
 	cmd.Flags().StringVar(&filePath, "file", "", "Path to local HTML file")
 	cmd.Flags().StringVar(&sourceURL, "url", "", "Source URL for forecaster HTML (optional value; defaults to ESPN forecaster URL when --url is provided without a value)")
 	cmd.Flags().Lookup("url").NoOptDefVal = defaultForecasterURL
+	return cmd
+}
+
+func newForecasterSyncCmd(opts *cliOptions) *cobra.Command {
+	var filePath string
+	var sourceURL string
+	cmd := &cobra.Command{
+		Use:   "sync",
+		Short: "Sync forecaster probable starts from file or URL",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runForecasterImport(cmd, opts, filePath, sourceURL)
+		},
+	}
+	cmd.Flags().StringVar(&filePath, "file", "", "Path to local HTML file")
+	cmd.Flags().StringVar(&sourceURL, "url", "", "Source URL for forecaster HTML (optional value; defaults to ESPN forecaster URL when --url is provided without a value)")
+	cmd.Flags().Lookup("url").NoOptDefVal = defaultForecasterURL
+	return cmd
+}
+
+func newForecasterShowCmd(opts *cliOptions) *cobra.Command {
+	cmd := &cobra.Command{Use: "show", Short: "Show forecaster starts and warnings"}
+	startsCmd := newForecasterListCmd(opts)
+	startsCmd.Use = "starts"
+	startsCmd.Short = "Show normalized probable starts"
+	weekCmd := newForecasterShowWeekCmd(opts)
+	weekCmd.Use = "week"
+	weekCmd.Short = "Show next 7 days grouped by date"
+	topCmd := newForecasterTopCmd(opts)
+	topCmd.Use = "top"
+	topCmd.Short = "Show top projected probable starts"
+	warningsCmd := newForecasterWarningsCmd(opts)
+	warningsCmd.Use = "warnings"
+	warningsCmd.Short = "Show parse warnings for latest or selected import run"
+	cmd.AddCommand(startsCmd, weekCmd, topCmd, warningsCmd)
 	return cmd
 }
 
