@@ -171,18 +171,10 @@ func newTransactionsPlanCmd(opts *cliOptions) *cobra.Command {
 	var fromRaw, toRaw string
 	var syncRunID, importRunID, pitcherPlanID, pickupRunID int64
 	var topN int
-	var view string
 	cmd := &cobra.Command{
 		Use:   "plan",
-		Short: "Generate and save add/drop transaction plan (full/top/compare view)",
+		Short: "Generate and save add/drop transaction plan",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			view = strings.ToLower(strings.TrimSpace(view))
-			if view == "" {
-				view = "full"
-			}
-			if view != "full" && view != "top" && view != "compare" {
-				return fmt.Errorf("invalid --view value %q (expected full|top|compare)", view)
-			}
 			v, err := withTransactionsService(cmd.Context(), opts, func(ctx context.Context, svc *transvc.Service) (any, error) {
 				opts2, err := buildTransactionOptions(cmd, fromRaw, toRaw, topN, &syncRunID, &importRunID, &pitcherPlanID, &pickupRunID)
 				if err != nil {
@@ -195,19 +187,9 @@ func newTransactionsPlanCmd(opts *cliOptions) *cobra.Command {
 			}
 			plan := v.(*transactions.Plan)
 			if opts.OutputJSON {
-				if view == "top" {
-					return writeJSON(cmd, map[string]any{"plan": plan, "rows": filterTopTransactionRows(plan.Items), "view": view})
-				}
-				return writeJSON(cmd, map[string]any{"plan": plan, "view": view})
+				return writeJSON(cmd, map[string]any{"plan": plan})
 			}
-			switch view {
-			case "top":
-				printTransactionRowsTable(cmd, filterTopTransactionRows(plan.Items))
-			case "compare":
-				printTransactionCompare(cmd, plan.Items)
-			default:
-				printTransactionPlan(cmd, plan)
-			}
+			printTransactionPlan(cmd, plan)
 			return nil
 		},
 	}
@@ -218,7 +200,6 @@ func newTransactionsPlanCmd(opts *cliOptions) *cobra.Command {
 	cmd.Flags().Int64Var(&pitcherPlanID, "pitcher-plan-id", 0, "Pitcher plan ID (defaults to latest)")
 	cmd.Flags().Int64Var(&pickupRunID, "pickup-run", 0, "Pickup recommendation run ID (defaults to latest)")
 	cmd.Flags().IntVar(&topN, "top", 10, "Top move rows to keep in saved plan")
-	cmd.Flags().StringVar(&view, "view", "full", "View mode: full|top|compare")
 	return cmd
 }
 
@@ -484,6 +465,7 @@ func withTransactionsService(ctx context.Context, opts *cliOptions, fn func(cont
 			UncertaintyPenaltyMissingProj:  cfg.Transactions.Pitchers.UncertaintyPenaltyMissingProj,
 			UncertaintyPenaltyAmbiguous:    cfg.Transactions.Pitchers.UncertaintyPenaltyAmbiguous,
 			AllowCompareAgainstLikelyStart: cfg.Transactions.Pitchers.AllowCompareAgainstLikelyStart,
+			WontDropMinPercentOwned:        cfg.Transactions.Pitchers.WontDropMinPercentOwned,
 		},
 	)
 	return fn(ctx, service)

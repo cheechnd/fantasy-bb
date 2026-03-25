@@ -30,7 +30,7 @@ type SyncOptions struct {
 }
 
 type FreeAgentOptions struct {
-	Limit int
+	Limit  int
 	Search string
 	Team   string
 }
@@ -241,9 +241,9 @@ func (s *Service) SyncFreeAgentPitchers(ctx context.Context, cfg config.Config, 
 		})
 	}
 	runFilters := map[string]any{
-		"limit": limit,
+		"limit":  limit,
 		"search": strings.TrimSpace(opts.Search),
-		"team": strings.ToUpper(strings.TrimSpace(opts.Team)),
+		"team":   strings.ToUpper(strings.TrimSpace(opts.Team)),
 	}
 	latestSync, err := s.repo.LatestSyncRun(ctx)
 	if err != nil {
@@ -255,7 +255,7 @@ func (s *Service) SyncFreeAgentPitchers(ctx context.Context, cfg config.Config, 
 	}
 	summaryJSON := map[string]any{
 		"candidate_count": len(candidates),
-		"warnings": warningMessages(warnings),
+		"warnings":        warningMessages(warnings),
 		"effective_limit": limit,
 		"source_endpoint": fetchResult.Endpoint,
 	}
@@ -389,6 +389,9 @@ type playerResponse struct {
 	DefaultPositionID int    `json:"defaultPositionId"`
 	EligibleSlots     []int  `json:"eligibleSlots"`
 	InjuryStatus      string `json:"injuryStatus"`
+	Ownership         struct {
+		PercentOwned float64 `json:"percentOwned"`
+	} `json:"ownership"`
 }
 
 func parseLeaguePayload(payload []byte, teamIDRaw string) (parsedPayload, error) {

@@ -2,11 +2,13 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 
+	"fantasy-baseball/internal/espn"
 	esrepo "fantasy-baseball/internal/espn/repository"
 	"fantasy-baseball/internal/forecaster"
 	"fantasy-baseball/internal/pickups"
@@ -49,7 +51,7 @@ func (s *Service) GenerateAndSave(ctx context.Context, opts transactions.Options
 		return nil, err
 	}
 
-	items := s.buildPlanItems(resolved.plan, resolved.pickupRun, resolved.pickupItems, resolved.windowStart, resolved.windowEnd)
+	items := s.buildPlanItemsWithOwnership(resolved.plan, resolved.pickupRun, resolved.pickupItems, resolved.windowStart, resolved.windowEnd, resolved.ownershipByName)
 	topLimit := opts.TopN
 	if topLimit <= 0 {
 		topLimit = s.cfg.TopMoveLimit
@@ -122,14 +124,15 @@ func (s *Service) ByID(ctx context.Context, planID int64) (*transactions.Plan, e
 }
 
 type resolvedSources struct {
-	syncRunID   *int64
-	importRunID *int64
-	plan        *pitchplan.Plan
-	pickupRun   *pickups.RecommendationRun
-	pickupItems []pickups.RecommendationItem
-	windowStart string
-	windowEnd   string
-	note        string
+	syncRunID       *int64
+	importRunID     *int64
+	plan            *pitchplan.Plan
+	pickupRun       *pickups.RecommendationRun
+	pickupItems     []pickups.RecommendationItem
+	windowStart     string
+	windowEnd       string
+	note            string
+	ownershipByName map[string]float64
 }
 
 func (s *Service) resolveSources(ctx context.Context, opts transactions.Options) (resolvedSources, error) {
@@ -226,6 +229,11 @@ func (s *Service) resolveSources(ctx context.Context, opts transactions.Options)
 	if plan.WindowStart != out.windowStart || plan.WindowEnd != out.windowEnd {
 		out.note = fmt.Sprintf("using pitcher plan window %s to %s with requested window %s to %s", plan.WindowStart, plan.WindowEnd, out.windowStart, out.windowEnd)
 	}
+	rosterRows, err := s.espnRepo.LatestRoster(ctx, out.syncRunID, true)
+	if err != nil {
+		return out, err
+	}
+	out.ownershipByName = ownershipByName(rosterRows)
 	return out, nil
 }
 
@@ -258,7 +266,11 @@ type startOpportunity struct {
 }
 
 func (s *Service) buildPlanItems(plan *pitchplan.Plan, pickupRun *pickups.RecommendationRun, pickupItems []pickups.RecommendationItem, windowStart string, windowEnd string) []transactions.PlanItem {
-	drops := s.selectDropCandidates(plan.Items)
+	return s.buildPlanItemsWithOwnership(plan, pickupRun, pickupItems, windowStart, windowEnd, nil)
+}
+
+func (s *Service) buildPlanItemsWithOwnership(plan *pitchplan.Plan, pickupRun *pickups.RecommendationRun, pickupItems []pickups.RecommendationItem, windowStart string, windowEnd string, ownerPct map[string]float64) []transactions.PlanItem {
+	drops := s.selectDropCandidates(plan.Items, ownerPct)
 	adds := s.selectPickupCandidates(plan.Items, pickupItems)
 	if len(drops) == 0 || len(adds) == 0 {
 		return []transactions.PlanItem{}
@@ -299,11 +311,18 @@ func (s *Service) buildPlanItems(plan *pitchplan.Plan, pickupRun *pickups.Recomm
 	return out
 }
 
-func (s *Service) selectDropCandidates(rows []pitchplan.PlanItem) []dropCandidate {
+func (s *Service) selectDropCandidates(rows []pitchplan.PlanItem, ownerPct map[string]float64) []dropCandidate {
 	out := []dropCandidate{}
+	threshold := s.cfg.WontDropMinPercentOwned
 	for _, row := range rows {
 		if !isDropBucket(row.Bucket, s.cfg.AllowCompareAgainstLikelyStart) {
 			continue
+		}
+		if threshold > 0 {
+			n := normalize(row.PlayerName)
+			if pct, ok := ownerPct[n]; ok && pct >= threshold {
+				continue
+			}
 		}
 		if hasAny(row.Flags, "locked", "must_hold", "protected", "no_drop") {
 			continue
@@ -334,6 +353,69 @@ func (s *Service) selectDropCandidates(rows []pitchplan.PlanItem) []dropCandidat
 		return strings.ToLower(out[i].Item.PlayerName) < strings.ToLower(out[j].Item.PlayerName)
 	})
 	return out
+}
+
+func ownershipByName(rows []espn.RosterSnapshot) map[string]float64 {
+	out := map[string]float64{}
+	for _, row := range rows {
+		n := normalize(row.PlayerName)
+		if n == "" {
+			continue
+		}
+		pct, ok := extractPercentOwned(row.RawPlayerJSON)
+		if !ok {
+			continue
+		}
+		if prev, exists := out[n]; !exists || pct > prev {
+			out[n] = pct
+		}
+	}
+	return out
+}
+
+func extractPercentOwned(raw string) (float64, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "{}" {
+		return 0, false
+	}
+	var body map[string]any
+	if err := json.Unmarshal([]byte(raw), &body); err != nil {
+		return 0, false
+	}
+	if v, ok := pickFloat(body, "percentOwned"); ok {
+		return v, true
+	}
+	if own, ok := body["ownership"].(map[string]any); ok {
+		if v, ok := pickFloat(own, "percentOwned"); ok {
+			return v, true
+		}
+	}
+	return 0, false
+}
+
+func pickFloat(m map[string]any, key string) (float64, bool) {
+	v, ok := m[key]
+	if !ok || v == nil {
+		return 0, false
+	}
+	switch t := v.(type) {
+	case float64:
+		return t, true
+	case float32:
+		return float64(t), true
+	case int:
+		return float64(t), true
+	case int64:
+		return float64(t), true
+	case json.Number:
+		f, err := t.Float64()
+		if err != nil {
+			return 0, false
+		}
+		return f, true
+	default:
+		return 0, false
+	}
 }
 
 func (s *Service) selectPickupCandidates(roster []pitchplan.PlanItem, rows []pickups.RecommendationItem) []pickupCandidate {

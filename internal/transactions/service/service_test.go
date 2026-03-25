@@ -52,7 +52,24 @@ func TestDropCandidateExcludesLockedAndMustHold(t *testing.T) {
 		{Bucket: pitchplan.BucketMonitor, PlayerName: "Must Hold Arm", Flags: []string{"must_hold"}, ProjectedStartCount: 1},
 		{Bucket: pitchplan.BucketNoStartScheduled, PlayerName: "Drop Me", ProjectedStartCount: 0},
 	}
-	drops := svc.selectDropCandidates(rows)
+	drops := svc.selectDropCandidates(rows, nil)
+	if len(drops) != 1 || drops[0].Item.PlayerName != "Drop Me" {
+		t.Fatalf("unexpected drop candidates: %+v", drops)
+	}
+}
+
+func TestDropCandidateExcludesHighOwnershipByThreshold(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.WontDropMinPercentOwned = 85.0
+	svc := &Service{cfg: cfg}
+	rows := []pitchplan.PlanItem{
+		{Bucket: pitchplan.BucketMonitor, PlayerName: "Zack Wheeler", ProjectedStartCount: 1},
+		{Bucket: pitchplan.BucketNoStartScheduled, PlayerName: "Drop Me", ProjectedStartCount: 0},
+	}
+	ownerPct := map[string]float64{
+		normalize("Zack Wheeler"): 95.2,
+	}
+	drops := svc.selectDropCandidates(rows, ownerPct)
 	if len(drops) != 1 || drops[0].Item.PlayerName != "Drop Me" {
 		t.Fatalf("unexpected drop candidates: %+v", drops)
 	}
@@ -238,5 +255,6 @@ func defaultCfg() transactions.ServiceConfig {
 		UncertaintyPenaltyMissingProj:  3.0,
 		UncertaintyPenaltyAmbiguous:    4.0,
 		AllowCompareAgainstLikelyStart: false,
+		WontDropMinPercentOwned:        85.0,
 	}
 }

@@ -47,7 +47,8 @@
       "uncertainty_penalty_tbd": 2.0,
       "uncertainty_penalty_missing_projection": 3.0,
       "uncertainty_penalty_ambiguous_match": 4.0,
-      "allow_compare_against_likely_start": false
+      "allow_compare_against_likely_start": false,
+      "wont_drop_min_percent_owned": 85.0
     },
     "ad_hoc": {
       "enabled": true,

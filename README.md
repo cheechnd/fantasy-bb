@@ -217,9 +217,8 @@ Several commands provide focused views without needing separate subcommands:
 
 ```bash
 ./fb pitchers plan --view start-sit
-./fb pickups recommend --view top-streamers --min-total-fpts 8
-./fb transactions plan --view top
-./fb transactions plan --view compare
+./fb pickups recommend
+./fb transactions plan
 ```
 
 ## Status Vocabulary

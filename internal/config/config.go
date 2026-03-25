@@ -129,6 +129,7 @@ type TransactionPitchersConfig struct {
 	UncertaintyPenaltyMissingProj  float64 `json:"uncertainty_penalty_missing_projection"`
 	UncertaintyPenaltyAmbiguous    float64 `json:"uncertainty_penalty_ambiguous_match"`
 	AllowCompareAgainstLikelyStart bool    `json:"allow_compare_against_likely_start"`
+	WontDropMinPercentOwned        float64 `json:"wont_drop_min_percent_owned"`
 }
 
 type TransactionAdHocConfig struct {
@@ -256,6 +257,7 @@ func Default() Config {
 				UncertaintyPenaltyMissingProj:  3.0,
 				UncertaintyPenaltyAmbiguous:    4.0,
 				AllowCompareAgainstLikelyStart: false,
+				WontDropMinPercentOwned:        85.0,
 			},
 			AdHoc: TransactionAdHocConfig{
 				Enabled:                    true,
@@ -491,6 +493,9 @@ func (c Config) Validate() error {
 	}
 	if c.Transactions.Pitchers.UncertaintyPenaltyAmbiguous < 0 {
 		problems = append(problems, "transactions.pitchers.uncertainty_penalty_ambiguous_match must be >= 0")
+	}
+	if c.Transactions.Pitchers.WontDropMinPercentOwned < 0 || c.Transactions.Pitchers.WontDropMinPercentOwned > 100 {
+		problems = append(problems, "transactions.pitchers.wont_drop_min_percent_owned must be between 0 and 100")
 	}
 	if c.Transactions.AdHoc.MaxRecentRequests <= 0 || c.Transactions.AdHoc.MaxRecentRequests > 500 {
 		problems = append(problems, "transactions.ad_hoc.max_recent_requests must be between 1 and 500")

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"text/tabwriter"
 	"time"
@@ -210,7 +211,28 @@ func newESPNShowRosterCmd(opts *cliOptions) *cobra.Command {
 			}
 			rows := v.([]espn.RosterSnapshot)
 			if opts.OutputJSON {
-				return writeJSON(cmd, map[string]any{"ok": true, "count": len(rows), "rows": rows})
+				enhanced := make([]map[string]any, 0, len(rows))
+				for _, row := range rows {
+					item := map[string]any{
+						"id":              row.ID,
+						"sync_run_id":     row.SyncRunID,
+						"espn_player_id":  row.ESPNPlayerID,
+						"player_name":     row.PlayerName,
+						"normalized_name": row.NormalizedName,
+						"mlb_team":        row.MLBTeam,
+						"roster_slot":     row.RosterSlot,
+						"is_pitcher":      row.IsPitcher,
+						"role":            row.Role,
+						"status_tag":      row.StatusTag,
+						"raw_player_json": row.RawPlayerJSON,
+						"created_at":      row.CreatedAt,
+					}
+					if pct, ok := percentOwnedFromRaw(row.RawPlayerJSON); ok {
+						item["owned_percent"] = pct
+					}
+					enhanced = append(enhanced, item)
+				}
+				return writeJSON(cmd, map[string]any{"ok": true, "count": len(rows), "rows": enhanced})
 			}
 			printESPNRosterTable(cmd, rows)
 			return nil
@@ -425,15 +447,45 @@ func printESPNRosterTable(cmd *cobra.Command, rows []espn.RosterSnapshot) {
 		return
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "SYNC_RUN\tPLAYER\tTEAM\tSLOT\tROLE\tPITCHER\tSTATUS")
+	fmt.Fprintln(w, "SYNC_RUN\tPLAYER\tTEAM\tSLOT\tROLE\tPITCHER\tSTATUS\tOWNED%")
 	for _, row := range rows {
 		pitcher := "no"
 		if row.IsPitcher {
 			pitcher = "yes"
 		}
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n", row.SyncRunID, row.PlayerName, firstNonEmpty(row.MLBTeam, "-"), firstNonEmpty(row.RosterSlot, "-"), firstNonEmpty(row.Role, "-"), pitcher, firstNonEmpty(row.StatusTag, "-"))
+		owned := "-"
+		if pct, ok := percentOwnedFromRaw(row.RawPlayerJSON); ok {
+			owned = fmt.Sprintf("%.1f", pct)
+		}
+		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", row.SyncRunID, row.PlayerName, firstNonEmpty(row.MLBTeam, "-"), firstNonEmpty(row.RosterSlot, "-"), firstNonEmpty(row.Role, "-"), pitcher, firstNonEmpty(row.StatusTag, "-"), owned)
 	}
 	w.Flush()
+}
+
+func percentOwnedFromRaw(raw string) (float64, bool) {
+	if raw == "" || raw == "{}" {
+		return 0, false
+	}
+	var body map[string]any
+	if err := json.Unmarshal([]byte(raw), &body); err != nil {
+		return 0, false
+	}
+	ownership, ok := body["ownership"].(map[string]any)
+	if !ok {
+		return 0, false
+	}
+	v, ok := ownership["percentOwned"]
+	if !ok || v == nil {
+		return 0, false
+	}
+	switch t := v.(type) {
+	case float64:
+		return t, true
+	case int:
+		return float64(t), true
+	default:
+		return 0, false
+	}
 }
 
 func printESPNSyncRuns(cmd *cobra.Command, rows []espn.SyncRun) {

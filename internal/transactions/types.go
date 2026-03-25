@@ -133,6 +133,7 @@ type ServiceConfig struct {
 	UncertaintyPenaltyMissingProj  float64
 	UncertaintyPenaltyAmbiguous    float64
 	AllowCompareAgainstLikelyStart bool
+	WontDropMinPercentOwned        float64
 }
 
 type CreatePlanInput struct {
