@@ -17,36 +17,14 @@ import (
 )
 
 func newLineupCmd(opts *cliOptions) *cobra.Command {
-	cmd := &cobra.Command{Use: "lineup", Short: "Pitcher lineup planning, review, and execution"}
-	pitchersCmd := &cobra.Command{Use: "pitchers", Short: "Pitcher lineup actions"}
+	cmd := &cobra.Command{Use: "lineup", Short: "Pitcher lineup planning and analysis"}
+	pitchersCmd := &cobra.Command{Use: "pitchers", Short: "Pitcher lineup planning"}
 	pitchersCmd.AddGroup(
 		&cobra.Group{ID: "plan", Title: "Plan"},
-		&cobra.Group{ID: "adhoc", Title: "Ad Hoc"},
-		&cobra.Group{ID: "review", Title: "Review"},
-		&cobra.Group{ID: "run", Title: "Preflight / Run"},
-		&cobra.Group{ID: "inspect", Title: "Inspection"},
 	)
 	planCmd := newLineupPitchersPlanCmd(opts)
 	planCmd.GroupID = "plan"
-	adHocCmd := newLineupPitchersAdHocCmd(opts)
-	adHocCmd.GroupID = "adhoc"
-	reviewCmd := newLineupPitchersReviewCmd(opts)
-	reviewCmd.GroupID = "review"
-	approveCmd := newLineupPitchersStateCmd(opts, "approve", "Mark lineup item approved", lp.ReviewStateApproved)
-	approveCmd.GroupID = "review"
-	rejectCmd := newLineupPitchersStateCmd(opts, "reject", "Mark lineup item rejected", lp.ReviewStateRejected)
-	rejectCmd.GroupID = "review"
-	deferCmd := newLineupPitchersStateCmd(opts, "defer", "Mark lineup item deferred", lp.ReviewStateDeferred)
-	deferCmd.GroupID = "review"
-	queueCmd := newLineupPitchersQueueCmd(opts)
-	queueCmd.GroupID = "review"
-	preflightCmd := newLineupPitchersPreflightCmd(opts)
-	preflightCmd.GroupID = "run"
-	runCmd := newLineupPitchersRunCmd(opts)
-	runCmd.GroupID = "run"
-	historyCmd := newLineupPitchersHistoryCmd(opts)
-	historyCmd.GroupID = "inspect"
-	pitchersCmd.AddCommand(planCmd, adHocCmd, reviewCmd, approveCmd, rejectCmd, deferCmd, queueCmd, preflightCmd, runCmd, historyCmd)
+	pitchersCmd.AddCommand(planCmd)
 	cmd.AddCommand(pitchersCmd)
 	return cmd
 }

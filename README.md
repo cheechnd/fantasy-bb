@@ -2,7 +2,7 @@
 
 `fb` is a local-first CLI for ESPN fantasy baseball pitcher operations.
 
-It keeps your workflow in SQLite, uses deterministic rules, and gates write actions behind explicit review, preflight, confirmation, verification, and audit trails.
+It keeps your workflow in SQLite, uses deterministic rules, and gates write actions behind preflight, confirmation, verification, and audit trails.
 
 ## v1 Scope
 
@@ -10,18 +10,17 @@ It keeps your workflow in SQLite, uses deterministic rules, and gates write acti
 - Forecaster probable-start ingestion + normalization
 - ESPN roster/league sync (read + bounded candidate ingestion)
 - Pitcher analysis, planning, and pickup recommendations
-- Transaction planning and approval workflow
-- Ad hoc pitcher add/drop requests
+- Transaction planning
 - Single-item transaction execution with hard preflight + verification
-- Pitcher lineup planning/approval/preflight/single-item execution
+- Pitcher lineup planning + single-item lineup execution
 - Monitoring for stale/blocked/invalidated artifacts
 - Operator diagnostics via `fb doctor`
 
 ### Write capabilities in v1
 - Real writes are limited to **single-item** ESPN mutations:
-  - transaction add/drop via `fb transactions run` / `fb transactions run-ad-hoc`
-  - pitcher lineup slot move via `fb lineup pitchers run`
-- Planning/recommendation/monitoring commands remain non-mutating.
+  - transaction add/drop via `fb execute transaction`
+  - pitcher lineup slot move via `fb execute lineup`
+- Planning/recommendation commands remain non-mutating.
 - ESPN ingestion commands (`fb espn ...`) are read-only data pulls.
 
 ### Intentionally out of scope
@@ -77,9 +76,9 @@ Validate setup:
 - `fb espn` - roster/league/candidate ingestion and source inspection
 - `fb pitchers` - analysis and weekly pitcher plan
 - `fb pickups` - free-agent pickup recommendations
-- `fb transactions` - transaction planning, review, ad hoc creation, and execution
-- `fb lineup pitchers` - lineup plan/review/preflight/execution
-- `fb monitor` - stale/blocked/invalidated artifact visibility
+- `fb transactions` - transaction planning and analysis
+- `fb lineup pitchers` - lineup planning and analysis
+- `fb execute` - transaction/lineup execution operations
 - `fb doctor` - operator readiness checks
 
 ## Recommended Weekly Routine
@@ -99,36 +98,26 @@ Validate setup:
 ./fb lineup pitchers plan
 ```
 
-3. Review + approve
+3. Build planning artifacts
 ```bash
-./fb transactions review --plan-id <id>
-./fb transactions approve --plan-id <id> --item <id> --note "weekly gain"
-./fb transactions review --state approved --limit 25
-
-./fb lineup pitchers review --plan-id <id>
-./fb lineup pitchers approve --plan-id <id> --item <id>
+./fb transactions plan --top 10
+./fb lineup pitchers plan
 ```
 
-4. Preflight and execute one item at a time
+4. Execute one item at a time (direct ops path)
 ```bash
-./fb transactions preflight
-./fb transactions run --item <approved_item_id>
-./fb transactions run --item <approved_item_id> --confirm
+./fb execute transaction --add "Aaron Nola" --drop "Shota Imanaga"
+./fb execute transaction --add "Aaron Nola" --drop "Shota Imanaga" --confirm
 
-./fb lineup pitchers preflight
-./fb lineup pitchers run --item <approved_lineup_item_id> --confirm
+./fb execute lineup --player "Kris Bubic" --to-slot P
+./fb execute lineup --player "Kris Bubic" --to-slot P --confirm
 ```
 
-5. Verify and monitor
+5. Verify and inspect
 ```bash
-./fb transactions pending
-./fb transactions verify --execution-id <id>
-./fb transactions reconcile --execution-id <id>
-
-./fb monitor summary
-./fb monitor approvals
-./fb monitor execution
-./fb monitor approvals --id <approval_item_id>
+./fb execute pending
+./fb execute verify --execution-id <id>
+./fb execute reconcile --execution-id <id>
 ```
 
 ## End-to-End Example (Copy/Paste)
@@ -145,71 +134,43 @@ Validate setup:
 ./fb pitchers plan --from 2026-09-15 --to 2026-09-24
 ./fb pickups plan --from 2026-09-15 --to 2026-09-24
 ./fb transactions plan --from 2026-09-15 --to 2026-09-24 --top 10
-
-./fb transactions review --plan-id 1
-./fb transactions approve --plan-id 1 --item 3 --note "best weekly delta"
-./fb transactions queue
-
-./fb transactions preflight --item 3
-./fb transactions run --item 3
-./fb transactions run --item 3 --confirm
-./fb transactions history --execution-id 1
-
 ./fb lineup pitchers plan
-./fb lineup pitchers review --plan-id 1
-./fb lineup pitchers approve --plan-id 1 --item 2
-./fb lineup pitchers run --item 2 --confirm
 
-./fb monitor summary
+./fb execute transaction --add "Aaron Nola" --drop "Shota Imanaga"
+./fb execute transaction --add "Aaron Nola" --drop "Shota Imanaga" --confirm
+./fb execute history --execution-id 1
+
+./fb execute lineup --player "Kris Bubic" --to-slot P
+./fb execute lineup --player "Kris Bubic" --to-slot P --confirm
+
 ./fb doctor
 ```
 
-## Ad Hoc Workflow
-
-Use when you already know the move.
+## Direct Ops Workflow
 
 ```bash
-./fb transactions ad-hoc --add "Aaron Nola" --drop "Shota Imanaga"
-./fb transactions ad-hoc-list --request-id 4
-./fb transactions run-ad-hoc --request-id 4
-./fb transactions run-ad-hoc --request-id 4 --confirm
+./fb execute transaction --add "Aaron Nola" --drop "Shota Imanaga"
+./fb execute transaction --add "Aaron Nola" --drop "Shota Imanaga" --confirm
+./fb execute transaction --add "Roki Sasaki" --next-day --confirm
 ```
 
-Ad hoc still uses the same guardrails:
+Direct execution still uses the same guardrails:
 - identity resolution
 - immediate preflight gate
 - explicit confirmation
 - single-item execution
 - verification + audit
 
-## Ad Hoc Lineup Workflow
-
-Use when you already know a lineup move you want to make.
+## Direct Lineup Ops
 
 ```bash
-./fb lineup pitchers ad-hoc --player "Kris Bubic" --to-slot P
-./fb lineup pitchers review --plan-id <lineup_plan_id>
-./fb lineup pitchers approve --plan-id <lineup_plan_id> --item <lineup_item_id>
-./fb lineup pitchers preflight --item <lineup_item_id>
-./fb lineup pitchers run --item <lineup_item_id> --confirm
+./fb execute lineup --player "Kris Bubic" --to-slot P
+./fb execute lineup --player "Kris Bubic" --to-slot P --confirm
 ```
 
-## Monitoring vs Preflight
+## Preflight
 
-- **Preflight** (`fb transactions preflight`, `fb lineup pitchers preflight`) checks current executability right now for queued items.
-- **Monitoring** (`fb monitor ...`) checks whether saved artifacts/approvals/execution outcomes have gone stale, blocked, or invalid over time.
-
-Use both.
-
-Single-artifact monitoring is done from each monitor command using `--id` (and `--type` where needed), for example:
-
-```bash
-./fb monitor plans --id 24
-./fb monitor pickups --id 12
-./fb monitor approvals --id 223 --type approval
-./fb monitor lineup --id 7 --type lineup_plan
-./fb monitor execution --id 9
-```
+Preflight is run automatically inside `fb execute transaction` and `fb execute lineup` right before write.
 
 ## Useful View Modes
 
@@ -258,24 +219,23 @@ Several commands provide focused views without needing separate subcommands:
 - Re-import forecaster source and rerun planning.
 
 ### Execution blocked
-- Check queue/preflight details:
+- Check execution details:
 ```bash
-./fb transactions readiness
-./fb transactions preflight --item <id>
+./fb execute history --execution-id <id>
+./fb execute resolve --execution-id <id>
 ```
-- Re-run planning/approval if add is unavailable or drop is no longer rostered.
+- Re-run execute command after refreshing source data if add is unavailable or drop is no longer rostered.
 
 ### Unresolved execution attempts
 ```bash
-./fb transactions pending
-./fb transactions verify --execution-id <id>
-./fb transactions reconcile --execution-id <id>
+./fb execute pending
+./fb execute verify --execution-id <id>
+./fb execute reconcile --execution-id <id>
 ```
 
 ### Overall readiness
 ```bash
 ./fb doctor
-./fb monitor summary
 ```
 
 ## JSON Output
@@ -286,13 +246,12 @@ Examples:
 
 ```bash
 ./fb doctor --json
-./fb monitor summary --json
-./fb transactions history --execution-id 8 --json
-./fb lineup pitchers queue --json
+./fb execute history --execution-id 8 --json
+./fb execute transaction --add "Aaron Nola" --drop "Shota Imanaga" --json
 ```
 
 ## Operator Notes
 
 - `fb doctor` is the main readiness command.
 - `fb healthcheck` remains a minimal config/db check.
-- Real writes are explicit via `fb transactions run` and `fb lineup pitchers run`.
+- Real writes are explicit via `fb execute transaction` and `fb execute lineup`.

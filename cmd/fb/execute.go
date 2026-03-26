@@ -14,6 +14,7 @@ import (
 	exerealsvc "fantasy-baseball/internal/execute/real/service"
 	exerepo "fantasy-baseball/internal/execute/repository"
 	exesvc "fantasy-baseball/internal/execute/service"
+	lp "fantasy-baseball/internal/lineup/pitchers"
 	"fantasy-baseball/internal/store/sqlite"
 	adhocrepo "fantasy-baseball/internal/transactions/adhoc/repository"
 	adhocsvc "fantasy-baseball/internal/transactions/adhoc/service"
@@ -22,6 +23,150 @@ import (
 
 	"github.com/spf13/cobra"
 )
+
+func newExecuteCmd(opts *cliOptions) *cobra.Command {
+	cmd := &cobra.Command{Use: "execute", Short: "Execute transaction and lineup operations"}
+	cmd.AddGroup(
+		&cobra.Group{ID: "run", Title: "Run"},
+		&cobra.Group{ID: "followup", Title: "Follow-up"},
+	)
+	txCmd := newExecuteTransactionDirectCmd(opts)
+	txCmd.GroupID = "run"
+	lineupCmd := newExecuteLineupDirectCmd(opts)
+	lineupCmd.GroupID = "run"
+	historyCmd := newExecuteHistoryCmd(opts)
+	historyCmd.GroupID = "followup"
+	verifyCmd := newExecuteVerifyCmd(opts)
+	verifyCmd.GroupID = "followup"
+	resolveCmd := newExecuteResolveCmd(opts)
+	resolveCmd.GroupID = "followup"
+	reconcileCmd := newExecuteReconcileCmd(opts)
+	reconcileCmd.GroupID = "followup"
+	pendingCmd := newExecutePendingCmd(opts)
+	pendingCmd.GroupID = "followup"
+	cmd.AddCommand(txCmd, lineupCmd, historyCmd, verifyCmd, resolveCmd, reconcileCmd, pendingCmd)
+	return cmd
+}
+
+func newExecuteTransactionDirectCmd(opts *cliOptions) *cobra.Command {
+	var addName, dropName string
+	var confirm bool
+	var scoringPeriodID int64
+	var nextDay bool
+	cmd := &cobra.Command{
+		Use:   "transaction",
+		Short: "Prepare or execute one transaction directly by player names",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if strings.TrimSpace(addName) == "" {
+				return fmt.Errorf("--add is required")
+			}
+			if cmd.Flags().Changed("scoring-period-id") && nextDay {
+				return fmt.Errorf("use only one of --scoring-period-id or --next-day")
+			}
+			v, err := withAdHocAndRealExecuteService(cmd.Context(), opts, func(ctx context.Context, cfg config.Config, adhoc *adhocsvc.Service, real *exerealsvc.Service) (any, error) {
+				req, err := adhoc.CreateAndResolve(ctx, addName, dropName)
+				if err != nil {
+					return nil, err
+				}
+				updated, itemID, err := adhoc.EnsureExecutionCandidate(ctx, req.ID)
+				if err != nil {
+					return nil, err
+				}
+				res, err := real.ExecuteOne(ctx, cfg, execute.RealExecutionOptions{
+					ItemID:           itemID,
+					Confirm:          confirm,
+					ScoringPeriodID:  optionalInt64(cmd, "scoring-period-id", scoringPeriodID),
+					EffectiveNextDay: nextDay,
+				})
+				if err != nil {
+					return nil, err
+				}
+				if res.Attempt != nil {
+					_ = adhoc.LinkExecutionResult(ctx, updated.ID, res.Attempt.ID, res.Attempt.ExecutionStatus == execute.ExecutionStatusSucceeded)
+				}
+				return map[string]any{
+					"request_id": updated.ID,
+					"result":     res,
+				}, nil
+			})
+			if err != nil {
+				return err
+			}
+			payload := v.(map[string]any)
+			res := payload["result"].(*execute.RealExecutionResult)
+			if opts.OutputJSON {
+				return writeJSON(cmd, payload)
+			}
+			printRealExecutionResult(cmd, res)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&addName, "add", "", "Add player name")
+	cmd.Flags().StringVar(&dropName, "drop", "", "Optional drop player name")
+	cmd.Flags().BoolVar(&confirm, "confirm", false, "Actually perform the real write attempt")
+	cmd.Flags().Int64Var(&scoringPeriodID, "scoring-period-id", 0, "Override ESPN scoring period id for execution")
+	cmd.Flags().BoolVar(&nextDay, "next-day", false, "Execute effective next scoring period")
+	return cmd
+}
+
+func newExecuteLineupDirectCmd(opts *cliOptions) *cobra.Command {
+	var playerName string
+	var toSlot string
+	var syncRunID int64
+	var confirm bool
+	cmd := &cobra.Command{
+		Use:   "lineup",
+		Short: "Prepare or execute one lineup move directly by player and slot",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if strings.TrimSpace(playerName) == "" {
+				return fmt.Errorf("--player is required")
+			}
+			if strings.TrimSpace(toSlot) == "" {
+				return fmt.Errorf("--to-slot is required")
+			}
+			v, err := withLineupService(cmd.Context(), opts, func(ctx context.Context, cfg config.Config, svc *lp.Service) (any, error) {
+				plan, err := svc.CreateAdHocPlan(ctx, playerName, toSlot, optionalInt64(cmd, "sync-run", syncRunID))
+				if err != nil {
+					return nil, err
+				}
+				if len(plan.Items) == 0 {
+					return nil, fmt.Errorf("no actionable lineup items generated")
+				}
+				item := plan.Items[0]
+				if _, err := svc.Transition(ctx, plan.ID, item.ID, lp.ReviewStateApproved, "direct_execute"); err != nil {
+					return nil, err
+				}
+				a, p, willWrite, msg, err := svc.Execute(ctx, cfg, item.ID, confirm)
+				if err != nil {
+					return nil, err
+				}
+				return map[string]any{
+					"plan_id":    plan.ID,
+					"item_id":    item.ID,
+					"attempt":    a,
+					"preflight":  p,
+					"will_write": willWrite,
+					"message":    msg,
+				}, nil
+			})
+			if err != nil {
+				return err
+			}
+			payload := v.(map[string]any)
+			if opts.OutputJSON {
+				return writeJSON(cmd, payload)
+			}
+			itemID, _ := payload["item_id"].(int64)
+			printLineupExecutionPreview(cmd, itemID, payload)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&playerName, "player", "", "Pitcher name on your roster")
+	cmd.Flags().StringVar(&toSlot, "to-slot", "", "Target slot: P|SP|RP|BE")
+	cmd.Flags().Int64Var(&syncRunID, "sync-run", 0, "ESPN sync run ID (defaults to latest)")
+	cmd.Flags().BoolVar(&confirm, "confirm", false, "Actually perform the real write attempt")
+	return cmd
+}
 
 func newExecutePreflightCmd(opts *cliOptions) *cobra.Command {
 	var itemID int64
@@ -775,10 +920,10 @@ func nextActionForAttempt(a execute.Attempt) string {
 		a.ExecutionStatus == execute.ExecutionStatusSubmitted ||
 		a.VerificationStatus == execute.VerificationStatusPending ||
 		a.VerificationStatus == execute.VerificationStatusUnverified:
-		return fmt.Sprintf("fb transactions verify --execution-id %d", a.ID)
+		return fmt.Sprintf("fb execute verify --execution-id %d", a.ID)
 	case a.VerificationStatus == execute.VerificationStatusUnknown ||
 		a.VerificationStatus == execute.VerificationStatusVerificationFailed:
-		return fmt.Sprintf("fb transactions resolve --execution-id %d", a.ID)
+		return fmt.Sprintf("fb execute resolve --execution-id %d", a.ID)
 	default:
 		return "-"
 	}

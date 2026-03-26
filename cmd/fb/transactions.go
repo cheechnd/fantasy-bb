@@ -26,12 +26,9 @@ import (
 )
 
 func newTransactionsCmd(opts *cliOptions) *cobra.Command {
-	cmd := &cobra.Command{Use: "transactions", Short: "Add/drop transaction planning, review, and execution"}
+	cmd := &cobra.Command{Use: "transactions", Short: "Add/drop transaction planning and analysis"}
 	cmd.AddGroup(
 		&cobra.Group{ID: "generate", Title: "Generate"},
-		&cobra.Group{ID: "adhoc", Title: "Ad Hoc"},
-		&cobra.Group{ID: "review", Title: "Review Workflow"},
-		&cobra.Group{ID: "execute", Title: "Execution"},
 		&cobra.Group{ID: "inspect", Title: "Inspection"},
 		&cobra.Group{ID: "explain", Title: "Explain"},
 	)
@@ -41,49 +38,8 @@ func newTransactionsCmd(opts *cliOptions) *cobra.Command {
 	lastCmd.GroupID = "inspect"
 	explainCmd := newTransactionsExplainCmd(opts)
 	explainCmd.GroupID = "explain"
-	reviewCmd := newTransactionsReviewCmd(opts)
-	reviewCmd.GroupID = "review"
-	approveCmd := newTransactionsApproveCmd(opts)
-	approveCmd.GroupID = "review"
-	rejectCmd := newTransactionsRejectCmd(opts)
-	rejectCmd.GroupID = "review"
-	deferCmd := newTransactionsDeferCmd(opts)
-	deferCmd.GroupID = "review"
-	queueCmd := newTransactionsQueueCmd(opts)
-	queueCmd.GroupID = "review"
-	resetReviewCmd := newTransactionsResetReviewCmd(opts)
-	resetReviewCmd.GroupID = "review"
-	adHocCmd := newTransactionsAdHocCmd(opts)
-	adHocCmd.GroupID = "adhoc"
-	adHocListCmd := newTransactionsAdHocListCmd(opts)
-	adHocListCmd.GroupID = "adhoc"
-	preflightCmd := newExecutePreflightCmd(opts)
-	preflightCmd.GroupID = "execute"
-	dryRunCmd := newExecuteDryRunCmd(opts)
-	dryRunCmd.GroupID = "execute"
-	runCmd := newExecuteTransactionCmd(opts)
-	runCmd.GroupID = "execute"
-	runAdHocCmd := newExecuteAdHocCmd(opts)
-	runAdHocCmd.GroupID = "execute"
-	execQueueCmd := newExecuteQueueCmd(opts)
-	execQueueCmd.GroupID = "execute"
-	execLastCmd := newExecuteLastCmd(opts)
-	execLastCmd.GroupID = "execute"
-	execHistoryCmd := newExecuteHistoryCmd(opts)
-	execHistoryCmd.GroupID = "execute"
-	execVerifyCmd := newExecuteVerifyCmd(opts)
-	execVerifyCmd.GroupID = "execute"
-	execResolveCmd := newExecuteResolveCmd(opts)
-	execResolveCmd.GroupID = "execute"
-	execPendingCmd := newExecutePendingCmd(opts)
-	execPendingCmd.GroupID = "execute"
-	execReconcileCmd := newExecuteReconcileCmd(opts)
-	execReconcileCmd.GroupID = "execute"
 	cmd.AddCommand(
 		planCmd,
-		adHocCmd, adHocListCmd,
-		preflightCmd, dryRunCmd, runCmd, runAdHocCmd, execQueueCmd, execLastCmd, execHistoryCmd, execVerifyCmd, execResolveCmd, execPendingCmd, execReconcileCmd,
-		reviewCmd, approveCmd, rejectCmd, deferCmd, queueCmd, resetReviewCmd,
 		lastCmd, explainCmd,
 	)
 	return cmd
