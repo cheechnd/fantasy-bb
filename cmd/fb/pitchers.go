@@ -22,25 +22,16 @@ import (
 )
 
 func newPitchersCmd(opts *cliOptions) *cobra.Command {
-	cmd := &cobra.Command{Use: "pitchers", Short: "ESPN roster-aware pitcher analysis"}
+	cmd := &cobra.Command{Use: "pitchers", Short: "ESPN roster-aware pitcher planning"}
 	cmd.AddGroup(
-		&cobra.Group{ID: "analysis", Title: "Analysis"},
 		&cobra.Group{ID: "planning", Title: "Planning"},
 		&cobra.Group{ID: "inspect", Title: "Inspection"},
 	)
-	analyzeCmd := newPitchersAnalyzeWeekCmd(opts)
-	analyzeCmd.GroupID = "analysis"
-	reportCmd := newPitchersReportCmd(opts)
-	reportCmd.GroupID = "analysis"
-	explainMatchesCmd := newPitchersExplainMatchesCmd(opts)
-	explainMatchesCmd.GroupID = "analysis"
-	lastReportCmd := newPitchersLastReportCmd(opts)
-	lastReportCmd.GroupID = "inspect"
 	planCmd := newPitchersPlanCmd(opts)
 	planCmd.GroupID = "planning"
 	planLastCmd := newPitchersLastCmd(opts)
 	planLastCmd.GroupID = "inspect"
-	cmd.AddCommand(analyzeCmd, reportCmd, explainMatchesCmd, lastReportCmd, planCmd, planLastCmd)
+	cmd.AddCommand(planCmd, planLastCmd)
 	return cmd
 }
 

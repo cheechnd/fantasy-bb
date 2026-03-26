@@ -30,17 +30,14 @@ func newTransactionsCmd(opts *cliOptions) *cobra.Command {
 	cmd.AddGroup(
 		&cobra.Group{ID: "generate", Title: "Generate"},
 		&cobra.Group{ID: "inspect", Title: "Inspection"},
-		&cobra.Group{ID: "explain", Title: "Explain"},
 	)
 	planCmd := newTransactionsPlanCmd(opts)
 	planCmd.GroupID = "generate"
 	lastCmd := newTransactionsLastCmd(opts)
 	lastCmd.GroupID = "inspect"
-	explainCmd := newTransactionsExplainCmd(opts)
-	explainCmd.GroupID = "explain"
 	cmd.AddCommand(
 		planCmd,
-		lastCmd, explainCmd,
+		lastCmd,
 	)
 	return cmd
 }

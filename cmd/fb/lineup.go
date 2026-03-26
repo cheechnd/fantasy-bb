@@ -17,15 +17,76 @@ import (
 )
 
 func newLineupCmd(opts *cliOptions) *cobra.Command {
-	cmd := &cobra.Command{Use: "lineup", Short: "Pitcher lineup planning and analysis"}
-	pitchersCmd := &cobra.Command{Use: "pitchers", Short: "Pitcher lineup planning"}
-	pitchersCmd.AddGroup(
+	cmd := &cobra.Command{Use: "lineup", Short: "Pitcher lineup planning"}
+	cmd.AddGroup(
 		&cobra.Group{ID: "plan", Title: "Plan"},
+		&cobra.Group{ID: "inspect", Title: "Inspection"},
 	)
-	planCmd := newLineupPitchersPlanCmd(opts)
+	planCmd := newLineupPlanCmd(opts)
 	planCmd.GroupID = "plan"
-	pitchersCmd.AddCommand(planCmd)
-	cmd.AddCommand(pitchersCmd)
+	lastCmd := newLineupLastCmd(opts)
+	lastCmd.GroupID = "inspect"
+	cmd.AddCommand(planCmd, lastCmd)
+	return cmd
+}
+
+func newLineupPlanCmd(opts *cliOptions) *cobra.Command {
+	var pitcherPlanID, syncRunID int64
+	cmd := &cobra.Command{
+		Use:   "plan",
+		Short: "Generate explicit pitcher lineup actions from pitcher plan + live roster",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			v, err := withLineupService(cmd.Context(), opts, func(ctx context.Context, _ config.Config, svc *lp.Service) (any, error) {
+				return svc.GeneratePlan(ctx, optionalInt64(cmd, "pitcher-plan-id", pitcherPlanID), optionalInt64(cmd, "sync-run", syncRunID))
+			})
+			if err != nil {
+				return err
+			}
+			plan := v.(*lp.Plan)
+			if opts.OutputJSON {
+				return writeJSON(cmd, plan)
+			}
+			printLineupPlan(cmd, plan)
+			return nil
+		},
+	}
+	cmd.Flags().Int64Var(&pitcherPlanID, "pitcher-plan-id", 0, "Pitcher plan ID (defaults to latest)")
+	cmd.Flags().Int64Var(&syncRunID, "sync-run", 0, "ESPN sync run ID (defaults to pitcher plan sync or latest)")
+	return cmd
+}
+
+func newLineupLastCmd(opts *cliOptions) *cobra.Command {
+	var planID int64
+	cmd := &cobra.Command{
+		Use:   "last",
+		Short: "Show saved lineup plan (latest by default)",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			v, err := withLineupService(cmd.Context(), opts, func(ctx context.Context, _ config.Config, svc *lp.Service) (any, error) {
+				if planID > 0 {
+					return svc.PlanByID(ctx, planID)
+				}
+				return svc.LatestPlan(ctx)
+			})
+			if err != nil {
+				return err
+			}
+			plan, _ := v.(*lp.Plan)
+			if opts.OutputJSON {
+				return writeJSON(cmd, map[string]any{"plan": plan})
+			}
+			if plan == nil {
+				if planID > 0 {
+					fmt.Fprintf(cmd.OutOrStdout(), "Lineup plan %d not found.\n", planID)
+					return nil
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), "No lineup plans found.")
+				return nil
+			}
+			printLineupPlan(cmd, plan)
+			return nil
+		},
+	}
+	cmd.Flags().Int64Var(&planID, "plan-id", 0, "Lineup plan ID (defaults to latest)")
 	return cmd
 }
 
