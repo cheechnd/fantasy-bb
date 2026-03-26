@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"fantasy-baseball/internal/config"
@@ -29,6 +30,9 @@ type WriteRequest struct {
 	DropPlayerName   string
 	AddESPNPlayerID  *int64
 	DropESPNPlayerID *int64
+	AddOnly          bool
+	ScoringPeriodID  *int64
+	EffectiveNextDay bool
 }
 
 type WriteResult struct {
@@ -62,6 +66,12 @@ func New(preflightService *pfsvc.Service, reviewRepo *reviewrepo.Repository, tra
 func (s *Service) ExecuteOne(ctx context.Context, cfg config.Config, opts execute.RealExecutionOptions) (*execute.RealExecutionResult, error) {
 	if opts.ItemID <= 0 {
 		return nil, fmt.Errorf("item id must be > 0")
+	}
+	if opts.ScoringPeriodID != nil && opts.EffectiveNextDay {
+		return nil, fmt.Errorf("use only one of scoring period override or next-day scheduling")
+	}
+	if opts.ScoringPeriodID != nil && *opts.ScoringPeriodID <= 0 {
+		return nil, fmt.Errorf("scoring period id override must be > 0")
 	}
 
 	approved, err := s.findApprovedItem(ctx, opts.ItemID)
@@ -144,8 +154,11 @@ func (s *Service) ExecuteOne(ctx context.Context, cfg config.Config, opts execut
 		DropPlayerName:   approved.DropPlayerName,
 		AddESPNPlayerID:  planItem.AddESPNPlayerID,
 		DropESPNPlayerID: planItem.DropESPNPlayerID,
+		AddOnly:          strings.TrimSpace(approved.DropPlayerName) == "",
+		ScoringPeriodID:  opts.ScoringPeriodID,
+		EffectiveNextDay: opts.EffectiveNextDay,
 	}
-	if req.AddESPNPlayerID == nil || req.DropESPNPlayerID == nil {
+	if req.AddESPNPlayerID == nil || (!req.AddOnly && req.DropESPNPlayerID == nil) {
 		attempt, _ := s.createAbortedAttempt(ctx, approved, preflightRun, "missing ESPN player ids for add/drop action", preflightItem)
 		return &execute.RealExecutionResult{
 			Attempt:       attempt,
@@ -166,11 +179,14 @@ func (s *Service) ExecuteOne(ctx context.Context, cfg config.Config, opts execut
 		AddPlayerName:      approved.AddPlayerName,
 		DropPlayerName:     approved.DropPlayerName,
 		RequestSummary: map[string]any{
-			"action_type":      "add_drop_pitcher",
-			"add_player_name":  req.AddPlayerName,
-			"drop_player_name": req.DropPlayerName,
-			"add_player_id":    req.AddESPNPlayerID,
-			"drop_player_id":   req.DropESPNPlayerID,
+			"action_type":        actionType(req.AddOnly),
+			"add_player_name":    req.AddPlayerName,
+			"drop_player_name":   req.DropPlayerName,
+			"add_player_id":      req.AddESPNPlayerID,
+			"drop_player_id":     req.DropESPNPlayerID,
+			"add_only":           req.AddOnly,
+			"scoring_period_id":  req.ScoringPeriodID,
+			"effective_next_day": req.EffectiveNextDay,
 		},
 		Details: map[string]any{
 			"approved_note": approved.Note,
@@ -452,19 +468,25 @@ func describeExecutionMessage(execStatus execute.ExecutionStatus, verStatus exec
 }
 
 func requestFromAttempt(attempt *execute.Attempt) (WriteRequest, error) {
+	addOnly, _ := attempt.RequestSummary["add_only"].(bool)
+	effectiveNextDay, _ := attempt.RequestSummary["effective_next_day"].(bool)
 	req := WriteRequest{
-		ApprovedItemID: attempt.ApprovedItemID,
-		SourcePlanID:   attempt.SourcePlanID,
-		AddPlayerName:  attempt.AddPlayerName,
-		DropPlayerName: attempt.DropPlayerName,
+		ApprovedItemID:   attempt.ApprovedItemID,
+		SourcePlanID:     attempt.SourcePlanID,
+		AddPlayerName:    attempt.AddPlayerName,
+		DropPlayerName:   attempt.DropPlayerName,
+		AddOnly:          addOnly || strings.TrimSpace(attempt.DropPlayerName) == "",
+		EffectiveNextDay: effectiveNextDay,
 	}
 	addID := asInt64(attempt.RequestSummary["add_player_id"])
 	dropID := asInt64(attempt.RequestSummary["drop_player_id"])
-	if addID <= 0 || dropID <= 0 {
+	if addID <= 0 || (!req.AddOnly && dropID <= 0) {
 		return WriteRequest{}, fmt.Errorf("execution attempt %d missing request player ids for verification", attempt.ID)
 	}
 	req.AddESPNPlayerID = &addID
-	req.DropESPNPlayerID = &dropID
+	if dropID > 0 {
+		req.DropESPNPlayerID = &dropID
+	}
 	return req, nil
 }
 
@@ -494,6 +516,13 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func actionType(addOnly bool) string {
+	if addOnly {
+		return "add_pitcher"
+	}
+	return "add_drop_pitcher"
 }
 
 func (s *Service) findApprovedItem(ctx context.Context, itemID int64) (*transactions.ApprovalQueueItem, error) {

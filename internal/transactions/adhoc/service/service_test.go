@@ -89,6 +89,32 @@ func TestEnsureExecutionCandidate(t *testing.T) {
 	}
 }
 
+func TestCreateAndResolveAddOnly(t *testing.T) {
+	svc, closeFn := seededService(t, seedInput{
+		roster: []espn.RosterSnapshot{{PlayerName: "Shota Imanaga", NormalizedName: "shotaimanaga", IsPitcher: true, ESPNPlayerID: ptr64(202)}},
+		cands:  []espn.FreeAgentCandidate{{PlayerName: "Roki Sasaki", NormalizedName: "rokisasaki", IsPitcher: true, ESPNPlayerID: ptr64(303)}},
+	})
+	defer closeFn()
+
+	req, err := svc.CreateAndResolve(context.Background(), "Roki Sasaki", "")
+	if err != nil {
+		t.Fatalf("CreateAndResolve: %v", err)
+	}
+	if req.ResolutionStatus != transactions.AdHocResolutionResolved {
+		t.Fatalf("expected resolved, got %s", req.ResolutionStatus)
+	}
+	if req.ResolvedDropESPNPlayerID != nil || req.ResolvedDropPlayerName != "" {
+		t.Fatalf("expected empty drop resolution for add-only request, got %+v", req)
+	}
+	updated, itemID, err := svc.EnsureExecutionCandidate(context.Background(), req.ID)
+	if err != nil {
+		t.Fatalf("EnsureExecutionCandidate: %v", err)
+	}
+	if itemID <= 0 || updated.LinkedPlanItemID == nil {
+		t.Fatalf("expected linked plan item")
+	}
+}
+
 func TestCreateAndResolveUsesLatestRunCandidateCountNotAdHocLimit(t *testing.T) {
 	cands := make([]espn.FreeAgentCandidate, 0, 30)
 	for i := 0; i < 29; i++ {

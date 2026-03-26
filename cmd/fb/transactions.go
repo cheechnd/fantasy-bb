@@ -93,7 +93,7 @@ func newTransactionsAdHocCmd(opts *cliOptions) *cobra.Command {
 	var addName, dropName string
 	cmd := &cobra.Command{
 		Use:   "ad-hoc",
-		Short: "Create and resolve a manual ad hoc pitcher add/drop request",
+		Short: "Create and resolve a manual ad hoc pitcher add request (optional drop)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			v, err := withAdHocService(cmd.Context(), opts, func(ctx context.Context, svc *adhocsvc.Service) (any, error) {
 				return svc.CreateAndResolve(ctx, addName, dropName)
@@ -110,7 +110,7 @@ func newTransactionsAdHocCmd(opts *cliOptions) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&addName, "add", "", "Add player name")
-	cmd.Flags().StringVar(&dropName, "drop", "", "Drop player name")
+	cmd.Flags().StringVar(&dropName, "drop", "", "Optional drop player name")
 	return cmd
 }
 
@@ -822,11 +822,11 @@ func printAdHocRequest(cmd *cobra.Command, req *transactions.AdHocRequest) {
 		return
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Ad Hoc Request: %d\n", req.ID)
-	fmt.Fprintf(cmd.OutOrStdout(), "Requested: add %s / drop %s\n", req.RequestedAddPlayerName, req.RequestedDropPlayerName)
+	fmt.Fprintf(cmd.OutOrStdout(), "Requested: %s\n", formatAdHocAction(req.RequestedAddPlayerName, req.RequestedDropPlayerName))
 	fmt.Fprintf(cmd.OutOrStdout(), "State: %s\n", req.RequestState)
 	fmt.Fprintf(cmd.OutOrStdout(), "Resolution: %s\n", req.ResolutionStatus)
 	if req.ResolvedAddPlayerName != "" || req.ResolvedDropPlayerName != "" {
-		fmt.Fprintf(cmd.OutOrStdout(), "Resolved: add %s / drop %s\n", firstNonEmpty(req.ResolvedAddPlayerName, "-"), firstNonEmpty(req.ResolvedDropPlayerName, "-"))
+		fmt.Fprintf(cmd.OutOrStdout(), "Resolved: %s\n", formatAdHocAction(firstNonEmpty(req.ResolvedAddPlayerName, "-"), req.ResolvedDropPlayerName))
 	}
 	if len(req.ResolutionNotes) > 0 {
 		if b, err := json.MarshalIndent(req.ResolutionNotes, "", "  "); err == nil {
@@ -849,7 +849,7 @@ func printAdHocRequests(cmd *cobra.Command, rows []transactions.AdHocRequest) {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "REQUEST\tADD\tDROP\tSTATE\tRESOLUTION\tUPDATED")
 	for _, r := range rows {
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n", r.ID, r.RequestedAddPlayerName, r.RequestedDropPlayerName, r.RequestState, r.ResolutionStatus, r.UpdatedAt.Format(time.RFC3339))
+		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n", r.ID, r.RequestedAddPlayerName, firstNonEmpty(r.RequestedDropPlayerName, "-"), r.RequestState, r.ResolutionStatus, r.UpdatedAt.Format(time.RFC3339))
 	}
 	w.Flush()
 }
@@ -871,4 +871,11 @@ func filterTopTransactionRows(items []transactions.PlanItem) []transactions.Plan
 		out = append(out, row)
 	}
 	return out
+}
+
+func formatAdHocAction(addName, dropName string) string {
+	if strings.TrimSpace(dropName) == "" {
+		return fmt.Sprintf("add %s", addName)
+	}
+	return fmt.Sprintf("add %s / drop %s", addName, dropName)
 }

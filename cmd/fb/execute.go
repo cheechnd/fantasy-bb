@@ -143,6 +143,8 @@ func newExecuteLastCmd(opts *cliOptions) *cobra.Command {
 func newExecuteTransactionCmd(opts *cliOptions) *cobra.Command {
 	var itemID int64
 	var confirm bool
+	var scoringPeriodID int64
+	var nextDay bool
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Prepare or execute one approved add/drop transaction",
@@ -150,10 +152,15 @@ func newExecuteTransactionCmd(opts *cliOptions) *cobra.Command {
 			if itemID <= 0 {
 				return fmt.Errorf("--item must be > 0")
 			}
+			if cmd.Flags().Changed("scoring-period-id") && nextDay {
+				return fmt.Errorf("use only one of --scoring-period-id or --next-day")
+			}
 			v, err := withRealExecuteService(cmd.Context(), opts, func(ctx context.Context, cfg config.Config, svc *exerealsvc.Service) (any, error) {
 				return svc.ExecuteOne(ctx, cfg, execute.RealExecutionOptions{
-					ItemID:  itemID,
-					Confirm: confirm,
+					ItemID:           itemID,
+					Confirm:          confirm,
+					ScoringPeriodID:  optionalInt64(cmd, "scoring-period-id", scoringPeriodID),
+					EffectiveNextDay: nextDay,
 				})
 			})
 			if err != nil {
@@ -169,12 +176,16 @@ func newExecuteTransactionCmd(opts *cliOptions) *cobra.Command {
 	}
 	cmd.Flags().Int64Var(&itemID, "item", 0, "Approved queue item ID to execute")
 	cmd.Flags().BoolVar(&confirm, "confirm", false, "Actually perform the real write attempt")
+	cmd.Flags().Int64Var(&scoringPeriodID, "scoring-period-id", 0, "Override ESPN scoring period id for execution")
+	cmd.Flags().BoolVar(&nextDay, "next-day", false, "Execute effective next scoring period")
 	return cmd
 }
 
 func newExecuteAdHocCmd(opts *cliOptions) *cobra.Command {
 	var requestID int64
 	var confirm bool
+	var scoringPeriodID int64
+	var nextDay bool
 	cmd := &cobra.Command{
 		Use:   "run-ad-hoc",
 		Short: "Prepare or execute one resolved ad hoc add/drop request",
@@ -182,14 +193,19 @@ func newExecuteAdHocCmd(opts *cliOptions) *cobra.Command {
 			if requestID <= 0 {
 				return fmt.Errorf("--request-id must be > 0")
 			}
+			if cmd.Flags().Changed("scoring-period-id") && nextDay {
+				return fmt.Errorf("use only one of --scoring-period-id or --next-day")
+			}
 			v, err := withAdHocAndRealExecuteService(cmd.Context(), opts, func(ctx context.Context, cfg config.Config, adhoc *adhocsvc.Service, real *exerealsvc.Service) (any, error) {
 				req, itemID, err := adhoc.EnsureExecutionCandidate(ctx, requestID)
 				if err != nil {
 					return nil, err
 				}
 				res, err := real.ExecuteOne(ctx, cfg, execute.RealExecutionOptions{
-					ItemID:  itemID,
-					Confirm: confirm,
+					ItemID:           itemID,
+					Confirm:          confirm,
+					ScoringPeriodID:  optionalInt64(cmd, "scoring-period-id", scoringPeriodID),
+					EffectiveNextDay: nextDay,
 				})
 				if err != nil {
 					return nil, err
@@ -212,6 +228,8 @@ func newExecuteAdHocCmd(opts *cliOptions) *cobra.Command {
 	}
 	cmd.Flags().Int64Var(&requestID, "request-id", 0, "Ad hoc request ID")
 	cmd.Flags().BoolVar(&confirm, "confirm", false, "Actually perform the real write attempt")
+	cmd.Flags().Int64Var(&scoringPeriodID, "scoring-period-id", 0, "Override ESPN scoring period id for execution")
+	cmd.Flags().BoolVar(&nextDay, "next-day", false, "Execute effective next scoring period")
 	return cmd
 }
 
@@ -597,7 +615,7 @@ func printRealExecutionResult(cmd *cobra.Command, res *execute.RealExecutionResu
 	}
 	if res.PreflightItem != nil {
 		fmt.Fprintf(cmd.OutOrStdout(), "Approved Item: %d\n", res.PreflightItem.ApprovedItemID)
-		fmt.Fprintf(cmd.OutOrStdout(), "Action: add %s / drop %s\n", res.PreflightItem.AddPlayerName, res.PreflightItem.DropPlayerName)
+		fmt.Fprintf(cmd.OutOrStdout(), "Action: %s\n", formatExecutionAction(res.PreflightItem.AddPlayerName, res.PreflightItem.DropPlayerName))
 		fmt.Fprintf(cmd.OutOrStdout(), "Immediate preflight: %s\n", res.PreflightItem.ValidationStatus)
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Will write: %t\n", res.WillWrite)
@@ -626,7 +644,7 @@ func printVerifyResult(cmd *cobra.Command, res *execute.VerifyResult) {
 	}
 	if res.Attempt != nil {
 		fmt.Fprintf(cmd.OutOrStdout(), "Execution ID: %d\n", res.Attempt.ID)
-		fmt.Fprintf(cmd.OutOrStdout(), "Action: add %s / drop %s\n", res.Attempt.AddPlayerName, res.Attempt.DropPlayerName)
+		fmt.Fprintf(cmd.OutOrStdout(), "Action: %s\n", formatExecutionAction(res.Attempt.AddPlayerName, res.Attempt.DropPlayerName))
 		fmt.Fprintf(cmd.OutOrStdout(), "Execution status: %s\n", res.Attempt.ExecutionStatus)
 		fmt.Fprintf(cmd.OutOrStdout(), "Verification status: %s\n", res.Attempt.VerificationStatus)
 	}
@@ -698,7 +716,7 @@ func printExecutionAttempt(cmd *cobra.Command, attempt *execute.Attempt) {
 	fmt.Fprintf(cmd.OutOrStdout(), "Execution ID: %d\n", attempt.ID)
 	fmt.Fprintf(cmd.OutOrStdout(), "Approved item: %d\n", attempt.ApprovedItemID)
 	fmt.Fprintf(cmd.OutOrStdout(), "Plan: %d\n", attempt.SourcePlanID)
-	fmt.Fprintf(cmd.OutOrStdout(), "Action: add %s / drop %s\n", attempt.AddPlayerName, attempt.DropPlayerName)
+	fmt.Fprintf(cmd.OutOrStdout(), "Action: %s\n", formatExecutionAction(attempt.AddPlayerName, attempt.DropPlayerName))
 	fmt.Fprintf(cmd.OutOrStdout(), "Started: %s\n", attempt.StartedAt.Format(time.RFC3339))
 	if attempt.CompletedAt != nil {
 		fmt.Fprintf(cmd.OutOrStdout(), "Completed: %s\n", attempt.CompletedAt.Format(time.RFC3339))
@@ -764,4 +782,11 @@ func nextActionForAttempt(a execute.Attempt) string {
 	default:
 		return "-"
 	}
+}
+
+func formatExecutionAction(addName, dropName string) string {
+	if strings.TrimSpace(dropName) == "" {
+		return fmt.Sprintf("add %s", addName)
+	}
+	return fmt.Sprintf("add %s / drop %s", addName, dropName)
 }

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,6 +47,14 @@ func NewWithHTTPClient(httpClient HTTPClient, userAgent string) *Client {
 }
 
 func (c *Client) FetchLeague(ctx context.Context, cfg config.Config, creds config.ESPNCredentials) (FetchResult, error) {
+	return c.FetchLeagueWithOptions(ctx, cfg, creds, LeagueFetchOptions{})
+}
+
+type LeagueFetchOptions struct {
+	ScoringPeriodID *int
+}
+
+func (c *Client) FetchLeagueWithOptions(ctx context.Context, cfg config.Config, creds config.ESPNCredentials, opts LeagueFetchOptions) (FetchResult, error) {
 	baseURL := strings.TrimRight(cfg.ESPN.BaseURL, "/")
 	if baseURL == "" {
 		baseURL = "https://lm-api-reads.fantasy.espn.com"
@@ -59,6 +68,9 @@ func (c *Client) FetchLeague(ctx context.Context, cfg config.Config, creds confi
 	q.Add("view", "mTeam")
 	q.Add("view", "mRoster")
 	q.Add("view", "mSettings")
+	if opts.ScoringPeriodID != nil && *opts.ScoringPeriodID > 0 {
+		q.Set("scoringPeriodId", strconv.Itoa(*opts.ScoringPeriodID))
+	}
 	u.RawQuery = q.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)

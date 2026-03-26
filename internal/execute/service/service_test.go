@@ -107,6 +107,53 @@ func TestPreflightUnknownAmbiguousCandidate(t *testing.T) {
 	}
 }
 
+func TestPreflightExecutableAddOnly(t *testing.T) {
+	svc, closeFn := seededService(t, seededInputs{
+		addName:     "Add Arm",
+		dropName:    "",
+		rosterNames: []string{"Different Arm"},
+		candidates:  []string{"Add Arm"},
+	})
+	defer closeFn()
+
+	run, err := svc.Preflight(context.Background(), execute.Options{Limit: 10})
+	if err != nil {
+		t.Fatalf("Preflight: %v", err)
+	}
+	if len(run.Items) != 1 || run.Items[0].ValidationStatus != execute.StatusExecutable {
+		t.Fatalf("expected executable add-only item, got %+v", run.Items)
+	}
+}
+
+func TestPreflightAddOnlyBlockedWhenRosterCapacityFull(t *testing.T) {
+	svc, closeFn := seededService(t, seededInputs{
+		addName:        "Add Arm",
+		dropName:       "",
+		rosterNames:    []string{"A", "B"},
+		candidates:     []string{"Add Arm"},
+		leagueSettings: `{"lineupSlotCounts":{"13":1,"16":1}}`,
+	})
+	defer closeFn()
+
+	run, err := svc.Preflight(context.Background(), execute.Options{Limit: 10})
+	if err != nil {
+		t.Fatalf("Preflight: %v", err)
+	}
+	if len(run.Items) != 1 || run.Items[0].ValidationStatus != execute.StatusBlocked {
+		t.Fatalf("expected blocked add-only item, got %+v", run.Items)
+	}
+	found := false
+	for _, r := range run.Items[0].ValidationReasons {
+		if r.Code == "roster_capacity_full" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected roster_capacity_full reason, got %+v", run.Items[0].ValidationReasons)
+	}
+}
+
 func TestPreflightStaleByTime(t *testing.T) {
 	svc, closeFn := seededService(t, seededInputs{
 		addName:        "Add Arm",
@@ -183,6 +230,7 @@ type seededInputs struct {
 	dropName       string
 	rosterNames    []string
 	candidates     []string
+	leagueSettings string
 	approvalAgeHrs int
 	withPending    bool
 }
@@ -241,7 +289,7 @@ func seededService(t *testing.T, in seededInputs) (*Service, func()) {
 	}
 	syncRunID, err := er.PersistSync(context.Background(), esrepo.PersistSyncInput{
 		SyncType: "roster", LeagueID: "1", TeamID: "1", Season: 2026, Status: "success",
-		League: espn.LeagueSnapshot{LeagueID: "1", TeamID: "1", Season: 2026, LeagueName: "L", TeamName: "T", CreatedAt: time.Now().UTC()},
+		League: espn.LeagueSnapshot{LeagueID: "1", TeamID: "1", Season: 2026, LeagueName: "L", TeamName: "T", SettingsJSON: in.leagueSettings, CreatedAt: time.Now().UTC()},
 		Roster: roster,
 	})
 	if err != nil {

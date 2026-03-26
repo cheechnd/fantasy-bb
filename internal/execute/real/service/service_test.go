@@ -326,6 +326,28 @@ func TestVerifyAttemptRespectsRecheckLimit(t *testing.T) {
 	}
 }
 
+func TestRequestFromAttemptCarriesEffectiveNextDay(t *testing.T) {
+	attempt := &execute.Attempt{
+		ID:             1,
+		ApprovedItemID: 1,
+		SourcePlanID:   1,
+		AddPlayerName:  "Roki Sasaki",
+		DropPlayerName: "",
+		RequestSummary: map[string]any{
+			"add_player_id":      float64(5134638),
+			"add_only":           true,
+			"effective_next_day": true,
+		},
+	}
+	req, err := requestFromAttempt(attempt)
+	if err != nil {
+		t.Fatalf("requestFromAttempt: %v", err)
+	}
+	if !req.EffectiveNextDay {
+		t.Fatalf("expected effective next day to be true")
+	}
+}
+
 type fakeWriter struct {
 	calls  int
 	result WriteResult

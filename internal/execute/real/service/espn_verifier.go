@@ -33,18 +33,43 @@ func (v *ESPNVerifier) Verify(ctx context.Context, cfg config.Config, req WriteR
 	if err != nil {
 		return execute.VerificationStatusVerificationFailed, nil, err
 	}
+	details := map[string]any{}
+	fetchForCheck := fetch
 
-	addOnRoster, dropOnRoster, err := findRosterMembership(fetch.Payload, cfg.League.TeamID, req)
+	// For next-day-effective execution, prefer checking the target scoring period view.
+	if req.EffectiveNextDay {
+		targetSP := 0
+		if req.ScoringPeriodID != nil && *req.ScoringPeriodID > 0 {
+			targetSP = int(*req.ScoringPeriodID)
+		} else if currentSP, ok := detectCurrentScoringPeriod(fetch.Payload); ok {
+			targetSP = currentSP + 1
+		}
+		if targetSP > 0 {
+			periodFetch, periodErr := v.client.FetchLeagueWithOptions(ctx, cfg, creds, espnclient.LeagueFetchOptions{
+				ScoringPeriodID: &targetSP,
+			})
+			if periodErr == nil {
+				fetchForCheck = periodFetch
+				details["verification_scoring_period_id"] = targetSP
+			} else {
+				details["verification_scoring_period_id"] = targetSP
+				details["verification_scoring_period_error"] = periodErr.Error()
+			}
+		}
+	}
+
+	addOnRoster, dropOnRoster, err := findRosterMembership(fetchForCheck.Payload, cfg.League.TeamID, req)
 	if err != nil {
 		return execute.VerificationStatusVerificationFailed, nil, fmt.Errorf("parse roster for verification: %w", err)
 	}
-	details := map[string]any{
-		"endpoint":          fetch.Endpoint,
-		"response_status":   fetch.ResponseStatus,
-		"add_on_roster":     addOnRoster,
-		"drop_still_roster": dropOnRoster,
+	details["endpoint"] = fetchForCheck.Endpoint
+	details["response_status"] = fetchForCheck.ResponseStatus
+	details["add_on_roster"] = addOnRoster
+	details["drop_still_roster"] = dropOnRoster
+	if req.EffectiveNextDay {
+		details["effective_next_day"] = true
 	}
-	inference, msg := InferExecutionOutcome(addOnRoster, dropOnRoster)
+	inference, msg := InferExecutionOutcome(addOnRoster, dropOnRoster, req.AddOnly, req.EffectiveNextDay)
 	details["inference"] = inference
 	details["message"] = msg
 	switch inference {
@@ -57,7 +82,50 @@ func (v *ESPNVerifier) Verify(ctx context.Context, cfg config.Config, req WriteR
 	}
 }
 
-func InferExecutionOutcome(addOnRoster, dropOnRoster bool) (string, string) {
+func detectCurrentScoringPeriod(payload []byte) (int, bool) {
+	var raw map[string]any
+	if err := json.Unmarshal(payload, &raw); err != nil {
+		return 0, false
+	}
+	if v := intFromAny(raw["scoringPeriodId"]); v > 0 {
+		return v, true
+	}
+	if status, ok := raw["status"].(map[string]any); ok {
+		if v := intFromAny(status["currentScoringPeriod"]); v > 0 {
+			return v, true
+		}
+		if v := intFromAny(status["currentScoringPeriodId"]); v > 0 {
+			return v, true
+		}
+	}
+	return 0, false
+}
+
+func intFromAny(v any) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case json.Number:
+		i, _ := n.Int64()
+		return int(i)
+	}
+	return 0
+}
+
+func InferExecutionOutcome(addOnRoster, dropOnRoster bool, addOnly bool, effectiveNextDay bool) (string, string) {
+	if addOnly {
+		if addOnRoster {
+			return "likely_executed", "add player appears on roster"
+		}
+		if effectiveNextDay {
+			return "inconclusive", "add player may not be visible yet for next-day effective move"
+		}
+		return "likely_not_executed", "add player is not on roster"
+	}
 	switch {
 	case addOnRoster && !dropOnRoster:
 		return "likely_executed", "add player appears on roster and drop player is removed"

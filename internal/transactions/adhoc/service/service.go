@@ -45,8 +45,8 @@ func (s *Service) CreateAndResolve(ctx context.Context, addName, dropName string
 	}
 	addName = strings.TrimSpace(addName)
 	dropName = strings.TrimSpace(dropName)
-	if addName == "" || dropName == "" {
-		return nil, fmt.Errorf("--add and --drop are required")
+	if addName == "" {
+		return nil, fmt.Errorf("--add is required")
 	}
 	id, err := s.repo.Create(ctx, adhocrepo.CreateInput{
 		RequestedAddPlayerName:  addName,
@@ -97,7 +97,8 @@ func (s *Service) EnsureExecutionCandidate(ctx context.Context, requestID int64)
 	if req.LinkedPlanItemID != nil {
 		return req, *req.LinkedPlanItemID, nil
 	}
-	if req.ResolvedAddESPNPlayerID == nil || req.ResolvedDropESPNPlayerID == nil {
+	addOnly := strings.TrimSpace(req.RequestedDropPlayerName) == ""
+	if req.ResolvedAddESPNPlayerID == nil || (!addOnly && req.ResolvedDropESPNPlayerID == nil) {
 		return req, 0, fmt.Errorf("ad hoc request %d missing resolved player IDs", requestID)
 	}
 
@@ -106,7 +107,7 @@ func (s *Service) EnsureExecutionCandidate(ctx context.Context, requestID int64)
 		WindowEnd:   "adhoc",
 		Status:      "success",
 		Summary: map[string]interface{}{
-			"source": "ad_hoc",
+			"source":     "ad_hoc",
 			"request_id": requestID,
 		},
 		Items: []transactions.PlanItem{{
@@ -115,7 +116,11 @@ func (s *Service) EnsureExecutionCandidate(ctx context.Context, requestID int64)
 			AddESPNPlayerID:  req.ResolvedAddESPNPlayerID,
 			DropPlayerName:   req.ResolvedDropPlayerName,
 			DropESPNPlayerID: req.ResolvedDropESPNPlayerID,
-			Flags:            []string{"ad_hoc_request"},
+			Flags:            adHocFlags(addOnly),
+			Details: map[string]interface{}{
+				"action_type": actionType(addOnly),
+				"add_only":    addOnly,
+			},
 		}},
 	})
 	if err != nil {
@@ -219,25 +224,28 @@ func (s *Service) resolve(ctx context.Context, requestID int64) (*transactions.A
 		}{Name: c.PlayerName, ID: c.ESPNPlayerID, Role: c.Role})
 	}
 
+	dropRequired := strings.TrimSpace(req.RequestedDropPlayerName) != ""
 	dropMatches := make([]struct {
 		Name string
 		ID   *int64
 		Role string
 	}, 0)
 	dropNonPitcherFound := false
-	for _, r := range roster {
-		if matching.NormalizeName(r.PlayerName) != req.NormalizedDropLookup {
-			continue
+	if dropRequired {
+		for _, r := range roster {
+			if matching.NormalizeName(r.PlayerName) != req.NormalizedDropLookup {
+				continue
+			}
+			if s.cfg.RequirePitchersOnly && !r.IsPitcher {
+				dropNonPitcherFound = true
+				continue
+			}
+			dropMatches = append(dropMatches, struct {
+				Name string
+				ID   *int64
+				Role string
+			}{Name: r.PlayerName, ID: r.ESPNPlayerID, Role: r.Role})
 		}
-		if s.cfg.RequirePitchersOnly && !r.IsPitcher {
-			dropNonPitcherFound = true
-			continue
-		}
-		dropMatches = append(dropMatches, struct {
-			Name string
-			ID   *int64
-			Role string
-		}{Name: r.PlayerName, ID: r.ESPNPlayerID, Role: r.Role})
 	}
 
 	state := transactions.AdHocStateResolved
@@ -263,25 +271,27 @@ func (s *Service) resolve(ctx context.Context, requestID int64) (*transactions.A
 		addIDResolved = addMatches[0].ID
 	}
 
-	if len(dropMatches) == 0 {
-		resolution = transactions.AdHocResolutionUnresolved
-		state = transactions.AdHocStateUnresolved
-		if dropNonPitcherFound {
-			resolution = transactions.AdHocResolutionInvalidType
-			notes["drop"] = "drop target is not a pitcher"
+	if dropRequired {
+		if len(dropMatches) == 0 {
+			resolution = transactions.AdHocResolutionUnresolved
+			state = transactions.AdHocStateUnresolved
+			if dropNonPitcherFound {
+				resolution = transactions.AdHocResolutionInvalidType
+				notes["drop"] = "drop target is not a pitcher"
+			} else {
+				notes["drop"] = "no matching rostered pitcher found"
+			}
+		} else if len(dropMatches) > 1 {
+			resolution = transactions.AdHocResolutionAmbiguous
+			state = transactions.AdHocStateUnresolved
+			notes["drop"] = "ambiguous drop target; multiple roster matches"
 		} else {
-			notes["drop"] = "no matching rostered pitcher found"
+			dropNameResolved = dropMatches[0].Name
+			dropIDResolved = dropMatches[0].ID
 		}
-	} else if len(dropMatches) > 1 {
-		resolution = transactions.AdHocResolutionAmbiguous
-		state = transactions.AdHocStateUnresolved
-		notes["drop"] = "ambiguous drop target; multiple roster matches"
-	} else {
-		dropNameResolved = dropMatches[0].Name
-		dropIDResolved = dropMatches[0].ID
 	}
 
-	if addIDResolved == nil || dropIDResolved == nil {
+	if addIDResolved == nil || (dropRequired && dropIDResolved == nil) {
 		state = transactions.AdHocStateUnresolved
 		if resolution == transactions.AdHocResolutionResolved {
 			resolution = transactions.AdHocResolutionUnresolved
@@ -306,4 +316,18 @@ func (s *Service) resolve(ctx context.Context, requestID int64) (*transactions.A
 	}
 	_ = s.repo.AddEvent(ctx, requestID, event, notes)
 	return s.repo.ByID(ctx, requestID)
+}
+
+func adHocFlags(addOnly bool) []string {
+	if addOnly {
+		return []string{"ad_hoc_request", "ad_hoc_add_only"}
+	}
+	return []string{"ad_hoc_request"}
+}
+
+func actionType(addOnly bool) string {
+	if addOnly {
+		return "add_pitcher"
+	}
+	return "add_drop_pitcher"
 }

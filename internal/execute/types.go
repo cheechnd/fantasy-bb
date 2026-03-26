@@ -134,28 +134,30 @@ type Attempt struct {
 }
 
 type AttemptEvent struct {
-	ID                 int64              `json:"id"`
-	ExecutionAttemptID int64              `json:"execution_attempt_id"`
-	EventType          string             `json:"event_type"`
-	EventData          map[string]any     `json:"event_data,omitempty"`
-	CreatedAt          time.Time          `json:"created_at"`
+	ID                 int64          `json:"id"`
+	ExecutionAttemptID int64          `json:"execution_attempt_id"`
+	EventType          string         `json:"event_type"`
+	EventData          map[string]any `json:"event_data,omitempty"`
+	CreatedAt          time.Time      `json:"created_at"`
 }
 
 type RealExecutionOptions struct {
-	ItemID  int64
-	Confirm bool
+	ItemID           int64
+	Confirm          bool
+	ScoringPeriodID  *int64
+	EffectiveNextDay bool
 }
 
 type RealExecutionResult struct {
-	Attempt       *Attempt    `json:"attempt,omitempty"`
-	PreflightRun  *Run        `json:"preflight_run,omitempty"`
-	PreflightItem *RunItem    `json:"preflight_item,omitempty"`
-	WillWrite     bool        `json:"will_write"`
-	Message       string      `json:"message"`
+	Attempt       *Attempt `json:"attempt,omitempty"`
+	PreflightRun  *Run     `json:"preflight_run,omitempty"`
+	PreflightItem *RunItem `json:"preflight_item,omitempty"`
+	WillWrite     bool     `json:"will_write"`
+	Message       string   `json:"message"`
 }
 
 type VerifyResult struct {
-	Attempt   *Attempt  `json:"attempt,omitempty"`
-	Inference string    `json:"inference,omitempty"`
-	Message   string    `json:"message"`
+	Attempt   *Attempt `json:"attempt,omitempty"`
+	Inference string   `json:"inference,omitempty"`
+	Message   string   `json:"message"`
 }

@@ -31,12 +31,12 @@ func NewESPNWriter(timeout time.Duration) *ESPNWriter {
 			// Do not auto-follow redirects so we can surface auth/host issues clearly.
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
 		},
-		userAgent:  "fantasy-baseball/fb espn-execution",
+		userAgent: "fantasy-baseball/fb espn-execution",
 	}
 }
 
 func (w *ESPNWriter) ExecuteAddDrop(ctx context.Context, cfg config.Config, req WriteRequest) (WriteResult, error) {
-	if req.AddESPNPlayerID == nil || req.DropESPNPlayerID == nil {
+	if req.AddESPNPlayerID == nil || (!req.AddOnly && req.DropESPNPlayerID == nil) {
 		return WriteResult{}, fmt.Errorf("missing ESPN player IDs for add/drop request")
 	}
 	teamID, err := strconv.ParseInt(strings.TrimSpace(cfg.League.TeamID), 10, 64)
@@ -57,26 +57,39 @@ func (w *ESPNWriter) ExecuteAddDrop(ctx context.Context, cfg config.Config, req 
 	if err != nil {
 		return WriteResult{}, fmt.Errorf("resolve write context metadata: %w", err)
 	}
+	targetScoringPeriodID := meta.ScoringPeriodID
+	// For FREEAGENT add/drop, ESPN requires the current scoring period.
+	// "Next day" behavior is governed by roster/lineup lock timing, not by
+	// incrementing scoringPeriodId.
+	if req.ScoringPeriodID != nil {
+		targetScoringPeriodID = *req.ScoringPeriodID
+	}
+	if targetScoringPeriodID <= 0 {
+		return WriteResult{}, fmt.Errorf("invalid target scoring period id: %d", targetScoringPeriodID)
+	}
 
+	items := []map[string]any{
+		{
+			"type":     "ADD",
+			"playerId": *req.AddESPNPlayerID,
+			"toTeamId": teamID,
+		},
+	}
+	if !req.AddOnly && req.DropESPNPlayerID != nil {
+		items = append(items, map[string]any{
+			"type":       "DROP",
+			"playerId":   *req.DropESPNPlayerID,
+			"fromTeamId": teamID,
+		})
+	}
 	body := map[string]any{
 		"isLeagueManager": meta.IsLeagueManager,
 		"teamId":          teamID,
 		"type":            "FREEAGENT",
 		"memberId":        meta.MemberID,
-		"scoringPeriodId": meta.ScoringPeriodID,
-		"executionType": "EXECUTE",
-		"items": []map[string]any{
-			{
-				"type":     "ADD",
-				"playerId": *req.AddESPNPlayerID,
-				"toTeamId": teamID,
-			},
-			{
-				"type":       "DROP",
-				"playerId":   *req.DropESPNPlayerID,
-				"fromTeamId": teamID,
-			},
-		},
+		"scoringPeriodId": targetScoringPeriodID,
+		"executionType":   "EXECUTE",
+		"items":           items,
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -164,17 +177,75 @@ func (w *ESPNWriter) ExecuteAddDrop(ctx context.Context, cfg config.Config, req 
 	if result.ResponseJSON == nil {
 		return result, fmt.Errorf("espn add/drop response was not valid JSON")
 	}
-	if errMsg := firstString(result.ResponseJSON["error"], result.ResponseJSON["errorMessage"]); errMsg != "" {
-		return result, fmt.Errorf("espn add/drop API error: %s", errMsg)
+	apiErr := extractAPIErrorMessage(result.ResponseJSON)
+	if result.OK && hasExplicitAPIError(result.ResponseJSON) && apiErr != "" {
+		result.ResponseMessage = apiErr
+		return result, fmt.Errorf("espn add/drop API error: %s", apiErr)
 	}
 	if !result.OK {
 		msg := result.ResponseMessage
 		if msg == "" {
+			msg = apiErr
+		}
+		if msg == "" {
 			msg = "non-2xx response"
 		}
+		result.ResponseMessage = msg
 		return result, fmt.Errorf("espn add/drop request failed with status %d: %s", resp.StatusCode, msg)
 	}
 	return result, nil
+}
+
+func extractAPIErrorMessage(payload map[string]any) string {
+	if payload == nil {
+		return ""
+	}
+	if msg := firstString(payload["error"], payload["errorMessage"]); msg != "" {
+		return msg
+	}
+	if msgs, ok := payload["messages"].([]any); ok && len(msgs) > 0 {
+		parts := make([]string, 0, len(msgs))
+		for _, m := range msgs {
+			if s, ok := m.(string); ok && strings.TrimSpace(s) != "" {
+				parts = append(parts, strings.TrimSpace(s))
+			}
+		}
+		if len(parts) > 0 {
+			return strings.Join(parts, "; ")
+		}
+	}
+	if details, ok := payload["details"].([]any); ok && len(details) > 0 {
+		parts := make([]string, 0, len(details))
+		for _, d := range details {
+			m, ok := d.(map[string]any)
+			if !ok {
+				continue
+			}
+			if s := firstString(m["message"], m["shortMessage"], m["reason"]); s != "" {
+				parts = append(parts, s)
+			}
+		}
+		if len(parts) > 0 {
+			return strings.Join(parts, "; ")
+		}
+	}
+	return ""
+}
+
+func hasExplicitAPIError(payload map[string]any) bool {
+	if payload == nil {
+		return false
+	}
+	if strings.TrimSpace(firstString(payload["error"], payload["errorMessage"])) != "" {
+		return true
+	}
+	if msgs, ok := payload["messages"].([]any); ok && len(msgs) > 0 {
+		return true
+	}
+	if details, ok := payload["details"].([]any); ok && len(details) > 0 {
+		return true
+	}
+	return false
 }
 
 func (w *ESPNWriter) resolveWriteBase(ctx context.Context, cfg config.Config, creds config.ESPNCredentials) (string, string, error) {
@@ -292,7 +363,7 @@ func writeBaseCandidates(configuredBase string) []string {
 }
 
 type writeMeta struct {
-	MemberID       string
+	MemberID        string
 	ScoringPeriodID int64
 	IsLeagueManager bool
 }

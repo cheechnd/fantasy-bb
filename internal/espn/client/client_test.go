@@ -53,6 +53,33 @@ func TestFetchLeagueBuildsRequest(t *testing.T) {
 	}
 }
 
+func TestFetchLeagueWithScoringPeriodBuildsRequest(t *testing.T) {
+	var gotURL string
+	c := NewWithHTTPClient(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		gotURL = req.URL.String()
+		return &http.Response{
+			StatusCode: 200,
+			Body:       io.NopCloser(strings.NewReader(`{"settings":{},"teams":[]}`)),
+			Header:     make(http.Header),
+		}, nil
+	}), "fb-test")
+
+	cfg := config.Default()
+	cfg.League.LeagueID = "123"
+	cfg.League.Season = 2026
+	cfg.ESPN.BaseURL = "https://fantasy.espn.com"
+	sp := 7
+	_, err := c.FetchLeagueWithOptions(context.Background(), cfg, config.ESPNCredentials{ESPNS2: "abc", SWID: "xyz"}, LeagueFetchOptions{
+		ScoringPeriodID: &sp,
+	})
+	if err != nil {
+		t.Fatalf("FetchLeagueWithOptions: %v", err)
+	}
+	if !strings.Contains(gotURL, "scoringPeriodId=7") {
+		t.Fatalf("expected scoringPeriodId in URL: %s", gotURL)
+	}
+}
+
 func TestFetchFreeAgentPitchersBuildsRequest(t *testing.T) {
 	var gotURL string
 	var gotFilter string

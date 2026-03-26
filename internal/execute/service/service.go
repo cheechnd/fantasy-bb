@@ -2,8 +2,10 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"fantasy-baseball/internal/espn"
@@ -130,6 +132,10 @@ func (s *Service) generate(ctx context.Context, runType execute.RunType, opts ex
 	if err != nil {
 		return nil, err
 	}
+	latestLeague, err := s.espnRepo.LatestLeague(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
 	latestCandidateRun, err := s.espnRepo.LatestCandidateRun(ctx)
 	if err != nil {
 		return nil, err
@@ -146,7 +152,7 @@ func (s *Service) generate(ctx context.Context, runType execute.RunType, opts ex
 	items := make([]execute.RunItem, 0, len(approved))
 	statusCounts := map[execute.ValidationStatus]int{}
 	for _, row := range approved {
-		item := s.validateItem(ctx, row, runType, roster, latestSync, latestCandidateRun, candidates)
+		item := s.validateItem(ctx, row, runType, roster, latestSync, latestLeague, latestCandidateRun, candidates)
 		items = append(items, item)
 		statusCounts[item.ValidationStatus]++
 	}
@@ -182,12 +188,13 @@ func (s *Service) generate(ctx context.Context, runType execute.RunType, opts ex
 	return s.Show(ctx, runID)
 }
 
-func (s *Service) validateItem(ctx context.Context, q espnQueueRow, runType execute.RunType, roster []espn.RosterSnapshot, latestSync *espn.SyncRun, latestCandidateRun *espn.CandidateRun, candidates []espn.FreeAgentCandidate) execute.RunItem {
+func (s *Service) validateItem(ctx context.Context, q espnQueueRow, runType execute.RunType, roster []espn.RosterSnapshot, latestSync *espn.SyncRun, latestLeague *espn.LeagueSnapshot, latestCandidateRun *espn.CandidateRun, candidates []espn.FreeAgentCandidate) execute.RunItem {
 	reasons := make([]execute.Reason, 0)
 	blocked, conflict, stale, unknown := false, false, false, false
 
 	addKey := matching.NormalizeName(q.AddPlayerName)
 	dropKey := matching.NormalizeName(q.DropPlayerName)
+	addOnly := strings.TrimSpace(q.DropPlayerName) == ""
 
 	plan, _, err := s.tranRepo.PlanByID(ctx, q.PlanID)
 	if err != nil || plan == nil {
@@ -208,13 +215,19 @@ func (s *Service) validateItem(ctx context.Context, q espnQueueRow, runType exec
 				}
 				rosterSet[k]++
 			}
-			if rosterSet[dropKey] == 0 {
+			if !addOnly && rosterSet[dropKey] == 0 {
 				conflict = true
 				reasons = append(reasons, execute.Reason{Code: "drop_target_not_rostered", Message: "drop target is not currently on roster"})
 			}
 			if rosterSet[addKey] > 0 {
 				blocked = true
 				reasons = append(reasons, execute.Reason{Code: "add_target_already_rostered", Message: "add target is already on roster"})
+			}
+			if addOnly {
+				if cap, ok := rosterCapacityFromLeagueSettings(latestLeague); ok && cap > 0 && len(roster) >= cap {
+					blocked = true
+					reasons = append(reasons, execute.Reason{Code: "roster_capacity_full", Message: "no open roster slot available for add-only move"})
+				}
 			}
 		}
 	}
@@ -275,21 +288,25 @@ func (s *Service) validateItem(ctx context.Context, q espnQueueRow, runType exec
 		candidateRunID = &v
 	}
 	preview := execute.ActionPreview{
-		ActionType:              "add_drop_pitcher",
+		ActionType:              actionType(addOnly),
 		ApprovedItemID:          q.TransactionPlanItemID,
 		SourcePlanID:            q.PlanID,
 		AddPlayerName:           q.AddPlayerName,
 		DropPlayerName:          q.DropPlayerName,
 		RosterSyncRunID:         syncRunID,
 		CandidateRunID:          candidateRunID,
-		RosterCheckPassed:       s.cfg.RequireLiveRosterCheck && rosterSet[dropKey] > 0,
+		RosterCheckPassed:       s.cfg.RequireLiveRosterCheck && (addOnly || rosterSet[dropKey] > 0),
 		AvailabilityCheckPassed: s.cfg.RequireLiveAvailabilityCheck && candidateSet[addKey] == 1,
 		AddAlreadyRostered:      rosterSet[addKey] > 0,
 		ExecutionReadiness:      string(status),
 		CheckedAt:               time.Now().UTC().Format(time.RFC3339),
 	}
 	if runType == execute.RunTypeDryRun {
-		preview.ActionType = "dry_run_add_drop_pitcher"
+		if addOnly {
+			preview.ActionType = "dry_run_add_pitcher"
+		} else {
+			preview.ActionType = "dry_run_add_drop_pitcher"
+		}
 	}
 
 	rank := readinessRank(status)
@@ -324,6 +341,48 @@ func deriveStatus(conflict, blocked, unknown, stale bool) execute.ValidationStat
 	default:
 		return execute.StatusExecutable
 	}
+}
+
+func actionType(addOnly bool) string {
+	if addOnly {
+		return "add_pitcher"
+	}
+	return "add_drop_pitcher"
+}
+
+func rosterCapacityFromLeagueSettings(league *espn.LeagueSnapshot) (int, bool) {
+	if league == nil || strings.TrimSpace(league.SettingsJSON) == "" {
+		return 0, false
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(league.SettingsJSON), &raw); err != nil {
+		return 0, false
+	}
+	slotCounts, ok := raw["lineupSlotCounts"].(map[string]any)
+	if !ok || len(slotCounts) == 0 {
+		return 0, false
+	}
+	total := 0
+	for _, v := range slotCounts {
+		switch t := v.(type) {
+		case float64:
+			if t > 0 {
+				total += int(t)
+			}
+		case int:
+			if t > 0 {
+				total += t
+			}
+		case int64:
+			if t > 0 {
+				total += int(t)
+			}
+		}
+	}
+	if total <= 0 {
+		return 0, false
+	}
+	return total, true
 }
 
 func readinessRank(status execute.ValidationStatus) int {
