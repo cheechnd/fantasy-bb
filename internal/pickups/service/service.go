@@ -180,7 +180,7 @@ func (s *Service) resolveSources(ctx context.Context, opts pickups.RecommendOpti
 			return resolved, err
 		}
 		if latestImport == nil {
-			return resolved, fmt.Errorf("no forecaster import found; run `fb forecaster import` first")
+			return resolved, fmt.Errorf("no forecaster import found; run `fb forecaster sync` first")
 		}
 		resolved.importRunID = &latestImport.ID
 	}

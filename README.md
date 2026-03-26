@@ -87,14 +87,14 @@ Validate setup:
 1. Refresh inputs
 ```bash
 ./fb espn sync roster
-./fb forecaster import --url
+./fb forecaster sync --url
 ./fb espn free-agents pitchers --limit 25
 ```
 
 2. Build decision artifacts
 ```bash
 ./fb pitchers plan
-./fb pickups recommend
+./fb pickups plan
 ./fb transactions plan --top 10
 ./fb lineup pitchers plan
 ```
@@ -121,9 +121,9 @@ Validate setup:
 
 5. Verify and monitor
 ```bash
-./fb transactions execution-pending
-./fb transactions execution-verify --execution-id <id>
-./fb transactions execution-reconcile --execution-id <id>
+./fb transactions pending
+./fb transactions verify --execution-id <id>
+./fb transactions reconcile --execution-id <id>
 
 ./fb monitor summary
 ./fb monitor approvals
@@ -139,11 +139,11 @@ Validate setup:
 
 ./fb espn validate
 ./fb espn sync roster
-./fb forecaster import --url
+./fb forecaster sync --url
 ./fb espn free-agents pitchers --limit 25
 
 ./fb pitchers plan --from 2026-09-15 --to 2026-09-24
-./fb pickups recommend --from 2026-09-15 --to 2026-09-24
+./fb pickups plan --from 2026-09-15 --to 2026-09-24
 ./fb transactions plan --from 2026-09-15 --to 2026-09-24 --top 10
 
 ./fb transactions review --plan-id 1
@@ -153,7 +153,7 @@ Validate setup:
 ./fb transactions preflight --item 3
 ./fb transactions run --item 3
 ./fb transactions run --item 3 --confirm
-./fb transactions execution-history --execution-id 1
+./fb transactions history --execution-id 1
 
 ./fb lineup pitchers plan
 ./fb lineup pitchers review --plan-id 1
@@ -217,7 +217,7 @@ Several commands provide focused views without needing separate subcommands:
 
 ```bash
 ./fb pitchers plan --view start-sit
-./fb pickups recommend
+./fb pickups plan
 ./fb transactions plan
 ```
 
@@ -253,23 +253,23 @@ Several commands provide focused views without needing separate subcommands:
 ### “No rows found” or unmatched players
 - Confirm date window has probable starts:
 ```bash
-./fb forecaster list --from YYYY-MM-DD --to YYYY-MM-DD --include-tbd
+./fb forecaster show starts --from YYYY-MM-DD --to YYYY-MM-DD --include-tbd
 ```
 - Re-import forecaster source and rerun planning.
 
 ### Execution blocked
 - Check queue/preflight details:
 ```bash
-./fb transactions execution-queue
+./fb transactions readiness
 ./fb transactions preflight --item <id>
 ```
 - Re-run planning/approval if add is unavailable or drop is no longer rostered.
 
 ### Unresolved execution attempts
 ```bash
-./fb transactions execution-pending
-./fb transactions execution-verify --execution-id <id>
-./fb transactions execution-reconcile --execution-id <id>
+./fb transactions pending
+./fb transactions verify --execution-id <id>
+./fb transactions reconcile --execution-id <id>
 ```
 
 ### Overall readiness
@@ -287,12 +287,12 @@ Examples:
 ```bash
 ./fb doctor --json
 ./fb monitor summary --json
-./fb transactions execution-history --execution-id 8 --json
+./fb transactions history --execution-id 8 --json
 ./fb lineup pitchers queue --json
 ```
 
-## Backward Compatibility Notes
+## Operator Notes
 
-- `fb healthcheck` is retained as a basic legacy check command.
-- `fb doctor` is the preferred v1 operator readiness command.
-- Existing workflow focuses on `fb transactions run` and `fb lineup pitchers run` for real writes.
+- `fb doctor` is the main readiness command.
+- `fb healthcheck` remains a minimal config/db check.
+- Real writes are explicit via `fb transactions run` and `fb lineup pitchers run`.

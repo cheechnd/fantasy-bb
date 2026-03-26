@@ -232,7 +232,7 @@ func (s *Service) windowedStarts(ctx context.Context, opts pitchers.AnalysisOpti
 			return nil, nil, err
 		}
 		if latest == nil {
-			return nil, nil, fmt.Errorf("no forecaster import found; run `fb forecaster import` first")
+			return nil, nil, fmt.Errorf("no forecaster import found; run `fb forecaster sync` first")
 		}
 		importRunID = &latest.ID
 	}

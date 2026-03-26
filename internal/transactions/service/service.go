@@ -459,7 +459,7 @@ func (s *Service) generatePitcherPlanFromSources(ctx context.Context, opts trans
 		return nil, fmt.Errorf("no ESPN sync found; run `fb espn sync roster` first")
 	}
 	if importRunID == nil {
-		return nil, fmt.Errorf("no forecaster import found; run `fb forecaster import` first")
+		return nil, fmt.Errorf("no forecaster import found; run `fb forecaster sync` first")
 	}
 	rosterRows, err := s.espnRepo.LatestRoster(ctx, syncRunID, true)
 	if err != nil {
@@ -530,7 +530,7 @@ func (s *Service) generatePickupRecommendationsFromSources(ctx context.Context, 
 		return nil, nil, fmt.Errorf("no ESPN sync found; run `fb espn sync roster` first")
 	}
 	if importRunID == nil {
-		return nil, nil, fmt.Errorf("no forecaster import found; run `fb forecaster import` first")
+		return nil, nil, fmt.Errorf("no forecaster import found; run `fb forecaster sync` first")
 	}
 	pickSvc := picksvccfg.New(s.foreRepo, s.espnRepo, s.pickRepo, s.pitchSvc, picksvccfg.Config{
 		MinStreamerTotalFPTS:     s.cfg.PickupMinStreamerTotalFPTS,

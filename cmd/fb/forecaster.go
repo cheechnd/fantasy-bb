@@ -78,7 +78,7 @@ func runForecasterImport(cmd *cobra.Command, opts *cliOptions, filePath, sourceU
 	if opts.OutputJSON {
 		return writeJSON(cmd, map[string]any{
 			"ok":      true,
-			"command": "forecaster import",
+			"command": "forecaster sync",
 			"summary": summary,
 		})
 	}
@@ -99,24 +99,6 @@ func runForecasterImport(cmd *cobra.Command, opts *cliOptions, filePath, sourceU
 		}
 	}
 	return nil
-}
-
-func newForecasterImportCmd(opts *cliOptions) *cobra.Command {
-	var filePath string
-	var sourceURL string
-
-	cmd := &cobra.Command{
-		Use:   "import",
-		Short: "Import a forecaster HTML source",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runForecasterImport(cmd, opts, filePath, sourceURL)
-		},
-	}
-
-	cmd.Flags().StringVar(&filePath, "file", "", "Path to local HTML file")
-	cmd.Flags().StringVar(&sourceURL, "url", "", "Source URL for forecaster HTML (optional value; defaults to ESPN forecaster URL when --url is provided without a value)")
-	cmd.Flags().Lookup("url").NoOptDefVal = defaultForecasterURL
-	return cmd
 }
 
 func newForecasterSyncCmd(opts *cliOptions) *cobra.Command {

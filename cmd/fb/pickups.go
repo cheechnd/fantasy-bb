@@ -25,7 +25,7 @@ func newPickupsCmd(opts *cliOptions) *cobra.Command {
 		&cobra.Group{ID: "generate", Title: "Generate"},
 		&cobra.Group{ID: "inspect", Title: "Inspection"},
 	)
-	recommendCmd := newPickupsRecommendCmd(opts)
+	recommendCmd := newPickupsPlanCmd(opts)
 	recommendCmd.GroupID = "generate"
 	lastCmd := newPickupsLastCmd(opts)
 	lastCmd.GroupID = "inspect"
@@ -33,13 +33,13 @@ func newPickupsCmd(opts *cliOptions) *cobra.Command {
 	return cmd
 }
 
-func newPickupsRecommendCmd(opts *cliOptions) *cobra.Command {
+func newPickupsPlanCmd(opts *cliOptions) *cobra.Command {
 	var fromRaw, toRaw string
 	var topN int
 	var syncRunID, importRunID, candidateRunID int64
 	cmd := &cobra.Command{
-		Use:   "recommend",
-		Short: "Generate pickup recommendation report",
+		Use:   "plan",
+		Short: "Generate pickup plan report",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			v, err := withPickupsService(cmd.Context(), opts, func(ctx context.Context, svc *picksvc.Service) (any, error) {
 				opts2, err := buildPickupOptions(cmd, fromRaw, toRaw, topN, &syncRunID, &importRunID, &candidateRunID)

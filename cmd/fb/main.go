@@ -390,7 +390,7 @@ func newHealthcheckCmd(opts *cliOptions) *cobra.Command {
 	return &cobra.Command{
 		Use:     "healthcheck",
 		Aliases: []string{"hc"},
-		Short:   "Basic config/database checks (legacy alias; use `fb doctor`)",
+		Short:   "Basic config/database checks",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 8*time.Second)
 			defer cancel()
@@ -567,9 +567,9 @@ func newDoctorCmd(opts *cliOptions) *cobra.Command {
 
 			importID, _, err := monRepo.LatestImportRun(ctx)
 			if err != nil {
-				appendCheck("forecaster.import", "warn", err.Error(), "run `fb forecaster import --file ...`")
+				appendCheck("forecaster.import", "warn", err.Error(), "run `fb forecaster sync --file ...`")
 			} else if importID == 0 {
-				appendCheck("forecaster.import", "warn", "no forecaster import run found", "run `fb forecaster import --file ...`")
+				appendCheck("forecaster.import", "warn", "no forecaster import run found", "run `fb forecaster sync --file ...`")
 			} else {
 				appendCheck("forecaster.import", "ok", fmt.Sprintf("latest import run: %d", importID), "")
 			}
@@ -581,9 +581,9 @@ func newDoctorCmd(opts *cliOptions) *cobra.Command {
 			} else {
 				txPending, err := monRepo.PendingExecutions(ctx, 200)
 				if err != nil {
-					appendCheck("execution.unresolved_transactions", "warn", err.Error(), "run `fb transactions execution-pending`")
+					appendCheck("execution.unresolved_transactions", "warn", err.Error(), "run `fb transactions pending`")
 				} else if len(txPending) > 0 {
-					appendCheck("execution.unresolved_transactions", "warn", fmt.Sprintf("%d unresolved transaction execution attempt(s)", len(txPending)), "run `fb transactions execution-pending`")
+					appendCheck("execution.unresolved_transactions", "warn", fmt.Sprintf("%d unresolved transaction execution attempt(s)", len(txPending)), "run `fb transactions pending`")
 				} else {
 					appendCheck("execution.unresolved_transactions", "ok", "no unresolved transaction execution attempts", "")
 				}

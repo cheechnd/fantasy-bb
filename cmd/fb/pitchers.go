@@ -38,7 +38,7 @@ func newPitchersCmd(opts *cliOptions) *cobra.Command {
 	lastReportCmd.GroupID = "inspect"
 	planCmd := newPitchersPlanCmd(opts)
 	planCmd.GroupID = "planning"
-	planLastCmd := newPitchersPlanLastCmd(opts)
+	planLastCmd := newPitchersLastCmd(opts)
 	planLastCmd.GroupID = "inspect"
 	cmd.AddCommand(analyzeCmd, reportCmd, explainMatchesCmd, lastReportCmd, planCmd, planLastCmd)
 	return cmd
@@ -263,11 +263,11 @@ func newPitchersPlanCmd(opts *cliOptions) *cobra.Command {
 	return cmd
 }
 
-func newPitchersPlanLastCmd(opts *cliOptions) *cobra.Command {
+func newPitchersLastCmd(opts *cliOptions) *cobra.Command {
 	var planID int64
 	var view string
 	cmd := &cobra.Command{
-		Use:   "plan-last",
+		Use:   "last",
 		Short: "Show saved pitcher plan (latest by default)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			view = strings.ToLower(strings.TrimSpace(view))
