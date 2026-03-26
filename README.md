@@ -9,11 +9,10 @@ It keeps your workflow in SQLite, uses deterministic rules, and gates write acti
 ### Included
 - Forecaster probable-start ingestion + normalization
 - ESPN roster/league sync (read + bounded candidate ingestion)
-- Pitcher analysis, planning, and pickup recommendations
+- Pitcher planning and pickup recommendations
 - Transaction planning
 - Single-item transaction execution with hard preflight + verification
 - Pitcher lineup planning + single-item lineup execution
-- Monitoring for stale/blocked/invalidated artifacts
 - Operator diagnostics via `fb doctor`
 
 ### Write capabilities in v1
@@ -74,10 +73,10 @@ Validate setup:
 
 - `fb forecaster` - probable-start source ingestion and inspection
 - `fb espn` - roster/league/candidate ingestion and source inspection
-- `fb pitchers` - analysis and weekly pitcher plan
+- `fb pitchers` - weekly pitcher planning
 - `fb pickups` - free-agent pickup recommendations
 - `fb transactions` - transaction planning and analysis
-- `fb lineup pitchers` - lineup planning and analysis
+- `fb lineup` - lineup planning and analysis
 - `fb execute` - transaction/lineup execution operations
 - `fb doctor` - operator readiness checks
 
@@ -87,7 +86,8 @@ Validate setup:
 ```bash
 ./fb espn sync roster
 ./fb forecaster sync --url
-./fb espn free-agents pitchers --limit 25
+./fb espn sync free-agents pitchers --limit 25
+./fb espn status
 ```
 
 2. Build decision artifacts
@@ -95,16 +95,10 @@ Validate setup:
 ./fb pitchers plan
 ./fb pickups plan
 ./fb transactions plan --top 10
-./fb lineup pitchers plan
+./fb lineup plan
 ```
 
-3. Build planning artifacts
-```bash
-./fb transactions plan --top 10
-./fb lineup pitchers plan
-```
-
-4. Execute one item at a time (direct ops path)
+3. Execute one item at a time (direct ops path)
 ```bash
 ./fb execute transaction --add "Aaron Nola" --drop "Shota Imanaga"
 ./fb execute transaction --add "Aaron Nola" --drop "Shota Imanaga" --confirm
@@ -113,7 +107,7 @@ Validate setup:
 ./fb execute lineup --player "Kris Bubic" --to-slot P --confirm
 ```
 
-5. Verify and inspect
+4. Verify and inspect
 ```bash
 ./fb execute pending
 ./fb execute verify --execution-id <id>
@@ -129,12 +123,13 @@ Validate setup:
 ./fb espn validate
 ./fb espn sync roster
 ./fb forecaster sync --url
-./fb espn free-agents pitchers --limit 25
+./fb espn sync free-agents pitchers --limit 25
+./fb espn status
 
 ./fb pitchers plan --from 2026-09-15 --to 2026-09-24
 ./fb pickups plan --from 2026-09-15 --to 2026-09-24
 ./fb transactions plan --from 2026-09-15 --to 2026-09-24 --top 10
-./fb lineup pitchers plan
+./fb lineup plan
 
 ./fb execute transaction --add "Aaron Nola" --drop "Shota Imanaga"
 ./fb execute transaction --add "Aaron Nola" --drop "Shota Imanaga" --confirm
@@ -184,9 +179,6 @@ Several commands provide focused views without needing separate subcommands:
 
 ## Status Vocabulary
 
-### Review state
-- `pending`, `approved`, `rejected`, `deferred`
-
 ### Preflight status
 - `executable`, `blocked`, `stale`, `conflict`, `unknown`
 
@@ -195,9 +187,6 @@ Several commands provide focused views without needing separate subcommands:
 
 ### Verification status
 - `verified`, `verification_pending`, `unverified`, `verification_failed`, `unknown`
-
-### Monitoring status
-- `fresh`, `stale`, `blocked`, `invalidated`, `unknown`
 
 ## Safety Model
 

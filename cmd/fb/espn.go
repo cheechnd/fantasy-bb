@@ -27,15 +27,13 @@ func newESPNCmd(opts *cliOptions) *cobra.Command {
 	validateCmd.GroupID = "checks"
 	syncCmd := newESPNSyncCmd(opts)
 	syncCmd.GroupID = "ingest"
-	freeAgentsCmd := newESPNFreeAgentsCmd(opts)
-	freeAgentsCmd.GroupID = "ingest"
 	showCmd := newESPNShowCmd(opts)
 	showCmd.GroupID = "inspect"
 	statusCmd := newESPNSourceStatusCmd(opts)
 	statusCmd.GroupID = "inspect"
 	warningsCmd := newESPNWarningsCmd(opts)
 	warningsCmd.GroupID = "inspect"
-	cmd.AddCommand(validateCmd, syncCmd, freeAgentsCmd, showCmd, statusCmd, warningsCmd)
+	cmd.AddCommand(validateCmd, syncCmd, showCmd, statusCmd, warningsCmd)
 	return cmd
 }
 
@@ -81,7 +79,9 @@ func newESPNSyncCmd(opts *cliOptions) *cobra.Command {
 	cmd.AddGroup(&cobra.Group{ID: "sync", Title: "Sync Commands"})
 	rosterCmd := newESPNSyncRosterCmd(opts)
 	rosterCmd.GroupID = "sync"
-	cmd.AddCommand(rosterCmd)
+	freeAgentsCmd := newESPNFreeAgentsCmd(opts)
+	freeAgentsCmd.GroupID = "sync"
+	cmd.AddCommand(rosterCmd, freeAgentsCmd)
 	return cmd
 }
 
@@ -324,7 +324,7 @@ func newESPNShowFreeAgentsCmd(opts *cliOptions) *cobra.Command {
 			}
 			run, _ := payload["run"].(*espn.CandidateRun)
 			if run == nil {
-				fmt.Fprintln(cmd.OutOrStdout(), "No ESPN candidate runs found. Run `fb espn free-agents pitchers --limit N` first.")
+				fmt.Fprintln(cmd.OutOrStdout(), "No ESPN candidate runs found. Run `fb espn sync free-agents pitchers --limit N` first.")
 				return nil
 			}
 			rows := payload["rows"].([]espn.FreeAgentCandidate)
@@ -347,7 +347,7 @@ func newESPNSourceStatusCmd(opts *cliOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "status",
 		Aliases: []string{"source-status"},
-		Short:   "Show ESPN sync history and latest status",
+		Short:   "Show ESPN roster sync and free-agent candidate status",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			v, err := withESPNService(cmd.Context(), opts, func(_ context.Context, svc *espnsvc.Service, _ loadedConfig) (any, error) {
 				runs, err := svc.SourceStatus(cmd.Context(), limit)
@@ -358,7 +358,11 @@ func newESPNSourceStatusCmd(opts *cliOptions) *cobra.Command {
 				if err != nil {
 					return nil, err
 				}
-				return map[string]any{"runs": runs, "latest": latest}, nil
+				latestCandidates, err := svc.LatestCandidateRun(cmd.Context())
+				if err != nil {
+					return nil, err
+				}
+				return map[string]any{"runs": runs, "latest": latest, "latest_candidates": latestCandidates}, nil
 			})
 			if err != nil {
 				return err
@@ -371,6 +375,11 @@ func newESPNSourceStatusCmd(opts *cliOptions) *cobra.Command {
 			printESPNSyncRuns(cmd, runs)
 			if latest, ok := payload["latest"].(*espn.SyncRun); ok && latest != nil {
 				fmt.Fprintf(cmd.OutOrStdout(), "\nLatest sync: #%d %s (%s)\n", latest.ID, latest.Status, latest.CompletedAt.Format(time.RFC3339))
+			}
+			if latestCandidates, ok := payload["latest_candidates"].(*espn.CandidateRun); ok && latestCandidates != nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "Latest free-agent candidates: #%d %s (%s) count=%d warnings=%d\n", latestCandidates.ID, latestCandidates.Status, latestCandidates.CompletedAt.Format(time.RFC3339), latestCandidates.CandidateCount, latestCandidates.WarningCount)
+			} else {
+				fmt.Fprintln(cmd.OutOrStdout(), "Latest free-agent candidates: none")
 			}
 			return nil
 		},
