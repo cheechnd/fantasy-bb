@@ -25,7 +25,8 @@ func TestLoadAppliesCurrentTeamFromRegistry(t *testing.T) {
 		Version: 1,
 		Teams: []TeamEntry{
 			{
-				Name: "alpha",
+				Name:  "alpha",
+				Alias: "a",
 				League: LeagueConfig{
 					Platform: "espn",
 					LeagueID: "222",
@@ -58,6 +59,51 @@ func TestLoadAppliesCurrentTeamFromRegistry(t *testing.T) {
 	}
 	if loaded.DBPath != teamDB {
 		t.Fatalf("DBPath = %q, want %q", loaded.DBPath, teamDB)
+	}
+}
+
+func TestLoadAppliesTeamAliasOverride(t *testing.T) {
+	tmp := t.TempDir()
+	cfgPath := filepath.Join(tmp, "config.json")
+	cfg := Default()
+	cfg.AppDir = tmp
+	cfg.DBPath = filepath.Join(tmp, "legacy.db")
+	cfg.League.LeagueID = "111"
+	cfg.League.TeamID = "1"
+	cfg.League.Season = 2026
+	if err := SaveDefault(cfgPath, cfg); err != nil {
+		t.Fatalf("SaveDefault: %v", err)
+	}
+
+	reg := TeamRegistry{
+		Version: 1,
+		Teams: []TeamEntry{
+			{
+				Name:  "alpha",
+				Alias: "a",
+				League: LeagueConfig{
+					Platform: "espn",
+					LeagueID: "222",
+					TeamID:   "8",
+					Season:   2027,
+				},
+				DBPath: filepath.Join(tmp, "alpha.db"),
+			},
+		},
+	}
+	if err := SaveTeamRegistry(filepath.Join(tmp, "teams.json"), reg); err != nil {
+		t.Fatalf("SaveTeamRegistry: %v", err)
+	}
+
+	loaded, _, err := Load(Overrides{ConfigPath: cfgPath, AppDir: tmp, Team: "a"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.ActiveTeam != "alpha" {
+		t.Fatalf("ActiveTeam = %q, want alpha", loaded.ActiveTeam)
+	}
+	if loaded.League.LeagueID != "222" || loaded.League.TeamID != "8" {
+		t.Fatalf("loaded league = %#v, want alias-resolved league", loaded.League)
 	}
 }
 

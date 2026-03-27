@@ -80,13 +80,13 @@ Validate:
 
 ```bash
 # import your existing single-team config as a named team
-./fb team import-legacy my-main-team --set-current
+./fb team import-legacy my-main-team --alias main --set-current
 
 # add a second team
-./fb team add second-team --league-id 123 --team-id 4 --season 2026
+./fb team add second-team --alias alt --league-id 123 --team-id 4 --season 2026
 
 # switch context
-./fb team use second-team
+./fb team use alt
 ./fb team current
 ./fb team list
 ```
@@ -101,11 +101,15 @@ You can always override context per command:
 Shell/OpenClaw-friendly export:
 
 ```bash
-eval "$(./fb team env second-team)"
+eval "$(./fb team env alt)"
 ```
 
 This sets:
 - `FB_TEAM`
+
+Team references (`--team` and team subcommands) accept either:
+- full team name
+- alias
 
 ## Command Model
 

@@ -17,6 +17,7 @@ func newTeamCmd(opts *cliOptions) *cobra.Command {
 	cmd := &cobra.Command{Use: "team", Short: "Manage multi-team context"}
 	cmd.AddCommand(
 		newTeamAddCmd(opts),
+		newTeamAliasCmd(opts),
 		newTeamImportLegacyCmd(opts),
 		newTeamListCmd(opts),
 		newTeamUseCmd(opts),
@@ -30,7 +31,7 @@ func newTeamCmd(opts *cliOptions) *cobra.Command {
 }
 
 func newTeamAddCmd(opts *cliOptions) *cobra.Command {
-	var displayName, leagueID, teamID, dbPath string
+	var displayName, alias, leagueID, teamID, dbPath string
 	var season int
 	cmd := &cobra.Command{
 		Use:   "add <name>",
@@ -52,16 +53,23 @@ func newTeamAddCmd(opts *cliOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if config.FindTeam(reg, name) != nil {
-				return fmt.Errorf("team %q already exists", name)
+			if config.TeamNameOrAliasExists(reg, name, "") {
+				return fmt.Errorf("team name %q already exists (name or alias)", name)
 			}
+			alias = strings.TrimSpace(alias)
+			if alias != "" && config.TeamNameOrAliasExists(reg, alias, "") {
+				return fmt.Errorf("team alias %q already exists (name or alias)", alias)
+			}
+
 			finalDBPath := strings.TrimSpace(dbPath)
 			if finalDBPath == "" {
 				finalDBPath = filepath.Join(paths.AppDir, "teams", sanitizeTeamName(name), "fb.db")
 			}
+
 			now := time.Now().UTC()
 			reg.Teams = append(reg.Teams, config.TeamEntry{
 				Name:        name,
+				Alias:       alias,
 				DisplayName: strings.TrimSpace(displayName),
 				League: config.LeagueConfig{
 					Platform: "espn",
@@ -79,6 +87,7 @@ func newTeamAddCmd(opts *cliOptions) *cobra.Command {
 			if err := config.SaveTeamRegistry(paths.TeamsPath, reg); err != nil {
 				return err
 			}
+
 			current, err := config.ReadCurrentTeam(paths.CurrentTeamPath)
 			if err != nil {
 				return err
@@ -88,16 +97,26 @@ func newTeamAddCmd(opts *cliOptions) *cobra.Command {
 					return err
 				}
 			}
+
 			if opts.OutputJSON {
-				return writeJSON(cmd, map[string]any{"ok": true, "name": name, "db_path": finalDBPath})
+				return writeJSON(cmd, map[string]any{
+					"ok":      true,
+					"name":    name,
+					"alias":   alias,
+					"db_path": finalDBPath,
+				})
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Added team: %s\n", name)
+			if alias != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "Alias: %s\n", alias)
+			}
 			fmt.Fprintf(cmd.OutOrStdout(), "League: %s Team: %s Season: %d\n", leagueID, teamID, season)
 			fmt.Fprintf(cmd.OutOrStdout(), "DB: %s\n", finalDBPath)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&displayName, "display-name", "", "Optional display name")
+	cmd.Flags().StringVar(&alias, "alias", "", "Optional team alias (unique across names/aliases)")
 	cmd.Flags().StringVar(&leagueID, "league-id", "", "ESPN league ID")
 	cmd.Flags().StringVar(&teamID, "team-id", "", "ESPN team ID")
 	cmd.Flags().IntVar(&season, "season", 0, "Season year")
@@ -105,7 +124,49 @@ func newTeamAddCmd(opts *cliOptions) *cobra.Command {
 	return cmd
 }
 
+func newTeamAliasCmd(opts *cliOptions) *cobra.Command {
+	return &cobra.Command{
+		Use:   "alias <name-or-alias> <alias>",
+		Short: "Set or update a team's alias",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ref := strings.TrimSpace(args[0])
+			alias := strings.TrimSpace(args[1])
+			if alias == "" {
+				return fmt.Errorf("alias is required")
+			}
+			paths, err := loadTeamPaths(opts)
+			if err != nil {
+				return err
+			}
+			reg, err := config.LoadTeamRegistry(paths.TeamsPath)
+			if err != nil {
+				return err
+			}
+			team := config.FindTeam(reg, ref)
+			if team == nil {
+				return fmt.Errorf("team %q not found", ref)
+			}
+			if config.TeamNameOrAliasExists(reg, alias, team.Name) {
+				return fmt.Errorf("team alias %q already exists (name or alias)", alias)
+			}
+
+			team.Alias = alias
+			team.UpdatedAt = time.Now().UTC()
+			if err := config.SaveTeamRegistry(paths.TeamsPath, reg); err != nil {
+				return err
+			}
+			if opts.OutputJSON {
+				return writeJSON(cmd, map[string]any{"ok": true, "name": team.Name, "alias": alias})
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Team alias set: %s -> %s\n", team.Name, alias)
+			return nil
+		},
+	}
+}
+
 func newTeamImportLegacyCmd(opts *cliOptions) *cobra.Command {
+	var alias string
 	var setCurrent bool
 	cmd := &cobra.Command{
 		Use:   "import-legacy <name>",
@@ -117,7 +178,6 @@ func newTeamImportLegacyCmd(opts *cliOptions) *cobra.Command {
 				return fmt.Errorf("team name is required")
 			}
 
-			// Load config with team override cleared so legacy values are visible.
 			ov := toOverrides(opts)
 			ov.Team = ""
 			cfg, paths, err := config.Load(ov)
@@ -128,13 +188,18 @@ func newTeamImportLegacyCmd(opts *cliOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if config.FindTeam(reg, name) != nil {
-				return fmt.Errorf("team %q already exists", name)
+			if config.TeamNameOrAliasExists(reg, name, "") {
+				return fmt.Errorf("team name %q already exists (name or alias)", name)
+			}
+			alias = strings.TrimSpace(alias)
+			if alias != "" && config.TeamNameOrAliasExists(reg, alias, "") {
+				return fmt.Errorf("team alias %q already exists (name or alias)", alias)
 			}
 
 			now := time.Now().UTC()
 			reg.Teams = append(reg.Teams, config.TeamEntry{
 				Name:      name,
+				Alias:     alias,
 				League:    cfg.League,
 				DBPath:    cfg.DBPath,
 				CreatedAt: now,
@@ -156,6 +221,7 @@ func newTeamImportLegacyCmd(opts *cliOptions) *cobra.Command {
 				return writeJSON(cmd, map[string]any{
 					"ok":          true,
 					"name":        name,
+					"alias":       alias,
 					"set_current": setCurrent,
 					"league_id":   cfg.League.LeagueID,
 					"team_id":     cfg.League.TeamID,
@@ -164,6 +230,9 @@ func newTeamImportLegacyCmd(opts *cliOptions) *cobra.Command {
 				})
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Imported legacy team: %s\n", name)
+			if alias != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "Alias: %s\n", alias)
+			}
 			fmt.Fprintf(cmd.OutOrStdout(), "League: %s Team: %s Season: %d\n", cfg.League.LeagueID, cfg.League.TeamID, cfg.League.Season)
 			fmt.Fprintf(cmd.OutOrStdout(), "DB: %s\n", cfg.DBPath)
 			if setCurrent {
@@ -172,6 +241,7 @@ func newTeamImportLegacyCmd(opts *cliOptions) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&alias, "alias", "", "Optional team alias (unique across names/aliases)")
 	cmd.Flags().BoolVar(&setCurrent, "set-current", true, "Set imported team as current")
 	return cmd
 }
@@ -205,7 +275,11 @@ func newTeamListCmd(opts *cliOptions) *cobra.Command {
 				if strings.EqualFold(strings.TrimSpace(current), strings.TrimSpace(t.Name)) {
 					marker = "*"
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%s %s (%s/%s %d)\n", marker, t.Name, t.League.LeagueID, t.League.TeamID, t.League.Season)
+				if strings.TrimSpace(t.Alias) != "" {
+					fmt.Fprintf(cmd.OutOrStdout(), "%s %s [%s] (%s/%s %d)\n", marker, t.Name, t.Alias, t.League.LeagueID, t.League.TeamID, t.League.Season)
+				} else {
+					fmt.Fprintf(cmd.OutOrStdout(), "%s %s (%s/%s %d)\n", marker, t.Name, t.League.LeagueID, t.League.TeamID, t.League.Season)
+				}
 			}
 			return nil
 		},
@@ -214,7 +288,7 @@ func newTeamListCmd(opts *cliOptions) *cobra.Command {
 
 func newTeamEnvCmd(opts *cliOptions) *cobra.Command {
 	return &cobra.Command{
-		Use:   "env [name]",
+		Use:   "env [name-or-alias]",
 		Short: "Print shell exports for team context",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -226,34 +300,34 @@ func newTeamEnvCmd(opts *cliOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			name := ""
+			ref := ""
 			if len(args) > 0 {
-				name = strings.TrimSpace(args[0])
+				ref = strings.TrimSpace(args[0])
 			}
-			if name == "" {
+			if ref == "" {
 				current, err := config.ReadCurrentTeam(paths.CurrentTeamPath)
 				if err != nil {
 					return err
 				}
-				name = strings.TrimSpace(current)
+				ref = strings.TrimSpace(current)
 			}
-			if name == "" {
+			if ref == "" {
 				return fmt.Errorf("no team provided and no current team set")
 			}
-			team := config.FindTeam(reg, name)
+			team := config.FindTeam(reg, ref)
 			if team == nil {
-				return fmt.Errorf("team %q not found", name)
+				return fmt.Errorf("team %q not found", ref)
 			}
 
 			if opts.OutputJSON {
 				return writeJSON(cmd, map[string]any{
-					"team": name,
+					"team": team.Name,
 					"exports": map[string]string{
-						"FB_TEAM": name,
+						"FB_TEAM": team.Name,
 					},
 				})
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "export FB_TEAM=%q\n", name)
+			fmt.Fprintf(cmd.OutOrStdout(), "export FB_TEAM=%q\n", team.Name)
 			return nil
 		},
 	}
@@ -261,11 +335,11 @@ func newTeamEnvCmd(opts *cliOptions) *cobra.Command {
 
 func newTeamUseCmd(opts *cliOptions) *cobra.Command {
 	return &cobra.Command{
-		Use:   "use <name>",
+		Use:   "use <name-or-alias>",
 		Short: "Set current team context",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name := strings.TrimSpace(args[0])
+			ref := strings.TrimSpace(args[0])
 			paths, err := loadTeamPaths(opts)
 			if err != nil {
 				return err
@@ -274,16 +348,17 @@ func newTeamUseCmd(opts *cliOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if config.FindTeam(reg, name) == nil {
-				return fmt.Errorf("team %q not found", name)
+			team := config.FindTeam(reg, ref)
+			if team == nil {
+				return fmt.Errorf("team %q not found", ref)
 			}
-			if err := config.WriteCurrentTeam(paths.CurrentTeamPath, name); err != nil {
+			if err := config.WriteCurrentTeam(paths.CurrentTeamPath, team.Name); err != nil {
 				return err
 			}
 			if opts.OutputJSON {
-				return writeJSON(cmd, map[string]any{"ok": true, "current": name})
+				return writeJSON(cmd, map[string]any{"ok": true, "current": team.Name, "alias": team.Alias})
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Current team: %s\n", name)
+			fmt.Fprintf(cmd.OutOrStdout(), "Current team: %s\n", team.Name)
 			return nil
 		},
 	}
@@ -298,18 +373,36 @@ func newTeamCurrentCmd(opts *cliOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			reg, err := config.LoadTeamRegistry(paths.TeamsPath)
+			if err != nil {
+				return err
+			}
 			current, err := config.ReadCurrentTeam(paths.CurrentTeamPath)
 			if err != nil {
 				return err
 			}
+			trimmed := strings.TrimSpace(current)
+			team := config.FindTeam(reg, trimmed)
+
 			if opts.OutputJSON {
-				return writeJSON(cmd, map[string]any{"current": strings.TrimSpace(current)})
+				if team == nil {
+					return writeJSON(cmd, map[string]any{"current": trimmed})
+				}
+				return writeJSON(cmd, map[string]any{"current": team.Name, "alias": team.Alias})
 			}
-			if strings.TrimSpace(current) == "" {
+			if trimmed == "" {
 				fmt.Fprintln(cmd.OutOrStdout(), "No current team set.")
 				return nil
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Current team: %s\n", current)
+			if team == nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "Current team: %s\n", trimmed)
+				return nil
+			}
+			if strings.TrimSpace(team.Alias) != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "Current team: %s [%s]\n", team.Name, team.Alias)
+				return nil
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Current team: %s\n", team.Name)
 			return nil
 		},
 	}
@@ -317,11 +410,11 @@ func newTeamCurrentCmd(opts *cliOptions) *cobra.Command {
 
 func newTeamShowCmd(opts *cliOptions) *cobra.Command {
 	return &cobra.Command{
-		Use:   "show <name>",
+		Use:   "show <name-or-alias>",
 		Short: "Show one team definition",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name := strings.TrimSpace(args[0])
+			ref := strings.TrimSpace(args[0])
 			paths, err := loadTeamPaths(opts)
 			if err != nil {
 				return err
@@ -330,14 +423,15 @@ func newTeamShowCmd(opts *cliOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			team := config.FindTeam(reg, name)
+			team := config.FindTeam(reg, ref)
 			if team == nil {
-				return fmt.Errorf("team %q not found", name)
+				return fmt.Errorf("team %q not found", ref)
 			}
 			if opts.OutputJSON {
 				return writeJSON(cmd, map[string]any{"team": team})
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Name: %s\n", team.Name)
+			fmt.Fprintf(cmd.OutOrStdout(), "Alias: %s\n", firstNonEmpty(team.Alias, "-"))
 			fmt.Fprintf(cmd.OutOrStdout(), "Display: %s\n", firstNonEmpty(team.DisplayName, "-"))
 			fmt.Fprintf(cmd.OutOrStdout(), "League: %s Team: %s Season: %d\n", team.League.LeagueID, team.League.TeamID, team.League.Season)
 			fmt.Fprintf(cmd.OutOrStdout(), "DB: %s\n", team.DBPath)
@@ -349,11 +443,11 @@ func newTeamShowCmd(opts *cliOptions) *cobra.Command {
 func newTeamRemoveCmd(opts *cliOptions) *cobra.Command {
 	var deleteDB bool
 	cmd := &cobra.Command{
-		Use:   "remove <name>",
+		Use:   "remove <name-or-alias>",
 		Short: "Remove a team context",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name := strings.TrimSpace(args[0])
+			ref := strings.TrimSpace(args[0])
 			paths, err := loadTeamPaths(opts)
 			if err != nil {
 				return err
@@ -362,11 +456,16 @@ func newTeamRemoveCmd(opts *cliOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			target := config.FindTeam(reg, ref)
+			if target == nil {
+				return fmt.Errorf("team %q not found", ref)
+			}
+
 			out := make([]config.TeamEntry, 0, len(reg.Teams))
 			var removed *config.TeamEntry
 			for i := range reg.Teams {
 				t := reg.Teams[i]
-				if strings.EqualFold(t.Name, name) {
+				if strings.EqualFold(t.Name, target.Name) {
 					copy := t
 					removed = &copy
 					continue
@@ -374,20 +473,22 @@ func newTeamRemoveCmd(opts *cliOptions) *cobra.Command {
 				out = append(out, t)
 			}
 			if removed == nil {
-				return fmt.Errorf("team %q not found", name)
+				return fmt.Errorf("team %q not found", ref)
 			}
 			reg.Teams = out
 			if err := config.SaveTeamRegistry(paths.TeamsPath, reg); err != nil {
 				return err
 			}
+
 			current, _ := config.ReadCurrentTeam(paths.CurrentTeamPath)
-			if strings.EqualFold(strings.TrimSpace(current), strings.TrimSpace(name)) {
+			if strings.EqualFold(strings.TrimSpace(current), strings.TrimSpace(removed.Name)) {
 				if len(reg.Teams) > 0 {
 					_ = config.WriteCurrentTeam(paths.CurrentTeamPath, reg.Teams[0].Name)
 				} else {
 					_ = config.ClearCurrentTeam(paths.CurrentTeamPath)
 				}
 			}
+
 			if deleteDB {
 				dbPath, err := config.ExpandPath(removed.DBPath)
 				if err == nil && dbPath != "" {
@@ -407,13 +508,13 @@ func newTeamRemoveCmd(opts *cliOptions) *cobra.Command {
 
 func newTeamRenameCmd(opts *cliOptions) *cobra.Command {
 	return &cobra.Command{
-		Use:   "rename <old> <new>",
+		Use:   "rename <old-name-or-alias> <new-name>",
 		Short: "Rename a team context",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			oldName := strings.TrimSpace(args[0])
+			oldRef := strings.TrimSpace(args[0])
 			newName := strings.TrimSpace(args[1])
-			if oldName == "" || newName == "" {
+			if oldRef == "" || newName == "" {
 				return fmt.Errorf("both old and new names are required")
 			}
 			paths, err := loadTeamPaths(opts)
@@ -424,12 +525,16 @@ func newTeamRenameCmd(opts *cliOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if config.FindTeam(reg, newName) != nil {
+			oldTeam := config.FindTeam(reg, oldRef)
+			if oldTeam == nil {
+				return fmt.Errorf("team %q not found", oldRef)
+			}
+			if config.TeamNameOrAliasExists(reg, newName, oldTeam.Name) {
 				return fmt.Errorf("team %q already exists", newName)
 			}
 			var found bool
 			for i := range reg.Teams {
-				if strings.EqualFold(reg.Teams[i].Name, oldName) {
+				if strings.EqualFold(reg.Teams[i].Name, oldTeam.Name) {
 					reg.Teams[i].Name = newName
 					reg.Teams[i].UpdatedAt = time.Now().UTC()
 					found = true
@@ -437,19 +542,19 @@ func newTeamRenameCmd(opts *cliOptions) *cobra.Command {
 				}
 			}
 			if !found {
-				return fmt.Errorf("team %q not found", oldName)
+				return fmt.Errorf("team %q not found", oldRef)
 			}
 			if err := config.SaveTeamRegistry(paths.TeamsPath, reg); err != nil {
 				return err
 			}
 			current, _ := config.ReadCurrentTeam(paths.CurrentTeamPath)
-			if strings.EqualFold(strings.TrimSpace(current), oldName) {
+			if strings.EqualFold(strings.TrimSpace(current), oldTeam.Name) {
 				_ = config.WriteCurrentTeam(paths.CurrentTeamPath, newName)
 			}
 			if opts.OutputJSON {
-				return writeJSON(cmd, map[string]any{"ok": true, "old": oldName, "new": newName})
+				return writeJSON(cmd, map[string]any{"ok": true, "old": oldTeam.Name, "new": newName})
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Renamed team: %s -> %s\n", oldName, newName)
+			fmt.Fprintf(cmd.OutOrStdout(), "Renamed team: %s -> %s\n", oldTeam.Name, newName)
 			return nil
 		},
 	}

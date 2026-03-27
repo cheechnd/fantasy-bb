@@ -17,6 +17,7 @@ type TeamRegistry struct {
 
 type TeamEntry struct {
 	Name        string       `json:"name"`
+	Alias       string       `json:"alias,omitempty"`
 	DisplayName string       `json:"display_name,omitempty"`
 	League      LeagueConfig `json:"league"`
 	DBPath      string       `json:"db_path"`
@@ -98,11 +99,32 @@ func FindTeam(reg TeamRegistry, name string) *TeamEntry {
 		return nil
 	}
 	for i := range reg.Teams {
-		if strings.EqualFold(strings.TrimSpace(reg.Teams[i].Name), key) {
+		n := strings.ToLower(strings.TrimSpace(reg.Teams[i].Name))
+		a := strings.ToLower(strings.TrimSpace(reg.Teams[i].Alias))
+		if n == key || (a != "" && a == key) {
 			return &reg.Teams[i]
 		}
 	}
 	return nil
+}
+
+func TeamNameOrAliasExists(reg TeamRegistry, value string, skipName string) bool {
+	key := strings.ToLower(strings.TrimSpace(value))
+	skip := strings.ToLower(strings.TrimSpace(skipName))
+	if key == "" {
+		return false
+	}
+	for i := range reg.Teams {
+		n := strings.ToLower(strings.TrimSpace(reg.Teams[i].Name))
+		a := strings.ToLower(strings.TrimSpace(reg.Teams[i].Alias))
+		if skip != "" && n == skip {
+			continue
+		}
+		if n == key || (a != "" && a == key) {
+			return true
+		}
+	}
+	return false
 }
 
 func applyTeamContext(cfg Config, paths Paths, overrides Overrides) (Config, error) {
