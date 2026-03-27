@@ -85,6 +85,10 @@ Validate:
 # add a second team
 ./fb team add second-team --alias alt --league-id 123 --team-id 4 --season 2026
 
+# initialize team-local database (recommended right after add)
+./fb --team alt init
+./fb --team alt db migrate
+
 # switch context
 ./fb team use alt
 ./fb team current
@@ -110,6 +114,8 @@ This sets:
 Team references (`--team` and team subcommands) accept either:
 - full team name
 - alias
+
+Note: `fb team add` registers the team entry immediately, but the team DB path is prepared when you run a DB-touching command (for example `./fb --team <alias> init` and `./fb --team <alias> db migrate`).
 
 ## Command Model
 
