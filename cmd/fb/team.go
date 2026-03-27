@@ -17,9 +17,11 @@ func newTeamCmd(opts *cliOptions) *cobra.Command {
 	cmd := &cobra.Command{Use: "team", Short: "Manage multi-team context"}
 	cmd.AddCommand(
 		newTeamAddCmd(opts),
+		newTeamImportLegacyCmd(opts),
 		newTeamListCmd(opts),
 		newTeamUseCmd(opts),
 		newTeamCurrentCmd(opts),
+		newTeamEnvCmd(opts),
 		newTeamShowCmd(opts),
 		newTeamRemoveCmd(opts),
 		newTeamRenameCmd(opts),
@@ -103,6 +105,77 @@ func newTeamAddCmd(opts *cliOptions) *cobra.Command {
 	return cmd
 }
 
+func newTeamImportLegacyCmd(opts *cliOptions) *cobra.Command {
+	var setCurrent bool
+	cmd := &cobra.Command{
+		Use:   "import-legacy <name>",
+		Short: "Import current config league/db as a team entry",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := strings.TrimSpace(args[0])
+			if name == "" {
+				return fmt.Errorf("team name is required")
+			}
+
+			// Load config with team override cleared so legacy values are visible.
+			ov := toOverrides(opts)
+			ov.Team = ""
+			cfg, paths, err := config.Load(ov)
+			if err != nil {
+				return err
+			}
+			reg, err := config.LoadTeamRegistry(paths.TeamsPath)
+			if err != nil {
+				return err
+			}
+			if config.FindTeam(reg, name) != nil {
+				return fmt.Errorf("team %q already exists", name)
+			}
+
+			now := time.Now().UTC()
+			reg.Teams = append(reg.Teams, config.TeamEntry{
+				Name:      name,
+				League:    cfg.League,
+				DBPath:    cfg.DBPath,
+				CreatedAt: now,
+				UpdatedAt: now,
+			})
+			sort.SliceStable(reg.Teams, func(i, j int) bool {
+				return strings.ToLower(reg.Teams[i].Name) < strings.ToLower(reg.Teams[j].Name)
+			})
+			if err := config.SaveTeamRegistry(paths.TeamsPath, reg); err != nil {
+				return err
+			}
+			if setCurrent {
+				if err := config.WriteCurrentTeam(paths.CurrentTeamPath, name); err != nil {
+					return err
+				}
+			}
+
+			if opts.OutputJSON {
+				return writeJSON(cmd, map[string]any{
+					"ok":          true,
+					"name":        name,
+					"set_current": setCurrent,
+					"league_id":   cfg.League.LeagueID,
+					"team_id":     cfg.League.TeamID,
+					"season":      cfg.League.Season,
+					"db_path":     cfg.DBPath,
+				})
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Imported legacy team: %s\n", name)
+			fmt.Fprintf(cmd.OutOrStdout(), "League: %s Team: %s Season: %d\n", cfg.League.LeagueID, cfg.League.TeamID, cfg.League.Season)
+			fmt.Fprintf(cmd.OutOrStdout(), "DB: %s\n", cfg.DBPath)
+			if setCurrent {
+				fmt.Fprintf(cmd.OutOrStdout(), "Current team: %s\n", name)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&setCurrent, "set-current", true, "Set imported team as current")
+	return cmd
+}
+
 func newTeamListCmd(opts *cliOptions) *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
@@ -134,6 +207,53 @@ func newTeamListCmd(opts *cliOptions) *cobra.Command {
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "%s %s (%s/%s %d)\n", marker, t.Name, t.League.LeagueID, t.League.TeamID, t.League.Season)
 			}
+			return nil
+		},
+	}
+}
+
+func newTeamEnvCmd(opts *cliOptions) *cobra.Command {
+	return &cobra.Command{
+		Use:   "env [name]",
+		Short: "Print shell exports for team context",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			paths, err := loadTeamPaths(opts)
+			if err != nil {
+				return err
+			}
+			reg, err := config.LoadTeamRegistry(paths.TeamsPath)
+			if err != nil {
+				return err
+			}
+			name := ""
+			if len(args) > 0 {
+				name = strings.TrimSpace(args[0])
+			}
+			if name == "" {
+				current, err := config.ReadCurrentTeam(paths.CurrentTeamPath)
+				if err != nil {
+					return err
+				}
+				name = strings.TrimSpace(current)
+			}
+			if name == "" {
+				return fmt.Errorf("no team provided and no current team set")
+			}
+			team := config.FindTeam(reg, name)
+			if team == nil {
+				return fmt.Errorf("team %q not found", name)
+			}
+
+			if opts.OutputJSON {
+				return writeJSON(cmd, map[string]any{
+					"team": name,
+					"exports": map[string]string{
+						"FB_TEAM": name,
+					},
+				})
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "export FB_TEAM=%q\n", name)
 			return nil
 		},
 	}

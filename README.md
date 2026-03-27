@@ -1,36 +1,38 @@
-# fantasy-baseball (fb)
+# fantasy-baseball (`fb`)
 
-`fb` is a local-first CLI for ESPN fantasy baseball pitcher operations.
+`fb` is a local-first CLI for ESPN fantasy baseball pitcher workflows.
 
-It keeps your workflow in SQLite, uses deterministic rules, and gates write actions behind preflight, confirmation, verification, and audit trails.
+It keeps decision artifacts and execution history in SQLite, and gates real writes behind:
+- deterministic resolution
+- immediate preflight
+- explicit confirmation
+- post-write verification
+- auditable execution events
 
 ## v1 Scope
 
 ### Included
-- Forecaster probable-start ingestion + normalization
-- ESPN roster/league sync (read + bounded candidate ingestion)
-- Pitcher planning and pickup recommendations
+- Forecaster probable-start ingestion and normalization
+- ESPN roster + free-agent snapshot sync
+- Pitcher planning
+- Pickup planning
 - Transaction planning
-- Single-item transaction execution with hard preflight + verification
-- Pitcher lineup planning + single-item lineup execution
-- Operator diagnostics via `fb doctor`
+- Lineup planning
+- Direct single-item transaction execution (`add/drop` and `add-only`)
+- Direct single-item lineup slot execution
+- Execution follow-up (`pending`, `verify`, `reconcile`, `resolve`)
+- Multi-team context switching
+- Operator diagnostics (`fb doctor`)
 
-### Write capabilities in v1
-- Real writes are limited to **single-item** ESPN mutations:
-  - transaction add/drop via `fb execute transaction`
-  - pitcher lineup slot move via `fb execute lineup`
-- Planning/recommendation commands remain non-mutating.
-- ESPN ingestion commands (`fb espn ...`) are read-only data pulls.
-
-### Intentionally out of scope
+### Intentionally Out Of Scope
 - Hitters
 - Batch/unattended execution
 - Waiver/FAAB automation
 - Browser automation
 - Web dashboard
-- LLM-generated strategy decisions
+- LLM-generated strategy
 
-## Install and Build
+## Build And Bootstrap
 
 ```bash
 go build -o fb ./cmd/fb
@@ -38,209 +40,232 @@ go build -o fb ./cmd/fb
 ./fb doctor
 ```
 
-## Config
+## Config And Auth
 
-Default config location: `~/.fantasy-baseball/config.json`
+Default config path:
+- `~/.fantasy-baseball/config.json`
 
-Use the example as baseline:
+Start from the example:
 
 ```bash
 cp config.json.example ~/.fantasy-baseball/config.json
 ```
 
-Required for live ESPN usage:
+Required for ESPN:
 - `league.league_id`
 - `league.team_id`
 - `league.season`
 - `auth.espn_s2_env`
 - `auth.swid_env`
 
-Export cookie env vars:
+Export cookies:
 
 ```bash
 export ESPN_S2="..."
 export ESPN_SWID="{...}"
 ```
 
-Validate setup:
+Validate:
 
 ```bash
 ./fb espn validate
 ./fb doctor
 ```
 
-## Core Command Groups
+## Multi-Team Context
 
-- `fb forecaster` - probable-start source ingestion and inspection
-- `fb espn` - roster/league/candidate ingestion and source inspection
-- `fb pitchers` - weekly pitcher planning
-- `fb pickups` - free-agent pickup recommendations
-- `fb transactions` - transaction planning and analysis
-- `fb lineup` - lineup planning and analysis
-- `fb execute` - transaction/lineup execution operations
-- `fb doctor` - operator readiness checks
+`fb` supports multiple teams in one app directory using a team registry (`teams.json`) and current-team pointer.
 
-## Recommended Weekly Routine
+### Quick setup
 
-1. Refresh inputs
 ```bash
-./fb espn sync roster
-./fb forecaster sync --url
-./fb espn sync free-agents pitchers --limit 25
-./fb espn status
+# import your existing single-team config as a named team
+./fb team import-legacy my-main-team --set-current
+
+# add a second team
+./fb team add second-team --league-id 123 --team-id 4 --season 2026
+
+# switch context
+./fb team use second-team
+./fb team current
+./fb team list
 ```
 
-2. Build decision artifacts
+You can always override context per command:
+
 ```bash
+./fb --team my-main-team espn status
+./fb --team second-team pitchers plan
+```
+
+Shell/OpenClaw-friendly export:
+
+```bash
+eval "$(./fb team env second-team)"
+```
+
+This sets:
+- `FB_TEAM`
+
+## Command Model
+
+### Decision Commands (non-mutating)
+- `fb pitchers plan|last`
+- `fb pickups plan|last`
+- `fb transactions plan|last`
+- `fb lineup plan|last`
+
+### Ops Commands (mutating, one item per command)
+- `fb execute transaction`
+- `fb execute lineup`
+- `fb execute history|pending|verify|reconcile|resolve`
+
+### Source Data
+- `fb espn sync ...`
+- `fb espn show ...`
+- `fb espn status`
+- `fb forecaster sync|show|status|clear`
+
+## Weekly Routine
+
+```bash
+# 1) refresh source data
+./fb espn sync roster
+./fb espn sync free-agents pitchers --limit 100
+./fb forecaster sync --url
+./fb espn status
+
+# 2) generate decisions
 ./fb pitchers plan
 ./fb pickups plan
-./fb transactions plan --top 10
+./fb transactions plan
 ./fb lineup plan
-```
 
-3. Execute one item at a time (direct ops path)
-```bash
-./fb execute transaction --add "Aaron Nola" --drop "Shota Imanaga"
-./fb execute transaction --add "Aaron Nola" --drop "Shota Imanaga" --confirm
+# 3) execute one transaction
+./fb execute transaction --add "Roki Sasaki" --drop "Sandy Alcantara"
+./fb execute transaction --add "Roki Sasaki" --drop "Sandy Alcantara" --confirm
 
+# 4) execute one lineup move
 ./fb execute lineup --player "Kris Bubic" --to-slot P
 ./fb execute lineup --player "Kris Bubic" --to-slot P --confirm
-```
 
-4. Verify and inspect
-```bash
+# 5) follow-up if needed
 ./fb execute pending
 ./fb execute verify --execution-id <id>
 ./fb execute reconcile --execution-id <id>
 ```
 
-## End-to-End Example (Copy/Paste)
+## Transaction Ops
+
+Direct transaction execution (no plan approval step required):
 
 ```bash
-./fb init
-./fb doctor
+# add/drop
+./fb execute transaction --add "Shota Imanaga" --drop "Sandy Alcantara"
+./fb execute transaction --add "Shota Imanaga" --drop "Sandy Alcantara" --confirm
 
-./fb espn validate
-./fb espn sync roster
-./fb forecaster sync --url
-./fb espn sync free-agents pitchers --limit 25
-./fb espn status
+# add-only (use open bench)
+./fb execute transaction --add "Roki Sasaki"
+./fb execute transaction --add "Roki Sasaki" --confirm
 
-./fb pitchers plan --from 2026-09-15 --to 2026-09-24
-./fb pickups plan --from 2026-09-15 --to 2026-09-24
-./fb transactions plan --from 2026-09-15 --to 2026-09-24 --top 10
-./fb lineup plan
-
-./fb execute transaction --add "Aaron Nola" --drop "Shota Imanaga"
-./fb execute transaction --add "Aaron Nola" --drop "Shota Imanaga" --confirm
-./fb execute history --execution-id 1
-
-./fb execute lineup --player "Kris Bubic" --to-slot P
-./fb execute lineup --player "Kris Bubic" --to-slot P --confirm
-
-./fb doctor
-```
-
-## Direct Ops Workflow
-
-```bash
-./fb execute transaction --add "Aaron Nola" --drop "Shota Imanaga"
-./fb execute transaction --add "Aaron Nola" --drop "Shota Imanaga" --confirm
+# next-day effective execution
 ./fb execute transaction --add "Roki Sasaki" --next-day --confirm
 ```
 
-Direct execution still uses the same guardrails:
-- identity resolution
-- immediate preflight gate
-- explicit confirmation
-- single-item execution
-- verification + audit
-
-## Direct Lineup Ops
+## Lineup Ops
 
 ```bash
-./fb execute lineup --player "Kris Bubic" --to-slot P
-./fb execute lineup --player "Kris Bubic" --to-slot P --confirm
+./fb execute lineup --player "Brandon Woodruff" --to-slot BE
+./fb execute lineup --player "Brandon Woodruff" --to-slot BE --confirm
 ```
 
-## Preflight
-
-Preflight is run automatically inside `fb execute transaction` and `fb execute lineup` right before write.
-
-## Useful View Modes
-
-Several commands provide focused views without needing separate subcommands:
-
-```bash
-./fb pitchers plan --view start-sit
-./fb pickups plan
-./fb transactions plan
-```
+Supported target slots:
+- `P`
+- `SP`
+- `RP`
+- `BE`
 
 ## Status Vocabulary
 
-### Preflight status
-- `executable`, `blocked`, `stale`, `conflict`, `unknown`
+### Preflight
+- `executable`
+- `blocked`
+- `stale`
+- `conflict`
+- `unknown`
 
-### Execution status
-- `started`, `submitted`, `succeeded`, `failed`, `aborted`, `ambiguous`
+### Execution
+- `started`
+- `submitted`
+- `succeeded`
+- `failed`
+- `aborted`
+- `ambiguous`
 
-### Verification status
-- `verified`, `verification_pending`, `unverified`, `verification_failed`, `unknown`
+### Verification
+- `verified`
+- `verification_pending`
+- `unverified`
+- `verification_failed`
+- `unknown`
 
 ## Safety Model
 
-- No batch execution
-- One item per command
-- Confirmation required for real writes
-- Immediate preflight rerun before write
-- Duplicate protection blocks re-execution after successful/verified attempts
-- Verification stored separately from write submission
-- Ambiguity is explicit (not silently treated as success)
+- One mutation per command
+- Explicit `--confirm` required for real writes
+- Immediate preflight before each write
+- Duplicate protection for already-resolved executions
+- No silent retries
+- Verification tracked separately from write submission
+- Ambiguity surfaced explicitly
 
 ## Troubleshooting
 
-### “No rows found” or unmatched players
-- Confirm date window has probable starts:
-```bash
-./fb forecaster show starts --from YYYY-MM-DD --to YYYY-MM-DD --include-tbd
-```
-- Re-import forecaster source and rerun planning.
+### Execution blocked/stale
 
-### Execution blocked
-- Check execution details:
 ```bash
-./fb execute history --execution-id <id>
-./fb execute resolve --execution-id <id>
-```
-- Re-run execute command after refreshing source data if add is unavailable or drop is no longer rostered.
-
-### Unresolved execution attempts
-```bash
+./fb execute transaction --add "..." --drop "..."
 ./fb execute pending
+./fb execute resolve --execution-id <id>
+./fb espn sync roster
+./fb espn sync free-agents pitchers --limit 100
+```
+
+### Verify unresolved attempt
+
+```bash
 ./fb execute verify --execution-id <id>
 ./fb execute reconcile --execution-id <id>
+./fb execute history --execution-id <id> --json
 ```
 
-### Overall readiness
+### No forecaster match
+
+```bash
+./fb forecaster show starts --from YYYY-MM-DD --to YYYY-MM-DD --include-tbd
+./fb forecaster sync --url
+```
+
+### Readiness
+
 ```bash
 ./fb doctor
 ```
 
 ## JSON Output
 
-Most commands support `--json` for scripting/OpenClaw usage.
+Most commands support `--json` for automation/OpenClaw.
 
 Examples:
 
 ```bash
 ./fb doctor --json
-./fb execute history --execution-id 8 --json
-./fb execute transaction --add "Aaron Nola" --drop "Shota Imanaga" --json
+./fb espn status --json
+./fb execute history --execution-id 14 --json
+./fb execute transaction --add "Roki Sasaki" --drop "Sandy Alcantara" --json
 ```
 
-## Operator Notes
+## Notes
 
-- `fb doctor` is the main readiness command.
-- `fb healthcheck` remains a minimal config/db check.
-- Real writes are explicit via `fb execute transaction` and `fb execute lineup`.
+- `fb healthcheck` remains a minimal legacy-style config/database check.
+- `fb doctor` is the primary operator readiness command.

@@ -555,7 +555,7 @@ func newDoctorCmd(opts *cliOptions) *cobra.Command {
 				if cfg.UsingTeamRegistry {
 					appendCheck("team.context", "ok", fmt.Sprintf("active team: %s (%s/%s)", firstNonEmpty(cfg.ActiveTeam, "(unnamed)"), cfg.League.LeagueID, cfg.League.TeamID), "")
 				} else if cfg.UsingLegacyFallback {
-					appendCheck("team.context", "warn", "using legacy single-team config context", "run `fb team add ...` and `fb team use <name>`")
+					appendCheck("team.context", "warn", "using legacy single-team config context", "run `fb team import-legacy <name>`")
 				}
 				creds, credErr := cfg.LoadESPNCredentialsFromEnv()
 				if credErr != nil {
