@@ -24,6 +24,7 @@ type cliOptions struct {
 	AppDir      string
 	ConfigPath  string
 	DBPath      string
+	Team        string
 	LogLevel    string
 	Environment string
 
@@ -53,6 +54,7 @@ func newRootCmd() *cobra.Command {
 	root.PersistentFlags().StringVar(&opts.AppDir, "app-dir", "", "Override app directory (env: FB_APP_DIR)")
 	root.PersistentFlags().StringVar(&opts.ConfigPath, "config", "", "Override config path (env: FB_CONFIG_PATH)")
 	root.PersistentFlags().StringVar(&opts.DBPath, "db-path", "", "Override SQLite db path (env: FB_DB_PATH)")
+	root.PersistentFlags().StringVar(&opts.Team, "team", "", "Team context name (env: FB_TEAM)")
 	root.PersistentFlags().StringVar(&opts.LogLevel, "log-level", "", "Override log level (env: FB_LOG_LEVEL)")
 	root.PersistentFlags().StringVar(&opts.Environment, "environment", "", "Override runtime environment (env: FB_ENVIRONMENT)")
 	root.PersistentFlags().BoolVar(&opts.OutputJSON, "json", false, "Output results as JSON")
@@ -75,6 +77,8 @@ func newRootCmd() *cobra.Command {
 	initCmd.GroupID = "infra"
 	configCmd := newConfigCmd(opts)
 	configCmd.GroupID = "infra"
+	teamCmd := newTeamCmd(opts)
+	teamCmd.GroupID = "infra"
 	dbCmd := newDBCmd(opts)
 	dbCmd.GroupID = "infra"
 	forecasterCmd := newForecasterCmd(opts)
@@ -92,7 +96,7 @@ func newRootCmd() *cobra.Command {
 	executeCmd := newExecuteCmd(opts)
 	executeCmd.GroupID = "ops"
 
-	root.AddCommand(versionCmd, doctorCmd, healthCmd, initCmd, configCmd, dbCmd, forecasterCmd, espnCmd, pitchersCmd, pickupsCmd, transactionsCmd, lineupCmd, executeCmd)
+	root.AddCommand(versionCmd, doctorCmd, healthCmd, initCmd, configCmd, teamCmd, dbCmd, forecasterCmd, espnCmd, pitchersCmd, pickupsCmd, transactionsCmd, lineupCmd, executeCmd)
 
 	return root
 }
@@ -548,6 +552,11 @@ func newDoctorCmd(opts *cliOptions) *cobra.Command {
 			if err := cfg.ValidateESPNUsage(); err != nil {
 				appendCheck("espn.config", "warn", err.Error(), "set league/auth keys in config for live ESPN workflows")
 			} else {
+				if cfg.UsingTeamRegistry {
+					appendCheck("team.context", "ok", fmt.Sprintf("active team: %s (%s/%s)", firstNonEmpty(cfg.ActiveTeam, "(unnamed)"), cfg.League.LeagueID, cfg.League.TeamID), "")
+				} else if cfg.UsingLegacyFallback {
+					appendCheck("team.context", "warn", "using legacy single-team config context", "run `fb team add ...` and `fb team use <name>`")
+				}
 				creds, credErr := cfg.LoadESPNCredentialsFromEnv()
 				if credErr != nil {
 					appendCheck("espn.auth_env", "warn", credErr.Error(), fmt.Sprintf("export %s and %s", cfg.Auth.ESPNS2Env, cfg.Auth.SWIDEnv))
@@ -686,6 +695,7 @@ func toOverrides(opts *cliOptions) config.Overrides {
 		AppDir:      opts.AppDir,
 		ConfigPath:  opts.ConfigPath,
 		DBPath:      opts.DBPath,
+		Team:        opts.Team,
 		LogLevel:    opts.LogLevel,
 		Environment: opts.Environment,
 	}

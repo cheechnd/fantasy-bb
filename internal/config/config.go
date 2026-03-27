@@ -15,6 +15,7 @@ const (
 	DefaultDBPathEnv     = "FB_DB_PATH"
 	DefaultLogLevelEnv   = "FB_LOG_LEVEL"
 	DefaultEnvEnv        = "FB_ENVIRONMENT"
+	DefaultTeamEnv       = "FB_TEAM"
 )
 
 type Config struct {
@@ -32,6 +33,11 @@ type Config struct {
 	Lineup       LineupConfig       `json:"lineup"`
 	Monitoring   MonitoringConfig   `json:"monitoring"`
 	Features     FeaturesConfig     `json:"features"`
+
+	ActiveTeam          string `json:"-"`
+	TeamContextSource   string `json:"-"`
+	UsingTeamRegistry   bool   `json:"-"`
+	UsingLegacyFallback bool   `json:"-"`
 }
 
 type LeagueConfig struct {
@@ -168,9 +174,11 @@ type FeaturesConfig struct {
 }
 
 type Paths struct {
-	AppDir     string `json:"app_dir"`
-	ConfigPath string `json:"config_path"`
-	DBPath     string `json:"db_path"`
+	AppDir          string `json:"app_dir"`
+	ConfigPath      string `json:"config_path"`
+	DBPath          string `json:"db_path"`
+	TeamsPath       string `json:"teams_path"`
+	CurrentTeamPath string `json:"current_team_path"`
 }
 
 type Overrides struct {
@@ -179,6 +187,7 @@ type Overrides struct {
 	DBPath      string
 	LogLevel    string
 	Environment string
+	Team        string
 }
 
 var ErrConfigNotFound = errors.New("config file not found")
@@ -312,9 +321,11 @@ func ResolvePaths(overrides Overrides) (Paths, error) {
 	}
 
 	return Paths{
-		AppDir:     appDirExpanded,
-		ConfigPath: configPathExpanded,
-		DBPath:     dbPathExpanded,
+		AppDir:          appDirExpanded,
+		ConfigPath:      configPathExpanded,
+		DBPath:          dbPathExpanded,
+		TeamsPath:       filepath.Join(appDirExpanded, "teams.json"),
+		CurrentTeamPath: filepath.Join(appDirExpanded, "current-team"),
 	}, nil
 }
 
@@ -349,6 +360,11 @@ func Load(overrides Overrides) (Config, Paths, error) {
 	cfg.DBPath, err = ExpandPath(cfg.DBPath)
 	if err != nil {
 		return Config{}, paths, fmt.Errorf("expand db_path: %w", err)
+	}
+
+	cfg, err = applyTeamContext(cfg, paths, overrides)
+	if err != nil {
+		return Config{}, paths, err
 	}
 
 	if err := cfg.Validate(); err != nil {
