@@ -97,7 +97,7 @@ func newESPNFreeAgentsCmd(opts *cliOptions) *cobra.Command {
 func newESPNFreeAgentsPitchersCmd(opts *cliOptions) *cobra.Command {
 	var limit int
 	var search string
-	var team string
+	var mlbTeam string
 	cmd := &cobra.Command{
 		Use:   "pitchers",
 		Short: "Fetch a bounded free-agent pitcher candidate pool",
@@ -106,7 +106,7 @@ func newESPNFreeAgentsPitchersCmd(opts *cliOptions) *cobra.Command {
 				return svc.SyncFreeAgentPitchers(cmd.Context(), cfg.Config, espnsvc.FreeAgentOptions{
 					Limit:  limit,
 					Search: search,
-					Team:   team,
+					Team:   mlbTeam,
 				})
 			})
 			if err != nil {
@@ -132,7 +132,7 @@ func newESPNFreeAgentsPitchersCmd(opts *cliOptions) *cobra.Command {
 	}
 	cmd.Flags().IntVar(&limit, "limit", 0, "Candidate limit (bounded by config max)")
 	cmd.Flags().StringVar(&search, "search", "", "Optional case-insensitive name filter")
-	cmd.Flags().StringVar(&team, "team", "", "Optional MLB team filter (e.g. NYY)")
+	cmd.Flags().StringVar(&mlbTeam, "mlb-team", "", "Optional MLB team filter (e.g. NYY)")
 	return cmd
 }
 
