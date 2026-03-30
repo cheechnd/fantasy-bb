@@ -34,7 +34,7 @@ func TestLoadAndValidateConfig(t *testing.T) {
 		t.Fatalf("SaveDefault: %v", err)
 	}
 
-	loaded, paths, err := Load(Overrides{ConfigPath: configPath})
+	loaded, paths, err := Load(Overrides{ConfigPath: configPath, AppDir: cfg.AppDir})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}

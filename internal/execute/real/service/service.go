@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -51,6 +52,8 @@ type Service struct {
 	writer           Writer
 	verifier         Verifier
 }
+
+var errMissingRequestPlayerIDs = errors.New("missing request player ids for verification")
 
 func New(preflightService *pfsvc.Service, reviewRepo *reviewrepo.Repository, tranRepo *tranrepo.Repository, realRepo *realrepo.Repository, writer Writer, verifier Verifier) *Service {
 	return &Service{
@@ -334,6 +337,16 @@ func (s *Service) VerifyAttempt(ctx context.Context, cfg config.Config, attemptI
 	}
 	req, err := requestFromAttempt(attempt)
 	if err != nil {
+		if errors.Is(err, errMissingRequestPlayerIDs) && (attempt.ExecutionStatus == execute.ExecutionStatusAborted || attempt.ExecutionStatus == execute.ExecutionStatusFailed) {
+			_ = s.realRepo.AddEvent(ctx, attemptID, "verification_skipped", map[string]any{
+				"reason": "missing request player ids",
+			})
+			return &execute.VerifyResult{
+				Attempt:   attempt,
+				Inference: "not_applicable",
+				Message:   "verification skipped: execution attempt has no request player ids",
+			}, nil
+		}
 		return nil, err
 	}
 	_ = s.realRepo.AddEvent(ctx, attemptID, "verification_started", map[string]any{"mode": "recheck"})
@@ -381,6 +394,17 @@ func (s *Service) ReconcileAttempt(ctx context.Context, cfg config.Config, attem
 	}
 	req, err := requestFromAttempt(attempt)
 	if err != nil {
+		if errors.Is(err, errMissingRequestPlayerIDs) && (attempt.ExecutionStatus == execute.ExecutionStatusAborted || attempt.ExecutionStatus == execute.ExecutionStatusFailed) {
+			_ = s.realRepo.AddEvent(ctx, attemptID, "reconciliation_run", map[string]any{
+				"inference": "not_applicable",
+				"reason":    "missing request player ids",
+			})
+			return &execute.VerifyResult{
+				Attempt:   attempt,
+				Inference: "not_applicable",
+				Message:   "reconciliation skipped: execution attempt has no request player ids",
+			}, nil
+		}
 		return nil, err
 	}
 	verStatus, verDetails, verErr := s.verifier.Verify(ctx, cfg, req, WriteResult{})
@@ -481,7 +505,7 @@ func requestFromAttempt(attempt *execute.Attempt) (WriteRequest, error) {
 	addID := asInt64(attempt.RequestSummary["add_player_id"])
 	dropID := asInt64(attempt.RequestSummary["drop_player_id"])
 	if addID <= 0 || (!req.AddOnly && dropID <= 0) {
-		return WriteRequest{}, fmt.Errorf("execution attempt %d missing request player ids for verification", attempt.ID)
+		return WriteRequest{}, fmt.Errorf("%w: execution attempt %d", errMissingRequestPlayerIDs, attempt.ID)
 	}
 	req.AddESPNPlayerID = &addID
 	if dropID > 0 {

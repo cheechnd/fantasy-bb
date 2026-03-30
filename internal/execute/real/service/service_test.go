@@ -326,6 +326,66 @@ func TestVerifyAttemptRespectsRecheckLimit(t *testing.T) {
 	}
 }
 
+func TestVerifyAttemptSkipsMissingIDsForAbortedAttempt(t *testing.T) {
+	svc, cfg, itemID, closeFn, writer, _ := seededRealService(t, realSeedInput{
+		addName:     "Add Arm",
+		dropName:    "Drop Arm",
+		rosterNames: []string{"Drop Arm"},
+		candidates:  []string{"Other Arm"},
+	})
+	defer closeFn()
+	writer.result = WriteResult{OK: true, Endpoint: "https://x/transactions", ResponseStatus: 200}
+
+	res, err := svc.ExecuteOne(context.Background(), cfg, execute.RealExecutionOptions{ItemID: itemID, Confirm: true})
+	if err != nil {
+		t.Fatalf("ExecuteOne: %v", err)
+	}
+	if res.Attempt == nil || res.Attempt.ExecutionStatus != execute.ExecutionStatusAborted {
+		t.Fatalf("expected aborted attempt")
+	}
+
+	vr, err := svc.VerifyAttempt(context.Background(), cfg, res.Attempt.ID)
+	if err != nil {
+		t.Fatalf("VerifyAttempt: %v", err)
+	}
+	if vr.Inference != "not_applicable" {
+		t.Fatalf("expected not_applicable inference, got %q", vr.Inference)
+	}
+	if !strings.Contains(vr.Message, "verification skipped") {
+		t.Fatalf("expected skipped message, got %q", vr.Message)
+	}
+}
+
+func TestReconcileAttemptSkipsMissingIDsForAbortedAttempt(t *testing.T) {
+	svc, cfg, itemID, closeFn, writer, _ := seededRealService(t, realSeedInput{
+		addName:     "Add Arm",
+		dropName:    "Drop Arm",
+		rosterNames: []string{"Drop Arm"},
+		candidates:  []string{"Other Arm"},
+	})
+	defer closeFn()
+	writer.result = WriteResult{OK: true, Endpoint: "https://x/transactions", ResponseStatus: 200}
+
+	res, err := svc.ExecuteOne(context.Background(), cfg, execute.RealExecutionOptions{ItemID: itemID, Confirm: true})
+	if err != nil {
+		t.Fatalf("ExecuteOne: %v", err)
+	}
+	if res.Attempt == nil || res.Attempt.ExecutionStatus != execute.ExecutionStatusAborted {
+		t.Fatalf("expected aborted attempt")
+	}
+
+	rr, err := svc.ReconcileAttempt(context.Background(), cfg, res.Attempt.ID)
+	if err != nil {
+		t.Fatalf("ReconcileAttempt: %v", err)
+	}
+	if rr.Inference != "not_applicable" {
+		t.Fatalf("expected not_applicable inference, got %q", rr.Inference)
+	}
+	if !strings.Contains(rr.Message, "reconciliation skipped") {
+		t.Fatalf("expected skipped message, got %q", rr.Message)
+	}
+}
+
 func TestRequestFromAttemptCarriesEffectiveNextDay(t *testing.T) {
 	attempt := &execute.Attempt{
 		ID:             1,
