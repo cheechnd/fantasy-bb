@@ -92,7 +92,13 @@ func (s *Service) EnsureExecutionCandidate(ctx context.Context, requestID int64)
 		return nil, 0, fmt.Errorf("ad hoc request %d not found", requestID)
 	}
 	if req.ResolutionStatus != transactions.AdHocResolutionResolved || req.RequestState == transactions.AdHocStateUnresolved {
-		return req, 0, fmt.Errorf("ad hoc request %d is not resolved and cannot execute", requestID)
+		return req, 0, fmt.Errorf(
+			"ad hoc request %d (request id, not execution id) is %s/%s and cannot execute%s",
+			requestID,
+			req.RequestState,
+			req.ResolutionStatus,
+			formatResolutionNotes(req.ResolutionNotes),
+		)
 	}
 	if req.LinkedPlanItemID != nil {
 		return req, *req.LinkedPlanItemID, nil
@@ -146,6 +152,27 @@ func (s *Service) EnsureExecutionCandidate(ctx context.Context, requestID int64)
 	})
 	updated, _ := s.repo.ByID(ctx, requestID)
 	return updated, itemID, nil
+}
+
+func formatResolutionNotes(notes map[string]any) string {
+	if len(notes) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, 2)
+	if v, ok := notes["add"]; ok {
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			parts = append(parts, "add: "+s)
+		}
+	}
+	if v, ok := notes["drop"]; ok {
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			parts = append(parts, "drop: "+s)
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(parts, "; ") + ")"
 }
 
 func (s *Service) LinkExecutionResult(ctx context.Context, requestID int64, attemptID int64, success bool) error {

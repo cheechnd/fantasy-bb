@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -86,6 +87,37 @@ func TestEnsureExecutionCandidate(t *testing.T) {
 	}
 	if itemID <= 0 || updated.LinkedPlanItemID == nil {
 		t.Fatalf("expected linked plan item")
+	}
+}
+
+func TestEnsureExecutionCandidateUnresolvedErrorIncludesNotes(t *testing.T) {
+	svc, closeFn := seededService(t, seedInput{
+		roster: []espn.RosterSnapshot{
+			{PlayerName: "David Peterson", NormalizedName: "davidpeterson", IsPitcher: true, ESPNPlayerID: ptr64(202)},
+		},
+		cands: []espn.FreeAgentCandidate{
+			{PlayerName: "Other Arm", NormalizedName: "otherarm", IsPitcher: true, ESPNPlayerID: ptr64(101)},
+		},
+	})
+	defer closeFn()
+
+	req, err := svc.CreateAndResolve(context.Background(), "Edward Cabrera", "David Peterson")
+	if err != nil {
+		t.Fatalf("CreateAndResolve: %v", err)
+	}
+	if req.RequestState != transactions.AdHocStateUnresolved {
+		t.Fatalf("expected unresolved request state, got %s", req.RequestState)
+	}
+	_, _, err = svc.EnsureExecutionCandidate(context.Background(), req.ID)
+	if err == nil {
+		t.Fatalf("expected unresolved execution candidate error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "request id, not execution id") {
+		t.Fatalf("expected request id clarification in error: %s", msg)
+	}
+	if !strings.Contains(msg, "add:") {
+		t.Fatalf("expected add note in error: %s", msg)
 	}
 }
 
