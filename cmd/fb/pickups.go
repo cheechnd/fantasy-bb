@@ -20,7 +20,7 @@ import (
 )
 
 func newPickupsCmd(opts *cliOptions) *cobra.Command {
-	cmd := &cobra.Command{Use: "pickups", Short: "Read-only pickup and streamer recommendations"}
+	cmd := &cobra.Command{Use: "pickups", Short: "Read-only pickup recommendations (immediate FREEAGENT pool)"}
 	cmd.AddGroup(
 		&cobra.Group{ID: "generate", Title: "Generate"},
 		&cobra.Group{ID: "inspect", Title: "Inspection"},
@@ -39,7 +39,7 @@ func newPickupsPlanCmd(opts *cliOptions) *cobra.Command {
 	var syncRunID, importRunID, candidateRunID int64
 	cmd := &cobra.Command{
 		Use:   "plan",
-		Short: "Generate pickup plan report",
+		Short: "Generate pickup plan report (WAIVERS excluded)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			v, err := withPickupsService(cmd.Context(), opts, func(ctx context.Context, svc *picksvc.Service) (any, error) {
 				opts2, err := buildPickupOptions(cmd, fromRaw, toRaw, topN, &syncRunID, &importRunID, &candidateRunID)
@@ -164,6 +164,8 @@ func buildPickupOptions(cmd *cobra.Command, fromRaw, toRaw string, topN int, syn
 func printPickupRecommendation(cmd *cobra.Command, r pickups.RecommendResult) {
 	fmt.Fprintf(cmd.OutOrStdout(), "Recommendation Run: %d\n", r.RecommendationRunID)
 	fmt.Fprintf(cmd.OutOrStdout(), "Window: %s to %s\n\n", r.WindowStart, r.WindowEnd)
+	fmt.Fprintln(cmd.OutOrStdout(), "Availability filter: immediate FREEAGENT only (WAIVERS excluded)")
+	fmt.Fprintln(cmd.OutOrStdout())
 	fmt.Fprintln(cmd.OutOrStdout(), "Top overall candidates")
 	printPickupItemsTable(cmd, r.TopCandidates)
 	fmt.Fprintln(cmd.OutOrStdout())

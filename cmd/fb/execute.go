@@ -55,7 +55,7 @@ func newExecuteTransactionDirectCmd(opts *cliOptions) *cobra.Command {
 	var nextDay bool
 	cmd := &cobra.Command{
 		Use:   "transaction",
-		Short: "Prepare or execute one transaction directly by player names",
+		Short: "Prepare or execute one transaction directly by player names (WAIVERS blocked)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if strings.TrimSpace(addName) == "" {
 				return fmt.Errorf("--add is required")

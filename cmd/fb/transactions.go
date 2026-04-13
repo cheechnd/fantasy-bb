@@ -26,7 +26,7 @@ import (
 )
 
 func newTransactionsCmd(opts *cliOptions) *cobra.Command {
-	cmd := &cobra.Command{Use: "transactions", Short: "Add/drop transaction planning and analysis"}
+	cmd := &cobra.Command{Use: "transactions", Short: "Add/drop transaction planning (immediate FREEAGENT pool)"}
 	cmd.AddGroup(
 		&cobra.Group{ID: "generate", Title: "Generate"},
 		&cobra.Group{ID: "inspect", Title: "Inspection"},
@@ -127,7 +127,7 @@ func newTransactionsPlanCmd(opts *cliOptions) *cobra.Command {
 	var topN int
 	cmd := &cobra.Command{
 		Use:   "plan",
-		Short: "Generate and save add/drop transaction plan",
+		Short: "Generate and save add/drop transaction plan (WAIVERS excluded)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			v, err := withTransactionsService(cmd.Context(), opts, func(ctx context.Context, svc *transvc.Service) (any, error) {
 				opts2, err := buildTransactionOptions(cmd, fromRaw, toRaw, topN, &syncRunID, &importRunID, &pitcherPlanID, &pickupRunID)
@@ -537,6 +537,8 @@ func printTransactionPlan(cmd *cobra.Command, plan *transactions.Plan) {
 	if plan.PickupRecommendationRunID != nil {
 		fmt.Fprintf(cmd.OutOrStdout(), "Pickup recommendation run: %d\n", *plan.PickupRecommendationRunID)
 	}
+	fmt.Fprintln(cmd.OutOrStdout())
+	fmt.Fprintln(cmd.OutOrStdout(), "Availability filter: immediate FREEAGENT only (WAIVERS excluded)")
 	fmt.Fprintln(cmd.OutOrStdout())
 
 	order := []struct {
