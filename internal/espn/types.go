@@ -105,27 +105,28 @@ type CandidateRun struct {
 }
 
 type FreeAgentCandidate struct {
-	ID             int64     `json:"id,omitempty"`
-	CandidateRunID int64     `json:"candidate_run_id"`
-	ESPNPlayerID   *int64    `json:"espn_player_id,omitempty"`
-	PlayerName     string    `json:"player_name"`
-	NormalizedName string    `json:"normalized_name"`
-	MLBTeam        string    `json:"mlb_team,omitempty"`
-	IsPitcher      bool      `json:"is_pitcher"`
-	Role           string    `json:"role,omitempty"`
-	StatusTag      string    `json:"status_tag,omitempty"`
-	RawPlayerJSON  string    `json:"raw_player_json,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID                int64     `json:"id,omitempty"`
+	CandidateRunID    int64     `json:"candidate_run_id"`
+	ESPNPlayerID      *int64    `json:"espn_player_id,omitempty"`
+	PlayerName        string    `json:"player_name"`
+	NormalizedName    string    `json:"normalized_name"`
+	MLBTeam           string    `json:"mlb_team,omitempty"`
+	IsPitcher         bool      `json:"is_pitcher"`
+	Role              string    `json:"role,omitempty"`
+	AcquisitionStatus string    `json:"acquisition_status,omitempty"`
+	StatusTag         string    `json:"status_tag,omitempty"`
+	RawPlayerJSON     string    `json:"raw_player_json,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 type CandidateSummary struct {
-	CandidateRunID  *int64 `json:"candidate_run_id,omitempty"`
-	SyncedAt        string `json:"synced_at"`
-	CandidateCount  int    `json:"candidate_count"`
-	WarningCount    int    `json:"warning_count"`
-	QueryType       string `json:"query_type"`
-	QueryText       string `json:"query_text,omitempty"`
-	EffectiveLimit  int    `json:"effective_limit"`
-	SourceEndpoint  string `json:"source_endpoint"`
-	ResponseStatus  int    `json:"response_status_code"`
+	CandidateRunID *int64 `json:"candidate_run_id,omitempty"`
+	SyncedAt       string `json:"synced_at"`
+	CandidateCount int    `json:"candidate_count"`
+	WarningCount   int    `json:"warning_count"`
+	QueryType      string `json:"query_type"`
+	QueryText      string `json:"query_text,omitempty"`
+	EffectiveLimit int    `json:"effective_limit"`
+	SourceEndpoint string `json:"source_endpoint"`
+	ResponseStatus int    `json:"response_status_code"`
 }

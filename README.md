@@ -136,6 +136,10 @@ Note: `fb team add` registers the team entry immediately, but the team DB path i
 - `fb espn status`
 - `fb forecaster sync|show|status|clear`
 
+Free-agent snapshots now include acquisition status:
+- `ACQ_STATUS=FREEAGENT` means immediately addable
+- `ACQ_STATUS=WAIVERS` means claim/waiver flow (not immediately addable)
+
 ## Weekly Routine
 
 ```bash
@@ -180,6 +184,15 @@ Direct transaction execution (no plan approval step required):
 
 # next-day effective execution
 ./fb execute transaction --add "Roki Sasaki" --next-day --confirm
+```
+
+Notes:
+- Transaction resolution/preflight treat `WAIVERS` as not immediately available.
+- If a player shows `On Waivers` in ESPN UI, sync candidates first and confirm `ACQ_STATUS`:
+
+```bash
+./fb espn sync free-agents pitchers --limit 100
+./fb espn show free-agents --limit 100 | grep "<Player Name>"
 ```
 
 ## Lineup Ops
@@ -240,6 +253,10 @@ Supported target slots:
 ./fb espn sync roster
 ./fb espn sync free-agents pitchers --limit 100
 ```
+
+If blocked on availability, inspect `ACQ_STATUS`:
+- `WAIVERS` => not immediately executable via direct add
+- `FREEAGENT` => immediately addable (subject to other preflight checks)
 
 ### Verify unresolved attempt
 

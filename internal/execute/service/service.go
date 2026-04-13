@@ -233,6 +233,7 @@ func (s *Service) validateItem(ctx context.Context, q espnQueueRow, runType exec
 	}
 
 	candidateSet := map[string]int{}
+	waiverSet := map[string]int{}
 	if s.cfg.RequireLiveAvailabilityCheck {
 		if latestCandidateRun == nil || len(candidates) == 0 {
 			unknown = true
@@ -243,11 +244,21 @@ func (s *Service) validateItem(ctx context.Context, q espnQueueRow, runType exec
 				if k == "" {
 					continue
 				}
-				candidateSet[k]++
+				if espn.IsImmediateFreeAgent(c.AcquisitionStatus) {
+					candidateSet[k]++
+					continue
+				}
+				if espn.IsWaiver(c.AcquisitionStatus) {
+					waiverSet[k]++
+				}
 			}
 			if candidateSet[addKey] == 0 {
 				blocked = true
-				reasons = append(reasons, execute.Reason{Code: "add_target_unavailable", Message: "add target not found in current candidate pool"})
+				if waiverSet[addKey] > 0 {
+					reasons = append(reasons, execute.Reason{Code: "add_target_on_waivers", Message: "add target is on waivers and not immediately available"})
+				} else {
+					reasons = append(reasons, execute.Reason{Code: "add_target_unavailable", Message: "add target not found in current immediate free-agent pool"})
+				}
 			}
 			if candidateSet[addKey] > 1 {
 				unknown = true

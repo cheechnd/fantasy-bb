@@ -71,6 +71,32 @@ func TestCreateAndResolveInvalidTargetType(t *testing.T) {
 	}
 }
 
+func TestCreateAndResolveAddOnWaivers(t *testing.T) {
+	svc, closeFn := seededService(t, seedInput{
+		roster: []espn.RosterSnapshot{{PlayerName: "Shota Imanaga", NormalizedName: "shotaimanaga", IsPitcher: true, ESPNPlayerID: ptr64(202)}},
+		cands: []espn.FreeAgentCandidate{{
+			PlayerName:        "Aaron Nola",
+			NormalizedName:    "aaronnola",
+			IsPitcher:         true,
+			ESPNPlayerID:      ptr64(101),
+			AcquisitionStatus: espn.AcquisitionStatusWaivers,
+		}},
+	})
+	defer closeFn()
+
+	req, err := svc.CreateAndResolve(context.Background(), "Aaron Nola", "Shota Imanaga")
+	if err != nil {
+		t.Fatalf("CreateAndResolve: %v", err)
+	}
+	if req.ResolutionStatus != transactions.AdHocResolutionUnresolved {
+		t.Fatalf("expected unresolved for waiver add target, got %s", req.ResolutionStatus)
+	}
+	note, _ := req.ResolutionNotes["add"].(string)
+	if !strings.Contains(strings.ToLower(note), "waivers") {
+		t.Fatalf("expected waiver note, got %q", note)
+	}
+}
+
 func TestEnsureExecutionCandidate(t *testing.T) {
 	svc, closeFn := seededService(t, seedInput{
 		roster: []espn.RosterSnapshot{{PlayerName: "Shota Imanaga", NormalizedName: "shotaimanaga", IsPitcher: true, ESPNPlayerID: ptr64(202)}},

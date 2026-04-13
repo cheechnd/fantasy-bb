@@ -53,6 +53,35 @@ func TestPreflightBlockedUnavailable(t *testing.T) {
 	}
 }
 
+func TestPreflightBlockedOnWaivers(t *testing.T) {
+	svc, closeFn := seededService(t, seededInputs{
+		addName:           "Add Arm",
+		dropName:          "Drop Arm",
+		rosterNames:       []string{"Drop Arm"},
+		candidates:        []string{"Add Arm"},
+		candidateStatuses: []string{espn.AcquisitionStatusWaivers},
+	})
+	defer closeFn()
+
+	run, err := svc.Preflight(context.Background(), execute.Options{})
+	if err != nil {
+		t.Fatalf("Preflight: %v", err)
+	}
+	if run.Items[0].ValidationStatus != execute.StatusBlocked {
+		t.Fatalf("expected blocked, got %s", run.Items[0].ValidationStatus)
+	}
+	found := false
+	for _, reason := range run.Items[0].ValidationReasons {
+		if reason.Code == "add_target_on_waivers" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected add_target_on_waivers reason, got %+v", run.Items[0].ValidationReasons)
+	}
+}
+
 func TestPreflightConflictDropMissing(t *testing.T) {
 	svc, closeFn := seededService(t, seededInputs{
 		addName:     "Add Arm",
@@ -226,13 +255,14 @@ func TestPreflightNoApprovedItems(t *testing.T) {
 }
 
 type seededInputs struct {
-	addName        string
-	dropName       string
-	rosterNames    []string
-	candidates     []string
-	leagueSettings string
-	approvalAgeHrs int
-	withPending    bool
+	addName           string
+	dropName          string
+	rosterNames       []string
+	candidates        []string
+	candidateStatuses []string
+	leagueSettings    string
+	approvalAgeHrs    int
+	withPending       bool
 }
 
 func seededService(t *testing.T, in seededInputs) (*Service, func()) {
@@ -282,9 +312,13 @@ func seededService(t *testing.T, in seededInputs) (*Service, func()) {
 		})
 	}
 	cands := make([]espn.FreeAgentCandidate, 0, len(in.candidates))
-	for _, name := range in.candidates {
+	for idx, name := range in.candidates {
+		acq := ""
+		if idx < len(in.candidateStatuses) {
+			acq = in.candidateStatuses[idx]
+		}
 		cands = append(cands, espn.FreeAgentCandidate{
-			PlayerName: name, NormalizedName: strings.ToLower(name), IsPitcher: true, CreatedAt: time.Now().UTC(),
+			PlayerName: name, NormalizedName: strings.ToLower(name), IsPitcher: true, AcquisitionStatus: acq, CreatedAt: time.Now().UTC(),
 		})
 	}
 	syncRunID, err := er.PersistSync(context.Background(), esrepo.PersistSyncInput{

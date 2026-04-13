@@ -33,15 +33,15 @@ type PersistSyncInput struct {
 }
 
 type PersistCandidateInput struct {
-	SyncRunID      *int64
-	QueryType      string
-	QueryText      string
-	Filters        map[string]any
-	Status         string
-	WarningCount   int
-	Summary        map[string]any
-	Payload        espn.RawPayload
-	Candidates     []espn.FreeAgentCandidate
+	SyncRunID    *int64
+	QueryType    string
+	QueryText    string
+	Filters      map[string]any
+	Status       string
+	WarningCount int
+	Summary      map[string]any
+	Payload      espn.RawPayload
+	Candidates   []espn.FreeAgentCandidate
 }
 
 func (r *Repository) PersistSync(ctx context.Context, input PersistSyncInput) (int64, error) {
@@ -195,9 +195,9 @@ func (r *Repository) PersistCandidates(ctx context.Context, input PersistCandida
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO espn_free_agent_candidates (
 				candidate_run_id, espn_player_id, player_name, normalized_name,
-				mlb_team, is_pitcher, role, status_tag, raw_player_json, created_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, candidateRunID, nullInt64(c.ESPNPlayerID), c.PlayerName, c.NormalizedName, c.MLBTeam, isPitcher, c.Role, c.StatusTag, c.RawPlayerJSON, createdAt.UTC().Format(time.RFC3339))
+				mlb_team, is_pitcher, role, acquisition_status, status_tag, raw_player_json, created_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, candidateRunID, nullInt64(c.ESPNPlayerID), c.PlayerName, c.NormalizedName, c.MLBTeam, isPitcher, c.Role, c.AcquisitionStatus, c.StatusTag, c.RawPlayerJSON, createdAt.UTC().Format(time.RFC3339))
 		if err != nil {
 			return 0, fmt.Errorf("insert espn free agent candidate: %w", err)
 		}
@@ -448,7 +448,7 @@ func (r *Repository) ListCandidates(ctx context.Context, candidateRunID *int64, 
 	}
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, candidate_run_id, espn_player_id, player_name, normalized_name,
-		       COALESCE(mlb_team, ''), is_pitcher, COALESCE(role, ''), COALESCE(status_tag, ''),
+		       COALESCE(mlb_team, ''), is_pitcher, COALESCE(role, ''), COALESCE(acquisition_status, ''), COALESCE(status_tag, ''),
 		       COALESCE(raw_player_json, '{}'), created_at
 		FROM espn_free_agent_candidates
 		WHERE candidate_run_id = COALESCE(?, (SELECT id FROM espn_candidate_runs ORDER BY id DESC LIMIT 1))
@@ -466,7 +466,7 @@ func (r *Repository) ListCandidates(ctx context.Context, candidateRunID *int64, 
 		var playerID sql.NullInt64
 		var isPitcher int
 		var createdAtRaw string
-		if err := rows.Scan(&c.ID, &c.CandidateRunID, &playerID, &c.PlayerName, &c.NormalizedName, &c.MLBTeam, &isPitcher, &c.Role, &c.StatusTag, &c.RawPlayerJSON, &createdAtRaw); err != nil {
+		if err := rows.Scan(&c.ID, &c.CandidateRunID, &playerID, &c.PlayerName, &c.NormalizedName, &c.MLBTeam, &isPitcher, &c.Role, &c.AcquisitionStatus, &c.StatusTag, &c.RawPlayerJSON, &createdAtRaw); err != nil {
 			return nil, fmt.Errorf("scan espn free agent candidate: %w", err)
 		}
 		if playerID.Valid {

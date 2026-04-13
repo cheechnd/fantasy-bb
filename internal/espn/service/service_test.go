@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"fantasy-baseball/internal/config"
+	"fantasy-baseball/internal/espn"
 	"fantasy-baseball/internal/espn/repository"
 	"fantasy-baseball/internal/forecaster"
 	"fantasy-baseball/internal/pitchers"
@@ -147,6 +148,61 @@ func TestParseFreeAgentCandidatesPayload(t *testing.T) {
 	rows, _ = parseFreeAgentCandidatesPayload(payload, "", "DET", 25)
 	if len(rows) != 1 || rows[0].MLBTeam != "DET" {
 		t.Fatalf("team filter mismatch: %+v", rows)
+	}
+}
+
+func TestParseFreeAgentCandidatesPayloadAcquisitionStatus(t *testing.T) {
+	payload := []byte(`{
+	  "players": [
+	    {"id": 1, "fullName": "Immediate Arm", "proTeamAbbrev": "NYY", "defaultPositionId": 1, "eligibleSlots": [1,13], "status": "FREEAGENT", "injuryStatus": "ACTIVE"},
+	    {"id": 2, "fullName": "Waiver Arm", "proTeamAbbrev": "BOS", "defaultPositionId": 1, "eligibleSlots": [1,13], "status": "WAIVERS", "injuryStatus": "ACTIVE"}
+	  ]
+	}`)
+	rows, warnings := parseFreeAgentCandidatesPayload(payload, "", "", 25)
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings, got %d", len(warnings))
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(rows))
+	}
+	statusByName := map[string]string{}
+	for _, row := range rows {
+		statusByName[row.PlayerName] = row.AcquisitionStatus
+	}
+	if statusByName["Immediate Arm"] != espn.AcquisitionStatusFreeAgent {
+		t.Fatalf("expected FREEAGENT status, got %q", statusByName["Immediate Arm"])
+	}
+	if statusByName["Waiver Arm"] != espn.AcquisitionStatusWaivers {
+		t.Fatalf("expected WAIVERS status, got %q", statusByName["Waiver Arm"])
+	}
+}
+
+func TestParseFreeAgentCandidatesPayloadEntryStatusOverridesNestedPlayerMap(t *testing.T) {
+	payload := []byte(`{
+	  "players": [
+	    {
+	      "status": "WAIVERS",
+	      "waiverProcessDate": 1776150000000,
+	      "player": {
+	        "id": 99,
+	        "fullName": "Michael King",
+	        "proTeamAbbrev": "SD",
+	        "defaultPositionId": 1,
+	        "eligibleSlots": [1,13],
+	        "injuryStatus": "ACTIVE"
+	      }
+	    }
+	  ]
+	}`)
+	rows, warnings := parseFreeAgentCandidatesPayload(payload, "", "", 25)
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings, got %d", len(warnings))
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	if rows[0].AcquisitionStatus != espn.AcquisitionStatusWaivers {
+		t.Fatalf("expected WAIVERS, got %q", rows[0].AcquisitionStatus)
 	}
 }
 

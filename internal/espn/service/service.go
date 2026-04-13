@@ -650,7 +650,7 @@ func parseFreeAgentCandidatesPayload(payload []byte, searchRaw string, teamRaw s
 		}}
 	}
 
-	visitAny(root, func(playerMap map[string]any) {
+	appendCandidate := func(playerMap map[string]any, acquisitionStatusRaw string) {
 		name, _ := pickString(playerMap, "fullName", "playerName", "name")
 		if strings.TrimSpace(name) == "" {
 			return
@@ -680,18 +680,27 @@ func parseFreeAgentCandidatesPayload(payload []byte, searchRaw string, teamRaw s
 		if !isPitcher {
 			return
 		}
-		statusTag, _ := pickString(playerMap, "injuryStatus", "status")
+		statusTag, _ := pickString(playerMap, "injuryStatus")
+		acquisitionStatus := strings.TrimSpace(acquisitionStatusRaw)
+		if acquisitionStatus == "" {
+			acquisitionStatus, _ = pickString(playerMap, "status")
+		}
+		acquisitionStatus = espn.NormalizeAcquisitionStatus(acquisitionStatus)
+		if acquisitionStatus == "" {
+			acquisitionStatus = espn.AcquisitionStatusFreeAgent
+		}
 		rawJSON, _ := json.Marshal(playerMap)
 		row := espn.FreeAgentCandidate{
-			ESPNPlayerID:   playerID,
-			PlayerName:     strings.TrimSpace(name),
-			NormalizedName: matching.NormalizeName(name),
-			MLBTeam:        mlbTeam,
-			IsPitcher:      true,
-			Role:           role,
-			StatusTag:      strings.TrimSpace(statusTag),
-			RawPlayerJSON:  string(rawJSON),
-			CreatedAt:      time.Now().UTC(),
+			ESPNPlayerID:      playerID,
+			PlayerName:        strings.TrimSpace(name),
+			NormalizedName:    matching.NormalizeName(name),
+			MLBTeam:           mlbTeam,
+			IsPitcher:         true,
+			Role:              role,
+			AcquisitionStatus: acquisitionStatus,
+			StatusTag:         strings.TrimSpace(statusTag),
+			RawPlayerJSON:     string(rawJSON),
+			CreatedAt:         time.Now().UTC(),
 		}
 		seen[key] = struct{}{}
 		out = append(out, row)
@@ -701,7 +710,32 @@ func parseFreeAgentCandidatesPayload(payload []byte, searchRaw string, teamRaw s
 				Message:     fmt.Sprintf("role uncertain for candidate %q", row.PlayerName),
 			})
 		}
-	})
+	}
+
+	rootMap, _ := root.(map[string]any)
+	if rootMap != nil {
+		if players, ok := rootMap["players"].([]any); ok {
+			for _, raw := range players {
+				entry, ok := raw.(map[string]any)
+				if !ok {
+					continue
+				}
+				playerMap := entry
+				if nested, ok := entry["player"].(map[string]any); ok {
+					playerMap = nested
+				}
+				entryStatus, _ := pickString(entry, "status")
+				appendCandidate(playerMap, entryStatus)
+			}
+		}
+	}
+
+	// Fallback for payload variants that do not expose players[].
+	if len(out) == 0 {
+		visitAny(root, func(playerMap map[string]any) {
+			appendCandidate(playerMap, "")
+		})
+	}
 
 	sort.SliceStable(out, func(i, j int) bool {
 		return strings.ToLower(out[i].PlayerName) < strings.ToLower(out[j].PlayerName)

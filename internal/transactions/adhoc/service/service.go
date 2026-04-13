@@ -236,8 +236,15 @@ func (s *Service) resolve(ctx context.Context, requestID int64) (*transactions.A
 		Role string
 	}, 0)
 	addNonPitcherFound := false
+	addWaiverFound := false
 	for _, c := range candidates {
 		if matching.NormalizeName(c.PlayerName) != req.NormalizedAddLookup {
+			continue
+		}
+		if !espn.IsImmediateFreeAgent(c.AcquisitionStatus) {
+			if espn.IsWaiver(c.AcquisitionStatus) {
+				addWaiverFound = true
+			}
 			continue
 		}
 		if s.cfg.RequirePitchersOnly && !c.IsPitcher {
@@ -286,6 +293,8 @@ func (s *Service) resolve(ctx context.Context, requestID int64) (*transactions.A
 		if addNonPitcherFound {
 			resolution = transactions.AdHocResolutionInvalidType
 			notes["add"] = "add target is not a pitcher"
+		} else if addWaiverFound {
+			notes["add"] = "add target is on waivers and not immediately available"
 		} else {
 			notes["add"] = "no matching available pitcher found in bounded candidate pool"
 		}

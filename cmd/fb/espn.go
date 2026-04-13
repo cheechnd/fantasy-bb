@@ -516,13 +516,23 @@ func printESPNFreeAgentsTable(cmd *cobra.Command, rows []espn.FreeAgentCandidate
 		return
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "RUN\tPLAYER\tTEAM\tROLE\tPITCHER\tSTATUS")
+	fmt.Fprintln(w, "RUN\tPLAYER\tTEAM\tROLE\tPITCHER\tACQ_STATUS\tSTATUS")
 	for _, row := range rows {
 		pitcher := "no"
 		if row.IsPitcher {
 			pitcher = "yes"
 		}
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n", row.CandidateRunID, row.PlayerName, firstNonEmpty(row.MLBTeam, "-"), firstNonEmpty(row.Role, "-"), pitcher, firstNonEmpty(row.StatusTag, "-"))
+		fmt.Fprintf(
+			w,
+			"%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			row.CandidateRunID,
+			row.PlayerName,
+			firstNonEmpty(row.MLBTeam, "-"),
+			firstNonEmpty(row.Role, "-"),
+			pitcher,
+			firstNonEmpty(row.AcquisitionStatus, "-"),
+			firstNonEmpty(row.StatusTag, "-"),
+		)
 	}
 	w.Flush()
 }

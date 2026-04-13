@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"fantasy-baseball/internal/espn"
 	espnrepo "fantasy-baseball/internal/espn/repository"
 	"fantasy-baseball/internal/forecaster"
 	"fantasy-baseball/internal/pickups"
@@ -216,7 +217,13 @@ func (s *Service) resolveSources(ctx context.Context, opts pickups.RecommendOpti
 		return resolved, fmt.Errorf("candidate run %d has no rows", *resolved.candidateRunID)
 	}
 	for _, row := range candRowsDB {
+		if !espn.IsImmediateFreeAgent(row.AcquisitionStatus) {
+			continue
+		}
 		resolved.candidates = append(resolved.candidates, espnCandidateRow{PlayerName: row.PlayerName, MLBTeam: row.MLBTeam, ESPNPlayerID: row.ESPNPlayerID, Role: row.Role, StatusTag: row.StatusTag})
+	}
+	if len(resolved.candidates) == 0 {
+		return resolved, fmt.Errorf("candidate run %d has no immediately available free-agent pitchers", *resolved.candidateRunID)
 	}
 	return resolved, nil
 }
