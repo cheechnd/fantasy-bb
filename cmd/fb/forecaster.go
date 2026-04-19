@@ -125,13 +125,10 @@ func newForecasterShowCmd(opts *cliOptions) *cobra.Command {
 	weekCmd := newForecasterShowWeekCmd(opts)
 	weekCmd.Use = "week"
 	weekCmd.Short = "Show next 7 days grouped by date"
-	topCmd := newForecasterTopCmd(opts)
-	topCmd.Use = "top"
-	topCmd.Short = "Show top projected probable starts"
 	warningsCmd := newForecasterWarningsCmd(opts)
 	warningsCmd.Use = "warnings"
 	warningsCmd.Short = "Show parse warnings for latest or selected import run"
-	cmd.AddCommand(startsCmd, weekCmd, topCmd, warningsCmd)
+	cmd.AddCommand(startsCmd, weekCmd, warningsCmd)
 	return cmd
 }
 
@@ -218,55 +215,6 @@ func newForecasterShowWeekCmd(opts *cliOptions) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&from, "from", "", "Week start date (YYYY-MM-DD); defaults to today")
 	cmd.Flags().BoolVar(&includeTBD, "include-tbd", true, "Include TBD rows")
-	return cmd
-}
-
-func newForecasterTopCmd(opts *cliOptions) *cobra.Command {
-	var from string
-	var to string
-	var top int
-	var minFPTS float64
-	var team string
-	var hasMinFPTS bool
-	cmd := &cobra.Command{
-		Use:   "top",
-		Short: "Show top projected probable starts",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			fromDate, err := parseDateFlag(from)
-			if err != nil {
-				return err
-			}
-			toDate, err := parseDateFlag(to)
-			if err != nil {
-				return err
-			}
-			filter := forecaster.TopFilter{From: fromDate, To: toDate, TopN: top, Team: team}
-			if hasMinFPTS {
-				filter.MinFPTS = &minFPTS
-			}
-
-			v, err := withForecasterService(cmd.Context(), opts, func(ctx context.Context, svc *service.Service, _ appExecution) (any, error) {
-				return svc.Top(ctx, filter)
-			})
-			if err != nil {
-				return err
-			}
-			rows := v.([]forecaster.ProbableStart)
-			if opts.OutputJSON {
-				return writeJSON(cmd, map[string]any{"ok": true, "count": len(rows), "rows": rows})
-			}
-			printProbableStartsTable(cmd, rows)
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&from, "from", "", "From date (YYYY-MM-DD)")
-	cmd.Flags().StringVar(&to, "to", "", "To date (YYYY-MM-DD)")
-	cmd.Flags().IntVar(&top, "top", 10, "Maximum rows to return")
-	cmd.Flags().Float64Var(&minFPTS, "min-fpts", 0, "Minimum projected FPTS")
-	cmd.Flags().StringVar(&team, "team", "", "Team code filter")
-	cmd.PreRun = func(cmd *cobra.Command, _ []string) {
-		hasMinFPTS = cmd.Flags().Changed("min-fpts")
-	}
 	return cmd
 }
 

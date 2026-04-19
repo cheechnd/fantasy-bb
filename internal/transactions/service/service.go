@@ -532,12 +532,7 @@ func (s *Service) generatePickupRecommendationsFromSources(ctx context.Context, 
 	if importRunID == nil {
 		return nil, nil, fmt.Errorf("no forecaster import found; run `fb forecaster sync` first")
 	}
-	pickSvc := picksvccfg.New(s.foreRepo, s.espnRepo, s.pickRepo, s.pitchSvc, picksvccfg.Config{
-		MinStreamerTotalFPTS:     s.cfg.PickupMinStreamerTotalFPTS,
-		StrongUpgradeDeltaFPTS:   s.cfg.PickupStrongUpgradeDeltaFPTS,
-		MarginalUpgradeDeltaFPTS: s.cfg.PickupMarginalUpgradeDeltaFPTS,
-		RiskyMonitorMinTotalFPTS: s.cfg.PickupRiskyMonitorMinTotalFPTS,
-	})
+	pickSvc := picksvccfg.New(s.foreRepo, s.espnRepo, s.pickRepo, s.pitchSvc, picksvccfg.Config{})
 	topN := s.cfg.TopMoveLimit
 	if topN < 10 {
 		topN = 10

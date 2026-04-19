@@ -473,9 +473,9 @@ func buildLineupItems(planItems []pitchplan.PlanItem, roster []espn.RosterSnapsh
 	usedBenchTargets := map[string]bool{}
 	out := make([]PlanItem, 0)
 	summary := map[string]int{
-		"recommended_starts":   0,
-		"recommended_benches":  0,
-		"no_action_needed":     0,
+		"activate_actions":    0,
+		"bench_actions":       0,
+		"no_action_needed":    0,
 		"ambiguous_or_blocked": 0,
 	}
 
@@ -516,16 +516,16 @@ func buildLineupItems(planItems []pitchplan.PlanItem, roster []espn.RosterSnapsh
 						CurrentSlot:  swapSlot,
 						TargetSlot:   "BE",
 						Rationale: map[string]any{
-							"reason": "slot_rebalance_for_recommended_start",
+							"reason": "slot_rebalance_for_activation",
 						},
-						Flags:     []string{"recommended_bench", "slot_rebalance"},
+						Flags:     []string{"slot_rebalance"},
 						CreatedAt: time.Now().UTC(),
 					})
 					usedBenchTargets[matching.NormalizeName(swap.PlayerName)] = true
 					if slotUsage[swapSlot] > 0 {
 						slotUsage[swapSlot]--
 					}
-					summary["recommended_benches"]++
+					summary["bench_actions"]++
 					targetSlot, ok = firstOpenActiveSlot(slotUsage, slotCaps)
 				}
 			}
@@ -537,9 +537,8 @@ func buildLineupItems(planItems []pitchplan.PlanItem, roster []espn.RosterSnapsh
 					CurrentSlot:  currentSlot,
 					TargetSlot:   "",
 					Rationale: map[string]any{
-						"pitcher_bucket": it.Bucket,
-						"player_key":     nameKey,
-						"reason":         "no_open_active_pitcher_slot",
+						"player_key": nameKey,
+						"reason":     "no_open_active_pitcher_slot",
 					},
 					Flags:     []string{"blocked", "target_slot_full"},
 					CreatedAt: time.Now().UTC(),
@@ -553,12 +552,12 @@ func buildLineupItems(planItems []pitchplan.PlanItem, roster []espn.RosterSnapsh
 				ESPNPlayerID: row.ESPNPlayerID,
 				CurrentSlot:  currentSlot,
 				TargetSlot:   targetSlot,
-				Rationale:    map[string]any{"pitcher_bucket": it.Bucket, "player_key": nameKey},
-				Flags:        []string{"recommended_start"},
+				Rationale:    map[string]any{"player_key": nameKey},
+				Flags:        []string{"plan_derived"},
 				CreatedAt:    time.Now().UTC(),
 			})
 			slotUsage[targetSlot]++
-			summary["recommended_starts"]++
+			summary["activate_actions"]++
 		case pitchplan.BucketBench, pitchplan.BucketNoStartScheduled:
 			if !active {
 				summary["no_action_needed"]++
@@ -570,11 +569,11 @@ func buildLineupItems(planItems []pitchplan.PlanItem, roster []espn.RosterSnapsh
 				ESPNPlayerID: row.ESPNPlayerID,
 				CurrentSlot:  currentSlot,
 				TargetSlot:   "BE",
-				Rationale:    map[string]any{"pitcher_bucket": it.Bucket, "player_key": nameKey},
-				Flags:        []string{"recommended_bench"},
+				Rationale:    map[string]any{"player_key": nameKey},
+				Flags:        []string{"plan_derived"},
 				CreatedAt:    time.Now().UTC(),
 			})
-			summary["recommended_benches"]++
+			summary["bench_actions"]++
 		default:
 			summary["no_action_needed"]++
 		}

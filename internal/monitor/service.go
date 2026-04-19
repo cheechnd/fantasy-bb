@@ -212,7 +212,7 @@ func (s *Service) evaluatePickups(ctx context.Context, opts EvaluateOptions) ([]
 		players, _ := s.repo.PickupRunPlayers(ctx, r0.ID)
 		missing := 0
 		for _, p := range players {
-			if p.ItemType != "top_candidate" && p.ItemType != "streamer" {
+			if p.ItemType != "top_candidate" {
 				continue
 			}
 			ok, _ := s.repo.IsCandidateNow(ctx, p.PlayerName)
@@ -223,7 +223,7 @@ func (s *Service) evaluatePickups(ctx context.Context, opts EvaluateOptions) ([]
 		if missing > 0 {
 			status = maxStatus(status, StatusInvalidated)
 			rec = ActionRerunPickups
-			reasons = append(reasons, Reason{Code: "candidate_unavailable", Message: fmt.Sprintf("%d recommended candidates missing from latest pool", missing)})
+			reasons = append(reasons, Reason{Code: "candidate_unavailable", Message: fmt.Sprintf("%d projected candidates missing from latest pool", missing)})
 		}
 		if len(reasons) == 0 {
 			reasons = append(reasons, Reason{Code: "ok", Message: "pickup run still looks usable"})

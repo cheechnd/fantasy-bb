@@ -140,10 +140,6 @@ type ServiceConfig struct {
 	PlanningTBDPenalty               float64
 	PlanningMissingProjectionPenalty float64
 	PlanningAmbiguousMatchPenalty    float64
-	PickupMinStreamerTotalFPTS       float64
-	PickupStrongUpgradeDeltaFPTS     float64
-	PickupMarginalUpgradeDeltaFPTS   float64
-	PickupRiskyMonitorMinTotalFPTS   float64
 }
 
 type CreatePlanInput struct {

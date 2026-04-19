@@ -452,10 +452,6 @@ func withTransactionsService(ctx context.Context, opts *cliOptions, fn func(cont
 			PlanningTBDPenalty:               cfg.Planning.Pitchers.TBDPenalty,
 			PlanningMissingProjectionPenalty: cfg.Planning.Pitchers.MissingProjectionPenalty,
 			PlanningAmbiguousMatchPenalty:    cfg.Planning.Pitchers.AmbiguousMatchPenalty,
-			PickupMinStreamerTotalFPTS:       cfg.Pickups.Pitchers.MinStreamerTotalFPTS,
-			PickupStrongUpgradeDeltaFPTS:     cfg.Pickups.Pitchers.StrongUpgradeDeltaFPTS,
-			PickupMarginalUpgradeDeltaFPTS:   cfg.Pickups.Pitchers.MarginalUpgradeDeltaFPTS,
-			PickupRiskyMonitorMinTotalFPTS:   cfg.Pickups.Pitchers.RiskyMonitorMinTotalFPTS,
 		},
 	)
 	return fn(ctx, service)

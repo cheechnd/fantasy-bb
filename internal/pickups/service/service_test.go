@@ -24,12 +24,7 @@ func TestRecommendBuildsAndPersistsCategories(t *testing.T) {
 	espnRepo := espnrepo.New(store.DB())
 	pickRepo := pickrepo.New(store.DB())
 	pSvc := pitchsvc.New(foreRepo, pitchrepo.New(store.DB()))
-	svc := New(foreRepo, espnRepo, pickRepo, pSvc, Config{
-		MinStreamerTotalFPTS:     8.0,
-		StrongUpgradeDeltaFPTS:   5.0,
-		MarginalUpgradeDeltaFPTS: 1.5,
-		RiskyMonitorMinTotalFPTS: 6.0,
-	})
+	svc := New(foreRepo, espnRepo, pickRepo, pSvc, Config{})
 
 	from := time.Date(2026, 9, 15, 0, 0, 0, 0, time.Local)
 	to := time.Date(2026, 9, 22, 0, 0, 0, 0, time.Local)
@@ -52,24 +47,21 @@ func TestRecommendBuildsAndPersistsCategories(t *testing.T) {
 	if res.RecommendationRunID == 0 {
 		t.Fatalf("expected persisted recommendation run id")
 	}
-	if len(res.TopCandidates) == 0 || res.TopCandidates[0].PlayerName != "Streamer Ace" {
-		t.Fatalf("unexpected top candidates: %+v", res.TopCandidates)
+	if len(res.TopCandidates) == 0 {
+		t.Fatalf("unexpected empty top candidates")
 	}
-	foundRiskyTBD := false
-	for _, row := range res.RiskyMonitor {
-		if row.PlayerName == "Risky TBD" {
-			foundRiskyTBD = true
+	foundStreamerAce := false
+	for _, row := range res.TopCandidates {
+		if row.PlayerName == "Streamer Ace" {
+			foundStreamerAce = true
 			break
 		}
 	}
-	if !foundRiskyTBD {
-		t.Fatalf("expected risky monitor to include Risky TBD, got %+v", res.RiskyMonitor)
+	if !foundStreamerAce {
+		t.Fatalf("expected Streamer Ace in top candidates: %+v", res.TopCandidates)
 	}
 	if len(res.Unmatched) == 0 || res.Unmatched[0].PlayerName != "Unknown Arm" {
 		t.Fatalf("expected unmatched candidate, got %+v", res.Unmatched)
-	}
-	if len(res.Upgrades) != 0 {
-		t.Fatalf("expected no upgrades in pickups recommend, got %+v", res.Upgrades)
 	}
 
 	run, items, err := svc.Last(context.Background())
@@ -92,7 +84,7 @@ func TestRecommendBuildsAndPersistsCategories(t *testing.T) {
 	}
 }
 
-func TestTopStreamersRespectsMinThresholdOnBestStart(t *testing.T) {
+func TestBlockedStatusIncludedInDescriptiveOutput(t *testing.T) {
 	store := mustOpenStore(t)
 	defer store.Close()
 
@@ -100,88 +92,7 @@ func TestTopStreamersRespectsMinThresholdOnBestStart(t *testing.T) {
 	espnRepo := espnrepo.New(store.DB())
 	pickRepo := pickrepo.New(store.DB())
 	pSvc := pitchsvc.New(foreRepo, pitchrepo.New(store.DB()))
-	svc := New(foreRepo, espnRepo, pickRepo, pSvc, Config{
-		MinStreamerTotalFPTS:     8.0,
-		StrongUpgradeDeltaFPTS:   5.0,
-		MarginalUpgradeDeltaFPTS: 1.5,
-		RiskyMonitorMinTotalFPTS: 6.0,
-	})
-
-	from := time.Date(2026, 9, 15, 0, 0, 0, 0, time.Local)
-	to := time.Date(2026, 9, 22, 0, 0, 0, 0, time.Local)
-	importRunID := seedForecasterImport(t, foreRepo, from)
-	syncRunID := seedESPNSync(t, espnRepo)
-	candidateRunID := seedCandidateRun(t, espnRepo, syncRunID)
-
-	min := 12.0
-	res, err := svc.TopStreamers(context.Background(), pickups.RecommendOptions{
-		From:           from,
-		To:             to,
-		SyncRunID:      &syncRunID,
-		ImportRunID:    &importRunID,
-		CandidateRunID: &candidateRunID,
-		TopN:           10,
-		MinTotalFPTS:   &min,
-	})
-	if err != nil {
-		t.Fatalf("TopStreamers: %v", err)
-	}
-	if len(res.TopStreamers) != 0 {
-		t.Fatalf("expected no streamers at high best-start threshold, got %+v", res.TopStreamers)
-	}
-}
-
-func TestCompareReturnsUpgradeRows(t *testing.T) {
-	store := mustOpenStore(t)
-	defer store.Close()
-
-	foreRepo := forecaster.NewRepository(store.DB())
-	espnRepo := espnrepo.New(store.DB())
-	pickRepo := pickrepo.New(store.DB())
-	pSvc := pitchsvc.New(foreRepo, pitchrepo.New(store.DB()))
-	svc := New(foreRepo, espnRepo, pickRepo, pSvc, Config{
-		MinStreamerTotalFPTS:     8.0,
-		StrongUpgradeDeltaFPTS:   5.0,
-		MarginalUpgradeDeltaFPTS: 1.5,
-		RiskyMonitorMinTotalFPTS: 6.0,
-	})
-
-	from := time.Date(2026, 9, 15, 0, 0, 0, 0, time.Local)
-	to := time.Date(2026, 9, 22, 0, 0, 0, 0, time.Local)
-	importRunID := seedForecasterImport(t, foreRepo, from)
-	syncRunID := seedESPNSync(t, espnRepo)
-	candidateRunID := seedCandidateRun(t, espnRepo, syncRunID)
-
-	res, err := svc.Compare(context.Background(), pickups.RecommendOptions{
-		From:           from,
-		To:             to,
-		SyncRunID:      &syncRunID,
-		ImportRunID:    &importRunID,
-		CandidateRunID: &candidateRunID,
-		TopN:           5,
-	})
-	if err != nil {
-		t.Fatalf("Compare: %v", err)
-	}
-	if len(res.Upgrades) != 0 {
-		t.Fatalf("expected no upgrade rows in pickups compare, got %+v", res.Upgrades)
-	}
-}
-
-func TestBlockedStatusExcludedFromTopAndStreamers(t *testing.T) {
-	store := mustOpenStore(t)
-	defer store.Close()
-
-	foreRepo := forecaster.NewRepository(store.DB())
-	espnRepo := espnrepo.New(store.DB())
-	pickRepo := pickrepo.New(store.DB())
-	pSvc := pitchsvc.New(foreRepo, pitchrepo.New(store.DB()))
-	svc := New(foreRepo, espnRepo, pickRepo, pSvc, Config{
-		MinStreamerTotalFPTS:     8.0,
-		StrongUpgradeDeltaFPTS:   5.0,
-		MarginalUpgradeDeltaFPTS: 1.5,
-		RiskyMonitorMinTotalFPTS: 6.0,
-	})
+	svc := New(foreRepo, espnRepo, pickRepo, pSvc, Config{})
 
 	from := time.Date(2026, 9, 15, 0, 0, 0, 0, time.Local)
 	to := time.Date(2026, 9, 22, 0, 0, 0, 0, time.Local)
@@ -201,20 +112,15 @@ func TestBlockedStatusExcludedFromTopAndStreamers(t *testing.T) {
 		t.Fatalf("Recommend: %v", err)
 	}
 
+	foundOut := false
 	for _, row := range res.TopCandidates {
 		if row.PlayerName == "Out Candidate" {
-			t.Fatalf("OUT candidate should not appear in top candidates: %+v", row)
-		}
-	}
-	foundRisky := false
-	for _, row := range res.RiskyMonitor {
-		if row.PlayerName == "Out Candidate" {
-			foundRisky = true
+			foundOut = true
 			break
 		}
 	}
-	if !foundRisky {
-		t.Fatalf("OUT candidate should appear in risky/monitor")
+	if !foundOut {
+		t.Fatalf("OUT candidate should appear in descriptive top candidates")
 	}
 }
 

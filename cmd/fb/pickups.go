@@ -21,7 +21,7 @@ import (
 )
 
 func newPickupsCmd(opts *cliOptions) *cobra.Command {
-	cmd := &cobra.Command{Use: "pickups", Short: "Available pitcher projection views (immediate FREEAGENT pool)"}
+	cmd := &cobra.Command{Use: "pickups", Short: "Available pitcher projection views (FREEAGENT + WAIVERS)"}
 	cmd.AddGroup(
 		&cobra.Group{ID: "generate", Title: "Generate"},
 		&cobra.Group{ID: "inspect", Title: "Inspection"},
@@ -40,7 +40,7 @@ func newPickupsPlanCmd(opts *cliOptions) *cobra.Command {
 	var syncRunID, importRunID, candidateRunID int64
 	cmd := &cobra.Command{
 		Use:   "plan",
-		Short: "Generate neutral available-pitcher projection view (WAIVERS excluded)",
+		Short: "Generate neutral available-pitcher projection view",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			v, err := withPickupsService(cmd.Context(), opts, func(ctx context.Context, svc *picksvc.Service) (any, error) {
 				opts2, err := buildPickupOptions(cmd, fromRaw, toRaw, topN, &syncRunID, &importRunID, &candidateRunID)
@@ -56,13 +56,13 @@ func newPickupsPlanCmd(opts *cliOptions) *cobra.Command {
 			neutralRows := neutralPickupRows(result)
 			if opts.OutputJSON {
 				return writeJSON(cmd, map[string]any{
-					"recommendation_run_id": result.RecommendationRunID,
+					"projection_run_id":     result.RecommendationRunID,
 					"sync_run_id":           result.SyncRunID,
 					"import_run_id":         result.ImportRunID,
 					"candidate_run_id":      result.CandidateRunID,
 					"window_start":          result.WindowStart,
 					"window_end":            result.WindowEnd,
-					"availability_filter":   "FREEAGENT_ONLY",
+					"availability_filter":   "FREEAGENT_AND_WAIVERS",
 					"count":                 len(neutralRows),
 					"rows":                  neutralRows,
 				})
@@ -81,14 +81,14 @@ func newPickupsPlanCmd(opts *cliOptions) *cobra.Command {
 }
 
 func newPickupsLastCmd(opts *cliOptions) *cobra.Command {
-	var recommendationID int64
+	var runID int64
 	cmd := &cobra.Command{
 		Use:   "last",
 		Short: "Show saved available-pitcher projection view (latest by default)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			v, err := withPickupsService(cmd.Context(), opts, func(ctx context.Context, svc *picksvc.Service) (any, error) {
-				if recommendationID > 0 {
-					run, items, err := svc.Show(ctx, recommendationID)
+				if runID > 0 {
+					run, items, err := svc.Show(ctx, runID)
 					if err != nil {
 						return nil, err
 					}
@@ -109,18 +109,18 @@ func newPickupsLastCmd(opts *cliOptions) *cobra.Command {
 			if opts.OutputJSON {
 				return writeJSON(cmd, map[string]any{
 					"run":                 payload["run"],
-					"availability_filter": "FREEAGENT_ONLY",
+					"availability_filter": "FREEAGENT_AND_WAIVERS",
 					"count":               len(neutralRows),
 					"rows":                neutralRows,
 				})
 			}
 			run, _ := payload["run"].(*pickups.RecommendationRun)
 			if run == nil {
-				if recommendationID > 0 {
-					fmt.Fprintf(cmd.OutOrStdout(), "Recommendation %d not found.\n", recommendationID)
+				if runID > 0 {
+					fmt.Fprintf(cmd.OutOrStdout(), "Pickup projection run %d not found.\n", runID)
 					return nil
 				}
-				fmt.Fprintln(cmd.OutOrStdout(), "No pickup recommendations found.")
+				fmt.Fprintln(cmd.OutOrStdout(), "No saved pickup projection runs found.")
 				return nil
 			}
 			printPickupRun(cmd, run)
@@ -128,7 +128,7 @@ func newPickupsLastCmd(opts *cliOptions) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().Int64Var(&recommendationID, "recommendation-id", 0, "Recommendation run ID (defaults to latest)")
+	cmd.Flags().Int64Var(&runID, "run-id", 0, "Pickup projection run ID (defaults to latest)")
 	return cmd
 }
 
@@ -151,10 +151,6 @@ func withPickupsService(ctx context.Context, opts *cliOptions, fn func(context.C
 	pitchRepo := pitchrepo.New(store.DB())
 	pitchService := pitchsvc.New(foreRepo, pitchRepo)
 	svc := picksvc.New(foreRepo, espnRepo, pickRepo, pitchService, picksvc.Config{
-		MinStreamerTotalFPTS:     cfg.Pickups.Pitchers.MinStreamerTotalFPTS,
-		StrongUpgradeDeltaFPTS:   cfg.Pickups.Pitchers.StrongUpgradeDeltaFPTS,
-		MarginalUpgradeDeltaFPTS: cfg.Pickups.Pitchers.MarginalUpgradeDeltaFPTS,
-		RiskyMonitorMinTotalFPTS: cfg.Pickups.Pitchers.RiskyMonitorMinTotalFPTS,
 	})
 	return fn(ctx, svc)
 }
@@ -181,16 +177,16 @@ func buildPickupOptions(cmd *cobra.Command, fromRaw, toRaw string, topN int, syn
 }
 
 func printPickupRecommendation(cmd *cobra.Command, r pickups.RecommendResult, rows []neutralPickupRow) {
-	fmt.Fprintf(cmd.OutOrStdout(), "Recommendation Run: %d\n", r.RecommendationRunID)
+	fmt.Fprintf(cmd.OutOrStdout(), "Pickup Projection Run: %d\n", r.RecommendationRunID)
 	fmt.Fprintf(cmd.OutOrStdout(), "Window: %s to %s\n\n", r.WindowStart, r.WindowEnd)
-	fmt.Fprintln(cmd.OutOrStdout(), "Availability filter: immediate FREEAGENT only (WAIVERS excluded)")
+	fmt.Fprintln(cmd.OutOrStdout(), "Availability filter: FREEAGENT and WAIVERS")
 	fmt.Fprintln(cmd.OutOrStdout())
 	fmt.Fprintln(cmd.OutOrStdout(), "Available pitchers with projections")
 	printNeutralPickupRowsTable(cmd, rows)
 }
 
 func printPickupRun(cmd *cobra.Command, run *pickups.RecommendationRun) {
-	fmt.Fprintf(cmd.OutOrStdout(), "Recommendation Run: %d\n", run.ID)
+	fmt.Fprintf(cmd.OutOrStdout(), "Pickup Projection Run: %d\n", run.ID)
 	fmt.Fprintf(cmd.OutOrStdout(), "Window: %s to %s\n", run.WindowStart, run.WindowEnd)
 	fmt.Fprintf(cmd.OutOrStdout(), "Created: %s\n", run.CreatedAt.Format(time.RFC3339))
 	fmt.Fprintf(cmd.OutOrStdout(), "Status: %s\n\n", run.Status)
@@ -231,9 +227,8 @@ type neutralPickupRow struct {
 }
 
 func neutralPickupRows(r pickups.RecommendResult) []neutralPickupRow {
-	seed := make([]pickups.RecommendationItem, 0, len(r.TopCandidates)+len(r.RiskyMonitor)+len(r.Unmatched))
+	seed := make([]pickups.RecommendationItem, 0, len(r.TopCandidates)+len(r.Unmatched))
 	seed = append(seed, r.TopCandidates...)
-	seed = append(seed, r.RiskyMonitor...)
 	seed = append(seed, r.Unmatched...)
 	return neutralPickupRowsFromItems(seed)
 }
@@ -285,8 +280,6 @@ func toNeutralPickupRow(item pickups.RecommendationItem) neutralPickupRow {
 	switch item.ItemType {
 	case pickups.ItemTypeUnmatched:
 		state = "unmatched"
-	case pickups.ItemTypeRiskyMonitor:
-		state = "limited_confidence"
 	}
 	starts := pickupStarts(item)
 	best := pickupBestStartFPTS(item)
@@ -298,9 +291,24 @@ func toNeutralPickupRow(item pickups.RecommendationItem) neutralPickupRow {
 		TotalProjectedFPTS:  item.TotalProjectedFPTS,
 		BestStartFPTS:       best,
 		ProjectionState:     state,
-		AvailabilityState:   "freeagent",
+		AvailabilityState:   pickupAvailabilityState(item),
 		Flags:               neutralFlags(item.Flags),
 		Notes:               neutralNotes(item.Notes),
+	}
+}
+
+func pickupAvailabilityState(item pickups.RecommendationItem) string {
+	if item.Details == nil {
+		return "unknown"
+	}
+	raw, _ := item.Details["acquisition_status"].(string)
+	switch strings.ToUpper(strings.TrimSpace(raw)) {
+	case "FREEAGENT":
+		return "freeagent"
+	case "WAIVERS":
+		return "waivers"
+	default:
+		return "unknown"
 	}
 }
 

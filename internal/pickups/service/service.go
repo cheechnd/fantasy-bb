@@ -18,10 +18,6 @@ import (
 )
 
 type Config struct {
-	MinStreamerTotalFPTS     float64
-	StrongUpgradeDeltaFPTS   float64
-	MarginalUpgradeDeltaFPTS float64
-	RiskyMonitorMinTotalFPTS float64
 }
 
 type Service struct {
@@ -76,7 +72,6 @@ func (s *Service) Recommend(ctx context.Context, opts pickups.RecommendOptions) 
 		Summary: map[string]any{
 			"candidate_rows": len(result.Items),
 			"matched":        len(result.TopCandidates),
-			"limited":        len(result.RiskyMonitor),
 			"unmatched":      len(result.Unmatched),
 		},
 		Items: result.Items,
@@ -91,40 +86,6 @@ func (s *Service) Recommend(ctx context.Context, opts pickups.RecommendOptions) 
 	result.WindowStart = opts.From.Format("2006-01-02")
 	result.WindowEnd = opts.To.Format("2006-01-02")
 	return result, nil
-}
-
-func (s *Service) TopStreamers(ctx context.Context, opts pickups.RecommendOptions) (pickups.RecommendResult, error) {
-	res, err := s.Recommend(ctx, opts)
-	if err != nil {
-		return pickups.RecommendResult{}, err
-	}
-	return pickups.RecommendResult{
-		RecommendationRunID: res.RecommendationRunID,
-		SyncRunID:           res.SyncRunID,
-		ImportRunID:         res.ImportRunID,
-		CandidateRunID:      res.CandidateRunID,
-		WindowStart:         res.WindowStart,
-		WindowEnd:           res.WindowEnd,
-		TopStreamers:        res.TopStreamers,
-		Items:               res.TopStreamers,
-	}, nil
-}
-
-func (s *Service) Compare(ctx context.Context, opts pickups.RecommendOptions) (pickups.RecommendResult, error) {
-	res, err := s.Recommend(ctx, opts)
-	if err != nil {
-		return pickups.RecommendResult{}, err
-	}
-	return pickups.RecommendResult{
-		RecommendationRunID: res.RecommendationRunID,
-		SyncRunID:           res.SyncRunID,
-		ImportRunID:         res.ImportRunID,
-		CandidateRunID:      res.CandidateRunID,
-		WindowStart:         res.WindowStart,
-		WindowEnd:           res.WindowEnd,
-		Upgrades:            []pickups.RecommendationItem{},
-		Items:               []pickups.RecommendationItem{},
-	}, nil
 }
 
 func (s *Service) Last(ctx context.Context) (*pickups.RecommendationRun, []pickups.RecommendationItem, error) {
@@ -156,6 +117,7 @@ type espnCandidateRow struct {
 	ESPNPlayerID *int64
 	Role         string
 	StatusTag    string
+	Acquisition  string
 }
 
 func (s *Service) resolveSources(ctx context.Context, opts pickups.RecommendOptions) (resolvedSources, error) {
@@ -216,13 +178,24 @@ func (s *Service) resolveSources(ctx context.Context, opts pickups.RecommendOpti
 		return resolved, fmt.Errorf("candidate run %d has no rows", *resolved.candidateRunID)
 	}
 	for _, row := range candRowsDB {
-		if !espn.IsImmediateFreeAgent(row.AcquisitionStatus) {
+		if !row.IsPitcher {
 			continue
 		}
-		resolved.candidates = append(resolved.candidates, espnCandidateRow{PlayerName: row.PlayerName, MLBTeam: row.MLBTeam, ESPNPlayerID: row.ESPNPlayerID, Role: row.Role, StatusTag: row.StatusTag})
+		acq := espn.NormalizeAcquisitionStatus(row.AcquisitionStatus)
+		if acq != espn.AcquisitionStatusFreeAgent && acq != espn.AcquisitionStatusWaivers && acq != "" {
+			continue
+		}
+		resolved.candidates = append(resolved.candidates, espnCandidateRow{
+			PlayerName:   row.PlayerName,
+			MLBTeam:      row.MLBTeam,
+			ESPNPlayerID: row.ESPNPlayerID,
+			Role:         row.Role,
+			StatusTag:    row.StatusTag,
+			Acquisition:  acq,
+		})
 	}
 	if len(resolved.candidates) == 0 {
-		return resolved, fmt.Errorf("candidate run %d has no immediately available free-agent pitchers", *resolved.candidateRunID)
+		return resolved, fmt.Errorf("candidate run %d has no free-agent or waiver pitchers", *resolved.candidateRunID)
 	}
 	return resolved, nil
 }
@@ -251,7 +224,12 @@ func (s *Service) projectCandidates(candidates []espnCandidateRow, starts []fore
 	out := []pickups.CandidateProjection{}
 	for _, c := range candidates {
 		m := matching.Match(c.PlayerName, c.MLBTeam, cands)
-		proj := pickups.CandidateProjection{PlayerName: c.PlayerName, MLBTeam: c.MLBTeam, ESPNPlayerID: c.ESPNPlayerID}
+		proj := pickups.CandidateProjection{
+			PlayerName:        c.PlayerName,
+			MLBTeam:           c.MLBTeam,
+			ESPNPlayerID:      c.ESPNPlayerID,
+			AcquisitionStatus: c.Acquisition,
+		}
 		if m.MatchStatus != pitchers.MatchStatusMatched {
 			proj.Unmatched = true
 			proj.Flags = append(proj.Flags, string(m.MatchStatus))
@@ -333,7 +311,6 @@ func (s *Service) buildRecommendations(cands []pickups.CandidateProjection, rost
 	_ = topN
 
 	topCandidates := []pickups.RecommendationItem{}
-	risky := []pickups.RecommendationItem{}
 	unmatched := []pickups.RecommendationItem{}
 	items := []pickups.RecommendationItem{}
 
@@ -345,13 +322,8 @@ func (s *Service) buildRecommendations(cands []pickups.CandidateProjection, rost
 			items = append(items, base)
 			continue
 		}
-		if isRiskyCandidate(c) {
-			base.ItemType = pickups.ItemTypeRiskyMonitor
-			risky = append(risky, base)
-		} else {
-			base.ItemType = pickups.ItemTypeTopCandidate
-			topCandidates = append(topCandidates, base)
-		}
+		base.ItemType = pickups.ItemTypeTopCandidate
+		topCandidates = append(topCandidates, base)
 		items = append(items, base)
 	}
 	sort.SliceStable(items, func(i, j int) bool {
@@ -375,9 +347,6 @@ func (s *Service) buildRecommendations(cands []pickups.CandidateProjection, rost
 
 	return pickups.RecommendResult{
 		TopCandidates: topCandidates,
-		TopStreamers:  []pickups.RecommendationItem{},
-		Upgrades:      []pickups.RecommendationItem{},
-		RiskyMonitor:  risky,
 		Unmatched:     unmatched,
 		Items:         items,
 	}
@@ -396,6 +365,7 @@ func toRecommendationItem(c pickups.CandidateProjection) pickups.RecommendationI
 			"starts":                    c.Starts,
 			"average_projected_fpts":    c.AverageProjectedFPTS,
 			"highest_single_start_fpts": c.HighestSingleFPTS,
+			"acquisition_status":        c.AcquisitionStatus,
 		},
 		CreatedAt: time.Now().UTC(),
 	}
@@ -424,13 +394,6 @@ func firstNonEmpty(values ...string) string {
 
 func isBlockedCandidate(c pickups.CandidateProjection) bool {
 	return containsFlag(c.Flags, "status_blocked")
-}
-
-func isRiskyCandidate(c pickups.CandidateProjection) bool {
-	return containsFlag(c.Flags, "status_blocked") ||
-		containsFlag(c.Flags, "tbd") ||
-		containsFlag(c.Flags, "missing_projection") ||
-		containsFlag(c.Flags, "status_risk")
 }
 
 func isHardBlockedStatus(status string) bool {

@@ -112,12 +112,8 @@ type PickupsConfig struct {
 }
 
 type PickupPitchersConfig struct {
-	DefaultCandidateLimit    int     `json:"default_candidate_limit"`
-	MaxCandidateLimit        int     `json:"max_candidate_limit"`
-	MinStreamerTotalFPTS     float64 `json:"min_streamer_total_fpts"`
-	StrongUpgradeDeltaFPTS   float64 `json:"strong_upgrade_delta_fpts"`
-	MarginalUpgradeDeltaFPTS float64 `json:"marginal_upgrade_delta_fpts"`
-	RiskyMonitorMinTotalFPTS float64 `json:"risky_monitor_min_total_fpts"`
+	DefaultCandidateLimit int `json:"default_candidate_limit"`
+	MaxCandidateLimit     int `json:"max_candidate_limit"`
 }
 
 type TransactionsConfig struct {
@@ -247,12 +243,8 @@ func Default() Config {
 		},
 		Pickups: PickupsConfig{
 			Pitchers: PickupPitchersConfig{
-				DefaultCandidateLimit:    100,
-				MaxCandidateLimit:        100,
-				MinStreamerTotalFPTS:     8.0,
-				StrongUpgradeDeltaFPTS:   5.0,
-				MarginalUpgradeDeltaFPTS: 1.5,
-				RiskyMonitorMinTotalFPTS: 6.0,
+				DefaultCandidateLimit: 100,
+				MaxCandidateLimit:     100,
 			},
 		},
 		Transactions: TransactionsConfig{
@@ -467,18 +459,6 @@ func (c Config) Validate() error {
 	}
 	if c.Pickups.Pitchers.DefaultCandidateLimit > c.Pickups.Pitchers.MaxCandidateLimit {
 		problems = append(problems, "pickups.pitchers.default_candidate_limit must be <= max_candidate_limit")
-	}
-	if c.Pickups.Pitchers.MinStreamerTotalFPTS < 0 {
-		problems = append(problems, "pickups.pitchers.min_streamer_total_fpts must be >= 0")
-	}
-	if c.Pickups.Pitchers.StrongUpgradeDeltaFPTS < 0 {
-		problems = append(problems, "pickups.pitchers.strong_upgrade_delta_fpts must be >= 0")
-	}
-	if c.Pickups.Pitchers.MarginalUpgradeDeltaFPTS < 0 {
-		problems = append(problems, "pickups.pitchers.marginal_upgrade_delta_fpts must be >= 0")
-	}
-	if c.Pickups.Pitchers.RiskyMonitorMinTotalFPTS < 0 {
-		problems = append(problems, "pickups.pitchers.risky_monitor_min_total_fpts must be >= 0")
 	}
 	if c.Transactions.Pitchers.TopMoveLimit <= 0 {
 		problems = append(problems, "transactions.pitchers.top_move_limit must be > 0")

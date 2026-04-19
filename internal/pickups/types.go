@@ -6,9 +6,6 @@ type ItemType string
 
 const (
 	ItemTypeTopCandidate ItemType = "top_candidate"
-	ItemTypeStreamer     ItemType = "streamer"
-	ItemTypeUpgrade      ItemType = "upgrade"
-	ItemTypeRiskyMonitor ItemType = "risky_monitor"
 	ItemTypeUnmatched    ItemType = "unmatched"
 )
 
@@ -16,6 +13,7 @@ type CandidateProjection struct {
 	PlayerName           string    `json:"player_name"`
 	MLBTeam              string    `json:"mlb_team,omitempty"`
 	ESPNPlayerID         *int64    `json:"espn_player_id,omitempty"`
+	AcquisitionStatus    string    `json:"acquisition_status,omitempty"`
 	MatchedPitcherName   string    `json:"matched_pitcher_name,omitempty"`
 	ProjectedStartCount  int       `json:"projected_start_count"`
 	TotalProjectedFPTS   float64   `json:"total_projected_fpts"`
@@ -75,9 +73,6 @@ type RecommendResult struct {
 	WindowStart         string               `json:"window_start"`
 	WindowEnd           string               `json:"window_end"`
 	TopCandidates       []RecommendationItem `json:"top_candidates"`
-	TopStreamers        []RecommendationItem `json:"top_streamers"`
-	Upgrades            []RecommendationItem `json:"upgrades"`
-	RiskyMonitor        []RecommendationItem `json:"risky_monitor"`
 	Unmatched           []RecommendationItem `json:"unmatched"`
 	Items               []RecommendationItem `json:"items"`
 }

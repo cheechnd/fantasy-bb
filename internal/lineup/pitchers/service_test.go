@@ -235,7 +235,7 @@ func TestBuildLineupItemsCreatesBenchSwapWhenSlotsFull(t *testing.T) {
 		t.Fatalf("expected bench+activate actions, got %+v", items)
 	}
 	counts, _ := summary["counts"].(map[string]int)
-	if counts["recommended_benches"] != 1 || counts["recommended_starts"] != 1 {
+	if counts["bench_actions"] != 1 || counts["activate_actions"] != 1 {
 		t.Fatalf("unexpected summary counts: %+v", counts)
 	}
 }

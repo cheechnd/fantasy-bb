@@ -34,7 +34,7 @@ func newLineupPlanCmd(opts *cliOptions) *cobra.Command {
 	var pitcherPlanID, syncRunID int64
 	cmd := &cobra.Command{
 		Use:   "plan",
-		Short: "Generate explicit pitcher lineup actions from pitcher plan + live roster",
+		Short: "Generate factual pitcher lineup actions from pitcher plan + live roster",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			v, err := withLineupService(cmd.Context(), opts, func(ctx context.Context, _ config.Config, svc *lp.Service) (any, error) {
 				return svc.GeneratePlan(ctx, optionalInt64(cmd, "pitcher-plan-id", pitcherPlanID), optionalInt64(cmd, "sync-run", syncRunID))
@@ -122,7 +122,7 @@ func newLineupPitchersPlanCmd(opts *cliOptions) *cobra.Command {
 	var pitcherPlanID, syncRunID int64
 	cmd := &cobra.Command{
 		Use:   "plan",
-		Short: "Generate explicit pitcher lineup actions from pitcher plan + live roster",
+		Short: "Generate factual pitcher lineup actions from pitcher plan + live roster",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			v, err := withLineupService(cmd.Context(), opts, func(ctx context.Context, _ config.Config, svc *lp.Service) (any, error) {
 				return svc.GeneratePlan(ctx, optionalInt64(cmd, "pitcher-plan-id", pitcherPlanID), optionalInt64(cmd, "sync-run", syncRunID))

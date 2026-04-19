@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -190,18 +191,10 @@ func newPitchersPlanCmd(opts *cliOptions) *cobra.Command {
 	var fromRaw, toRaw string
 	var syncRunID int64
 	var importRunID int64
-	var view string
 	cmd := &cobra.Command{
 		Use:   "plan",
-		Short: "Build and save weekly pitcher plan (full or start-sit view)",
+		Short: "Build and save factual rostered-pitcher projection view",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			view = strings.ToLower(strings.TrimSpace(view))
-			if view == "" {
-				view = "full"
-			}
-			if view != "full" && view != "start-sit" {
-				return fmt.Errorf("invalid --view value %q (expected full|start-sit)", view)
-			}
 			analysisOpts, err := buildAnalysisOptions(cmd, fromRaw, toRaw, &importRunID)
 			if err != nil {
 				return err
@@ -238,11 +231,21 @@ func newPitchersPlanCmd(opts *cliOptions) *cobra.Command {
 			}
 			payload := v.(map[string]any)
 			plan := payload["plan"].(*planner.Plan)
-			if opts.OutputJSON {
-				return writeJSON(cmd, payload)
-			}
 			src := payload["source"].(essvc.PitcherRosterSource)
-			printPitcherPlan(cmd, plan, view == "start-sit", slotMapFromRosterSnapshots(src.Snapshots))
+			rows := factualPitcherRows(plan.Items, src.Snapshots)
+			if opts.OutputJSON {
+				return writeJSON(cmd, map[string]any{
+					"plan_id":         plan.ID,
+					"window_start":    plan.WindowStart,
+					"window_end":      plan.WindowEnd,
+					"sync_run_id":     plan.SyncRunID,
+					"import_run_id":   plan.ImportRunID,
+					"analysis_run_id": plan.AnalysisRunID,
+					"count":           len(rows),
+					"rows":            rows,
+				})
+			}
+			printPitcherPlan(cmd, plan, rows)
 			return nil
 		},
 	}
@@ -250,24 +253,15 @@ func newPitchersPlanCmd(opts *cliOptions) *cobra.Command {
 	cmd.Flags().StringVar(&fromRaw, "from", "", "Window start date (YYYY-MM-DD)")
 	cmd.Flags().StringVar(&toRaw, "to", "", "Window end date (YYYY-MM-DD)")
 	cmd.Flags().Int64Var(&importRunID, "import-run", 0, "Forecaster import run ID (defaults to latest)")
-	cmd.Flags().StringVar(&view, "view", "full", "View mode: full|start-sit")
 	return cmd
 }
 
 func newPitchersLastCmd(opts *cliOptions) *cobra.Command {
 	var planID int64
-	var view string
 	cmd := &cobra.Command{
 		Use:   "last",
-		Short: "Show saved pitcher plan (latest by default)",
+		Short: "Show saved factual rostered-pitcher projection view (latest by default)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			view = strings.ToLower(strings.TrimSpace(view))
-			if view == "" {
-				view = "full"
-			}
-			if view != "full" && view != "start-sit" {
-				return fmt.Errorf("invalid --view value %q (expected full|start-sit)", view)
-			}
 			v, err := withPitchersPlannerServices(cmd.Context(), opts, func(ctx context.Context, _ config.Config, _ *pitchsvc.Service, es *essvc.Service, ps *planner.Service) (any, error) {
 				var p *planner.Plan
 				if planID > 0 {
@@ -298,10 +292,14 @@ func newPitchersLastCmd(opts *cliOptions) *cobra.Command {
 			}
 			payload := v.(map[string]any)
 			plan, _ := payload["plan"].(*planner.Plan)
-			if opts.OutputJSON {
-				return writeJSON(cmd, payload)
-			}
 			if plan == nil {
+				if opts.OutputJSON {
+					return writeJSON(cmd, map[string]any{
+						"plan_id": planID,
+						"count":   0,
+						"rows":    []factualPitcherRow{},
+					})
+				}
 				if planID > 0 {
 					fmt.Fprintf(cmd.OutOrStdout(), "Pitcher plan %d not found.\n", planID)
 					return nil
@@ -309,12 +307,24 @@ func newPitchersLastCmd(opts *cliOptions) *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), "No saved pitcher plans found.")
 				return nil
 			}
-			printPitcherPlan(cmd, plan, view == "start-sit", slotMapFromRosterSnapshots(payload["snapshots"].([]espn.RosterSnapshot)))
+			rows := factualPitcherRows(plan.Items, payload["snapshots"].([]espn.RosterSnapshot))
+			if opts.OutputJSON {
+				return writeJSON(cmd, map[string]any{
+					"plan_id":         plan.ID,
+					"window_start":    plan.WindowStart,
+					"window_end":      plan.WindowEnd,
+					"sync_run_id":     plan.SyncRunID,
+					"import_run_id":   plan.ImportRunID,
+					"analysis_run_id": plan.AnalysisRunID,
+					"count":           len(rows),
+					"rows":            rows,
+				})
+			}
+			printPitcherPlan(cmd, plan, rows)
 			return nil
 		},
 	}
 	cmd.Flags().Int64Var(&planID, "plan-id", 0, "Pitcher plan ID")
-	cmd.Flags().StringVar(&view, "view", "full", "View mode: full|start-sit")
 	return cmd
 }
 
@@ -494,7 +504,7 @@ func planningRulesFromConfig(cfg config.Config) planner.RuleConfig {
 	}
 }
 
-func printPitcherPlan(cmd *cobra.Command, plan *planner.Plan, startSitOnly bool, slotByName map[string]string) {
+func printPitcherPlan(cmd *cobra.Command, plan *planner.Plan, rows []factualPitcherRow) {
 	if plan == nil {
 		fmt.Fprintln(cmd.OutOrStdout(), "(no plan)")
 		return
@@ -511,73 +521,56 @@ func printPitcherPlan(cmd *cobra.Command, plan *planner.Plan, startSitOnly bool,
 		fmt.Fprintf(cmd.OutOrStdout(), "Analysis run: %d\n", *plan.AnalysisRunID)
 	}
 	fmt.Fprintln(cmd.OutOrStdout())
-
-	groups := bucketGroups(plan.Items)
-	if startSitOnly {
-		fmt.Fprintln(cmd.OutOrStdout(), "Start Candidates")
-		printPlanItemsTable(cmd, append(groups[planner.BucketAutoStart], groups[planner.BucketLikelyStart]...), slotByName)
-		fmt.Fprintln(cmd.OutOrStdout())
-		fmt.Fprintln(cmd.OutOrStdout(), "Monitor")
-		printPlanItemsTable(cmd, groups[planner.BucketMonitor], slotByName)
-		fmt.Fprintln(cmd.OutOrStdout())
-		fmt.Fprintln(cmd.OutOrStdout(), "Sit Candidates")
-		printPlanItemsTable(cmd, append(groups[planner.BucketBench], groups[planner.BucketNoStartScheduled]...), slotByName)
-		fmt.Fprintln(cmd.OutOrStdout())
-	} else {
-		order := []struct {
-			Name   string
-			Bucket planner.Bucket
-		}{
-			{Name: "Projection: Auto-Start", Bucket: planner.BucketAutoStart},
-			{Name: "Projection: Likely Start", Bucket: planner.BucketLikelyStart},
-			{Name: "Projection: Monitor", Bucket: planner.BucketMonitor},
-			{Name: "Projection: Low Priority", Bucket: planner.BucketBench},
-			{Name: "Projection: No Starts", Bucket: planner.BucketNoStartScheduled},
-		}
-		for i, entry := range order {
-			fmt.Fprintln(cmd.OutOrStdout(), entry.Name)
-			printPlanItemsTable(cmd, groups[entry.Bucket], slotByName)
-			if i < len(order)-1 {
-				fmt.Fprintln(cmd.OutOrStdout())
-			}
-		}
-	}
-
-	fmt.Fprintln(cmd.OutOrStdout())
-	fmt.Fprintln(cmd.OutOrStdout(), "Summary")
-	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "BUCKET\tCOUNT")
-	for _, bucket := range []planner.Bucket{planner.BucketAutoStart, planner.BucketLikelyStart, planner.BucketMonitor, planner.BucketBench, planner.BucketNoStartScheduled} {
-		fmt.Fprintf(w, "%s\t%d\n", bucket, plan.Summary.Counts[bucket])
-	}
-	w.Flush()
+	fmt.Fprintln(cmd.OutOrStdout(), "Rostered pitcher projections")
+	printFactualPitcherRowsTable(cmd, rows)
 }
 
-func bucketGroups(items []planner.PlanItem) map[planner.Bucket][]planner.PlanItem {
-	out := map[planner.Bucket][]planner.PlanItem{}
-	for _, item := range items {
-		out[item.Bucket] = append(out[item.Bucket], item)
-	}
-	return out
+type rosterState struct {
+	slot   string
+	status string
 }
 
-func printPlanItemsTable(cmd *cobra.Command, rows []planner.PlanItem, slotByName map[string]string) {
+type factualPitcherRow struct {
+	PlayerName          string   `json:"player_name"`
+	MLBTeam             string   `json:"mlb_team,omitempty"`
+	CurrentSlot         string   `json:"current_slot,omitempty"`
+	InjuryState         string   `json:"injury_state,omitempty"`
+	ProjectedStartCount int      `json:"projected_start_count"`
+	Schedule            []string `json:"schedule,omitempty"`
+	TotalProjectedFPTS  *float64 `json:"total_projected_fpts,omitempty"`
+	Flags               []string `json:"flags,omitempty"`
+	Notes               []string `json:"notes,omitempty"`
+}
+
+func printFactualPitcherRowsTable(cmd *cobra.Command, rows []factualPitcherRow) {
 	if len(rows) == 0 {
 		fmt.Fprintln(cmd.OutOrStdout(), "(none)")
 		return
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "PLAYER\tTEAM\tCURRENT_SLOT\tMATCHED\tSTARTS\tSCHEDULE\tTOTAL_FPTS\tFLAGS\tNOTES")
+	fmt.Fprintln(w, "PLAYER\tTEAM\tSLOT\tINJURY\tSTARTS\tSCHEDULE\tTOTAL_FPTS\tFLAGS\tNOTES")
 	for _, r := range rows {
 		total := "-"
-		if r.TotalProjectedFPTS != nil {
+		if r.TotalProjectedFPTS != nil && *r.TotalProjectedFPTS > 0 {
 			total = fmt.Sprintf("%.1f", *r.TotalProjectedFPTS)
 		}
-		slot := "-"
-		if v, ok := slotByName[normalizeRosterName(r.PlayerName)]; ok && strings.TrimSpace(v) != "" {
-			slot = v
+		schedule := "-"
+		if len(r.Schedule) > 0 {
+			schedule = strings.Join(r.Schedule, ", ")
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n", r.PlayerName, r.MLBTeam, slot, r.MatchedPitcherName, r.ProjectedStartCount, formatPlanSchedule(r), total, strings.Join(r.Flags, ","), strings.Join(r.Notes, "; "))
+		fmt.Fprintf(
+			w,
+			"%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n",
+			r.PlayerName,
+			firstNonEmpty(r.MLBTeam, "-"),
+			firstNonEmpty(r.CurrentSlot, "-"),
+			firstNonEmpty(r.InjuryState, "-"),
+			r.ProjectedStartCount,
+			schedule,
+			total,
+			strings.Join(r.Flags, ","),
+			strings.Join(r.Notes, "; "),
+		)
 	}
 	w.Flush()
 }
@@ -586,25 +579,51 @@ func normalizeRosterName(name string) string {
 	return strings.ToLower(strings.TrimSpace(name))
 }
 
-func slotMapFromRosterSnapshots(rows []espn.RosterSnapshot) map[string]string {
-	out := map[string]string{}
+func rosterStateMapFromSnapshots(rows []espn.RosterSnapshot) map[string]rosterState {
+	out := map[string]rosterState{}
 	for _, row := range rows {
 		key := normalizeRosterName(row.PlayerName)
 		if key == "" {
 			continue
 		}
-		out[key] = row.RosterSlot
+		out[key] = rosterState{
+			slot:   strings.TrimSpace(row.RosterSlot),
+			status: strings.TrimSpace(row.StatusTag),
+		}
 	}
 	return out
 }
 
-func formatPlanSchedule(item planner.PlanItem) string {
+func factualPitcherRows(items []planner.PlanItem, snapshots []espn.RosterSnapshot) []factualPitcherRow {
+	stateByName := rosterStateMapFromSnapshots(snapshots)
+	out := make([]factualPitcherRow, 0, len(items))
+	for _, item := range items {
+		state := stateByName[normalizeRosterName(item.PlayerName)]
+		out = append(out, factualPitcherRow{
+			PlayerName:          item.PlayerName,
+			MLBTeam:             item.MLBTeam,
+			CurrentSlot:         state.slot,
+			InjuryState:         state.status,
+			ProjectedStartCount: item.ProjectedStartCount,
+			Schedule:            formatPlanScheduleParts(item),
+			TotalProjectedFPTS:  item.TotalProjectedFPTS,
+			Flags:               neutralFlags(item.Flags),
+			Notes:               neutralNotes(item.Notes),
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return strings.ToLower(out[i].PlayerName) < strings.ToLower(out[j].PlayerName)
+	})
+	return out
+}
+
+func formatPlanScheduleParts(item planner.PlanItem) []string {
 	if item.Details == nil {
-		return "-"
+		return nil
 	}
 	rawStarts, ok := item.Details["starts"]
 	if !ok || rawStarts == nil {
-		return "-"
+		return nil
 	}
 	parts := []string{}
 	switch starts := rawStarts.(type) {
@@ -616,20 +635,22 @@ func formatPlanSchedule(item planner.PlanItem) string {
 			}
 			date, _ := m["date"].(string)
 			opp, _ := m["opponent"].(string)
+			fpts, hasFPTS := m["projected_fpts"].(float64)
 			date = strings.TrimSpace(date)
 			opp = strings.TrimSpace(opp)
 			if date == "" {
 				continue
 			}
+			fptsPart := ""
+			if hasFPTS {
+				fptsPart = fmt.Sprintf(" (%.1f)", fpts)
+			}
 			if opp != "" {
-				parts = append(parts, fmt.Sprintf("%s %s", date, opp))
+				parts = append(parts, fmt.Sprintf("%s %s%s", date, opp, fptsPart))
 			} else {
-				parts = append(parts, date)
+				parts = append(parts, fmt.Sprintf("%s%s", date, fptsPart))
 			}
 		}
 	}
-	if len(parts) == 0 {
-		return "-"
-	}
-	return strings.Join(parts, ", ")
+	return parts
 }
