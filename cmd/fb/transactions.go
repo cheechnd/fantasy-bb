@@ -26,7 +26,7 @@ import (
 )
 
 func newTransactionsCmd(opts *cliOptions) *cobra.Command {
-	cmd := &cobra.Command{Use: "transactions", Short: "Add/drop transaction planning (immediate FREEAGENT pool)"}
+	cmd := &cobra.Command{Use: "transactions", Short: "Add/drop projection comparisons (immediate FREEAGENT pool)"}
 	cmd.AddGroup(
 		&cobra.Group{ID: "generate", Title: "Generate"},
 		&cobra.Group{ID: "inspect", Title: "Inspection"},
@@ -127,7 +127,7 @@ func newTransactionsPlanCmd(opts *cliOptions) *cobra.Command {
 	var topN int
 	cmd := &cobra.Command{
 		Use:   "plan",
-		Short: "Generate and save add/drop transaction plan (WAIVERS excluded)",
+		Short: "Generate and save neutral add/drop projection comparisons (WAIVERS excluded)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			v, err := withTransactionsService(cmd.Context(), opts, func(ctx context.Context, svc *transvc.Service) (any, error) {
 				opts2, err := buildTransactionOptions(cmd, fromRaw, toRaw, topN, &syncRunID, &importRunID, &pitcherPlanID, &pickupRunID)
@@ -141,7 +141,18 @@ func newTransactionsPlanCmd(opts *cliOptions) *cobra.Command {
 			}
 			plan := v.(*transactions.Plan)
 			if opts.OutputJSON {
-				return writeJSON(cmd, map[string]any{"plan": plan})
+				return writeJSON(cmd, map[string]any{
+					"plan_id":              plan.ID,
+					"sync_run_id":          plan.SyncRunID,
+					"import_run_id":        plan.ImportRunID,
+					"pitcher_plan_id":      plan.PitcherPlanID,
+					"pickup_run_id":        plan.PickupRecommendationRunID,
+					"window_start":         plan.WindowStart,
+					"window_end":           plan.WindowEnd,
+					"availability_filter":  "FREEAGENT_ONLY",
+					"comparison_row_count": len(plan.Items),
+					"rows":                 neutralTransactionRows(plan.Items),
+				})
 			}
 			printTransactionPlan(cmd, plan)
 			return nil
@@ -160,7 +171,7 @@ func newTransactionsPlanCmd(opts *cliOptions) *cobra.Command {
 func newTransactionsLastCmd(opts *cliOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "last",
-		Short: "Show latest saved transaction plan",
+		Short: "Show latest saved add/drop projection comparisons",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			v, err := withTransactionsService(cmd.Context(), opts, func(ctx context.Context, svc *transvc.Service) (any, error) {
 				return svc.Latest(ctx)
@@ -170,7 +181,21 @@ func newTransactionsLastCmd(opts *cliOptions) *cobra.Command {
 			}
 			plan, _ := v.(*transactions.Plan)
 			if opts.OutputJSON {
-				return writeJSON(cmd, map[string]any{"plan": plan})
+				if plan == nil {
+					return writeJSON(cmd, map[string]any{"plan": nil})
+				}
+				return writeJSON(cmd, map[string]any{
+					"plan_id":              plan.ID,
+					"sync_run_id":          plan.SyncRunID,
+					"import_run_id":        plan.ImportRunID,
+					"pitcher_plan_id":      plan.PitcherPlanID,
+					"pickup_run_id":        plan.PickupRecommendationRunID,
+					"window_start":         plan.WindowStart,
+					"window_end":           plan.WindowEnd,
+					"availability_filter":  "FREEAGENT_ONLY",
+					"comparison_row_count": len(plan.Items),
+					"rows":                 neutralTransactionRows(plan.Items),
+				})
 			}
 			if plan == nil {
 				fmt.Fprintln(cmd.OutOrStdout(), "No transaction plans found.")
@@ -540,33 +565,10 @@ func printTransactionPlan(cmd *cobra.Command, plan *transactions.Plan) {
 	fmt.Fprintln(cmd.OutOrStdout())
 	fmt.Fprintln(cmd.OutOrStdout(), "Availability filter: immediate FREEAGENT only (WAIVERS excluded)")
 	fmt.Fprintln(cmd.OutOrStdout())
-
-	order := []struct {
-		name   string
-		bucket transactions.Bucket
-	}{
-		{name: "Strong moves", bucket: transactions.BucketStrongMove},
-		{name: "Marginal moves", bucket: transactions.BucketMarginalMove},
-		{name: "Risky moves", bucket: transactions.BucketRiskyMove},
-		{name: "Watch only", bucket: transactions.BucketWatchOnly},
-	}
-	grouped := groupMoves(plan.Items)
-	for i, entry := range order {
-		fmt.Fprintln(cmd.OutOrStdout(), entry.name)
-		printTransactionRowsTable(cmd, grouped[entry.bucket])
-		if i < len(order)-1 {
-			fmt.Fprintln(cmd.OutOrStdout())
-		}
-	}
-
+	fmt.Fprintln(cmd.OutOrStdout(), "Add/Drop projection comparisons")
+	printTransactionRowsTable(cmd, plan.Items)
 	fmt.Fprintln(cmd.OutOrStdout())
-	fmt.Fprintln(cmd.OutOrStdout(), "Summary")
-	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "BUCKET\tCOUNT")
-	for _, entry := range order {
-		fmt.Fprintf(w, "%s\t%d\n", entry.bucket, plan.Summary.Counts[entry.bucket])
-	}
-	w.Flush()
+	fmt.Fprintf(cmd.OutOrStdout(), "Rows: %d\n", len(plan.Items))
 }
 
 func printTransactionRowsTable(cmd *cobra.Command, rows []transactions.PlanItem) {
@@ -575,7 +577,7 @@ func printTransactionRowsTable(cmd *cobra.Command, rows []transactions.PlanItem)
 		return
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "BUCKET\tADD\tADD_DATE\tADD_OPP\tDROP\tDROP_BEST_DATE\tDROP_BEST_OPP\tDELTA_START\tADD_FPTS\tDROP_FPTS\tADD_STARTS\tDROP_STARTS\tFLAGS")
+	fmt.Fprintln(w, "ADD\tADD_DATE\tADD_OPP\tDROP\tDROP_BEST_DATE\tDROP_BEST_OPP\tDELTA_START\tADD_FPTS\tDROP_FPTS\tADD_STARTS\tDROP_STARTS\tFLAGS\tNOTES")
 	for _, row := range rows {
 		addTotal := "-"
 		if row.AddTotalProjectedFPTS != nil {
@@ -591,8 +593,7 @@ func printTransactionRowsTable(cmd *cobra.Command, rows []transactions.PlanItem)
 		}
 		fmt.Fprintf(
 			w,
-			"%s\t%s (%s)\t%s\t%s\t%s (%s)\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\n",
-			row.Bucket,
+			"%s (%s)\t%s\t%s\t%s (%s)\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\n",
 			row.AddPlayerName,
 			firstNonEmpty(row.AddPlayerTeam, "-"),
 			firstNonEmpty(row.AddStartDate, "-"),
@@ -606,7 +607,8 @@ func printTransactionRowsTable(cmd *cobra.Command, rows []transactions.PlanItem)
 			dropTotal,
 			row.AddProjectedStartCount,
 			row.DropProjectedStartCount,
-			strings.Join(row.Flags, ","),
+			strings.Join(neutralFlags(row.Flags), ","),
+			strings.Join(filterStrategicTransactionNotes(row.Notes), "; "),
 		)
 	}
 	w.Flush()
@@ -817,6 +819,25 @@ func groupMoves(items []transactions.PlanItem) map[transactions.Bucket][]transac
 	return out
 }
 
+func filterStrategicTransactionNotes(notes []string) []string {
+	out := make([]string, 0, len(notes))
+	for _, note := range notes {
+		n := strings.TrimSpace(note)
+		if n == "" {
+			continue
+		}
+		lower := strings.ToLower(n)
+		if strings.Contains(lower, "strong projected weekly upgrade") ||
+			strings.Contains(lower, "positive but modest weekly upgrade") ||
+			strings.Contains(lower, "positive move with uncertainty") ||
+			strings.Contains(lower, "watch only; limited confidence or delta") {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
 func filterTopTransactionRows(items []transactions.PlanItem) []transactions.PlanItem {
 	out := []transactions.PlanItem{}
 	for _, row := range items {
@@ -824,6 +845,48 @@ func filterTopTransactionRows(items []transactions.PlanItem) []transactions.Plan
 			continue
 		}
 		out = append(out, row)
+	}
+	return out
+}
+
+type neutralTransactionRow struct {
+	AddPlayerName           string   `json:"add_player_name"`
+	AddPlayerTeam           string   `json:"add_player_team,omitempty"`
+	AddStartDate            string   `json:"add_start_date,omitempty"`
+	AddStartOpponent        string   `json:"add_start_opponent,omitempty"`
+	DropPlayerName          string   `json:"drop_player_name"`
+	DropPlayerTeam          string   `json:"drop_player_team,omitempty"`
+	DropBestStartDate       string   `json:"drop_best_start_date,omitempty"`
+	DropBestStartOpponent   string   `json:"drop_best_start_opponent,omitempty"`
+	DeltaPerStartFPTS       *float64 `json:"delta_per_start_fpts,omitempty"`
+	AddTotalProjectedFPTS   *float64 `json:"add_total_projected_fpts,omitempty"`
+	DropTotalProjectedFPTS  *float64 `json:"drop_total_projected_fpts,omitempty"`
+	AddProjectedStartCount  int      `json:"add_projected_start_count"`
+	DropProjectedStartCount int      `json:"drop_projected_start_count"`
+	Flags                   []string `json:"flags,omitempty"`
+	Notes                   []string `json:"notes,omitempty"`
+}
+
+func neutralTransactionRows(items []transactions.PlanItem) []neutralTransactionRow {
+	out := make([]neutralTransactionRow, 0, len(items))
+	for _, row := range items {
+		out = append(out, neutralTransactionRow{
+			AddPlayerName:           row.AddPlayerName,
+			AddPlayerTeam:           row.AddPlayerTeam,
+			AddStartDate:            row.AddStartDate,
+			AddStartOpponent:        row.AddStartOpponent,
+			DropPlayerName:          row.DropPlayerName,
+			DropPlayerTeam:          row.DropPlayerTeam,
+			DropBestStartDate:       row.DropBestStartDate,
+			DropBestStartOpponent:   row.DropBestStartOpponent,
+			DeltaPerStartFPTS:       row.DeltaFPTS,
+			AddTotalProjectedFPTS:   row.AddTotalProjectedFPTS,
+			DropTotalProjectedFPTS:  row.DropTotalProjectedFPTS,
+			AddProjectedStartCount:  row.AddProjectedStartCount,
+			DropProjectedStartCount: row.DropProjectedStartCount,
+			Flags:                   neutralFlags(row.Flags),
+			Notes:                   filterStrategicTransactionNotes(row.Notes),
+		})
 	}
 	return out
 }

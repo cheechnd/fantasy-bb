@@ -74,10 +74,9 @@ func (s *Service) Recommend(ctx context.Context, opts pickups.RecommendOptions) 
 		WindowEnd:      opts.To.Format("2006-01-02"),
 		Status:         "success",
 		Summary: map[string]any{
-			"top_candidates": len(result.TopCandidates),
-			"streamers":      len(result.TopStreamers),
-			"upgrades":       0,
-			"risky_monitor":  len(result.RiskyMonitor),
+			"candidate_rows": len(result.Items),
+			"matched":        len(result.TopCandidates),
+			"limited":        len(result.RiskyMonitor),
 			"unmatched":      len(result.Unmatched),
 		},
 		Items: result.Items,
@@ -330,70 +329,54 @@ func (s *Service) projectCandidates(candidates []espnCandidateRow, starts []fore
 func (s *Service) buildRecommendations(cands []pickups.CandidateProjection, roster []pitchers.PitcherProjection, weakRoster []pitchers.RosterInput, topN int, opts pickups.RecommendOptions) pickups.RecommendResult {
 	_ = roster
 	_ = weakRoster
-
-	items := []pickups.RecommendationItem{}
-	appendRanked := func(itemType pickups.ItemType, rows []pickups.RecommendationItem) {
-		for i := range rows {
-			rank := i + 1
-			rows[i].ResultRank = &rank
-			rows[i].ItemType = itemType
-			items = append(items, rows[i])
-		}
-	}
+	_ = opts
+	_ = topN
 
 	topCandidates := []pickups.RecommendationItem{}
-	streamers := []pickups.RecommendationItem{}
 	risky := []pickups.RecommendationItem{}
 	unmatched := []pickups.RecommendationItem{}
-	upgrades := []pickups.RecommendationItem{}
+	items := []pickups.RecommendationItem{}
 
 	for _, c := range cands {
 		base := toRecommendationItem(c)
 		if c.Unmatched {
 			base.ItemType = pickups.ItemTypeUnmatched
 			unmatched = append(unmatched, base)
+			items = append(items, base)
 			continue
 		}
 		if isRiskyCandidate(c) {
 			base.ItemType = pickups.ItemTypeRiskyMonitor
-			if c.HighestSingleFPTS >= s.cfg.RiskyMonitorMinTotalFPTS {
-				risky = append(risky, base)
-			}
-		}
-		if !isBlockedCandidate(c) {
+			risky = append(risky, base)
+		} else {
+			base.ItemType = pickups.ItemTypeTopCandidate
 			topCandidates = append(topCandidates, base)
 		}
-		minStreamer := s.cfg.MinStreamerTotalFPTS
-		if opts.MinTotalFPTS != nil {
-			minStreamer = *opts.MinTotalFPTS
-		}
-		if c.HighestSingleFPTS >= minStreamer && !containsFlag(c.Flags, "tbd") && !isBlockedCandidate(c) {
-			streamers = append(streamers, base)
-		}
-
+		items = append(items, base)
 	}
-
-	trim := func(rows []pickups.RecommendationItem) []pickups.RecommendationItem {
-		if len(rows) > topN {
-			return rows[:topN]
+	sort.SliceStable(items, func(i, j int) bool {
+		left := 0.0
+		if items[i].TotalProjectedFPTS != nil {
+			left = *items[i].TotalProjectedFPTS
 		}
-		return rows
+		right := 0.0
+		if items[j].TotalProjectedFPTS != nil {
+			right = *items[j].TotalProjectedFPTS
+		}
+		if left != right {
+			return left > right
+		}
+		return strings.ToLower(items[i].PlayerName) < strings.ToLower(items[j].PlayerName)
+	})
+	for i := range items {
+		rank := i + 1
+		items[i].ResultRank = &rank
 	}
-	topCandidates = trim(topCandidates)
-	streamers = trim(streamers)
-	upgrades = trim(upgrades)
-	risky = trim(risky)
-	unmatched = trim(unmatched)
-
-	appendRanked(pickups.ItemTypeTopCandidate, topCandidates)
-	appendRanked(pickups.ItemTypeStreamer, streamers)
-	appendRanked(pickups.ItemTypeRiskyMonitor, risky)
-	appendRanked(pickups.ItemTypeUnmatched, unmatched)
 
 	return pickups.RecommendResult{
 		TopCandidates: topCandidates,
-		TopStreamers:  streamers,
-		Upgrades:      upgrades,
+		TopStreamers:  []pickups.RecommendationItem{},
+		Upgrades:      []pickups.RecommendationItem{},
 		RiskyMonitor:  risky,
 		Unmatched:     unmatched,
 		Items:         items,

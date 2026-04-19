@@ -55,9 +55,6 @@ func TestRecommendBuildsAndPersistsCategories(t *testing.T) {
 	if len(res.TopCandidates) == 0 || res.TopCandidates[0].PlayerName != "Streamer Ace" {
 		t.Fatalf("unexpected top candidates: %+v", res.TopCandidates)
 	}
-	if len(res.TopStreamers) == 0 || res.TopStreamers[0].PlayerName != "Streamer Ace" {
-		t.Fatalf("unexpected top streamers: %+v", res.TopStreamers)
-	}
 	foundRiskyTBD := false
 	for _, row := range res.RiskyMonitor {
 		if row.PlayerName == "Risky TBD" {
@@ -207,11 +204,6 @@ func TestBlockedStatusExcludedFromTopAndStreamers(t *testing.T) {
 	for _, row := range res.TopCandidates {
 		if row.PlayerName == "Out Candidate" {
 			t.Fatalf("OUT candidate should not appear in top candidates: %+v", row)
-		}
-	}
-	for _, row := range res.TopStreamers {
-		if row.PlayerName == "Out Candidate" {
-			t.Fatalf("OUT candidate should not appear in top streamers: %+v", row)
 		}
 	}
 	foundRisky := false

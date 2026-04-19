@@ -9,14 +9,19 @@ It keeps decision artifacts and execution history in SQLite, and gates real writ
 - post-write verification
 - auditable execution events
 
+Design philosophy:
+- `fb` is transactional and informational, not strategic
+- `fb` provides facts, projections, preflight, execution, and verification
+- strategy/judgment belongs in your skill/agent layer
+
 ## v1 Scope
 
 ### Included
 - Forecaster probable-start ingestion and normalization
 - ESPN roster + free-agent snapshot sync
 - Pitcher planning
-- Pickup planning
-- Transaction planning
+- Pickup projection views
+- Transaction projection comparisons
 - Lineup planning
 - Direct single-item transaction execution (`add/drop` and `add-only`)
 - Direct single-item lineup slot execution
@@ -122,8 +127,12 @@ Note: `fb team add` registers the team entry immediately, but the team DB path i
 ### Decision Commands (non-mutating)
 - `fb pitchers plan|last`
 - `fb pickups plan|last`
-- `fb transactions plan|last`
 - `fb lineup plan|last`
+
+Decision commands are intentionally neutral:
+- no “top streamer” advice framing
+- no “strong/marginal/risky move” advice framing
+- no hidden strategy assumptions
 
 ### Ops Commands (mutating, one item per command)
 - `fb execute transaction`
@@ -152,8 +161,9 @@ Free-agent snapshots now include acquisition status:
 # 2) generate decisions
 ./fb pitchers plan
 ./fb pickups plan
-./fb transactions plan
 ./fb lineup plan
+
+# use your OpenClaw skill/agent to choose actions from these factual views
 
 # 3) execute one transaction
 ./fb execute transaction --add "Roki Sasaki" --drop "Sandy Alcantara"

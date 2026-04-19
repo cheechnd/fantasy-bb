@@ -632,16 +632,6 @@ func buildMoveItem(add pickupCandidate, drop dropCandidate, cfg transactions.Ser
 	if add.Uncertainty > 0 {
 		notes = append(notes, fmt.Sprintf("uncertainty penalty applied: -%.1f", add.Uncertainty))
 	}
-	switch bucket {
-	case transactions.BucketStrongMove:
-		notes = append(notes, "strong projected weekly upgrade")
-	case transactions.BucketMarginalMove:
-		notes = append(notes, "positive but modest weekly upgrade")
-	case transactions.BucketRiskyMove:
-		notes = append(notes, "positive move with uncertainty")
-	case transactions.BucketWatchOnly:
-		notes = append(notes, "watch only; limited confidence or delta")
-	}
 
 	item := transactions.PlanItem{
 		Bucket:                  bucket,
