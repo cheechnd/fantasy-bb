@@ -19,10 +19,9 @@ Design philosophy:
 ### Included
 - Forecaster probable-start ingestion and normalization
 - ESPN roster + free-agent snapshot sync
-- Pitcher planning
-- Pickup projection views
-- Transaction projection comparisons
-- Lineup planning
+- Factual rostered-pitcher projection views (`fb pitchers plan|last`)
+- Factual available-pitcher projection views (`fb pickups plan|last`)
+- Factual pitcher lineup action plans (`fb lineup plan|last`)
 - Direct single-item transaction execution (`add/drop` and `add-only`)
 - Direct single-item lineup slot execution
 - Execution follow-up (`pending`, `verify`, `reconcile`, `resolve`)
@@ -130,8 +129,8 @@ Note: `fb team add` registers the team entry immediately, but the team DB path i
 - `fb lineup plan|last`
 
 Decision commands are intentionally neutral:
-- no “top streamer” advice framing
-- no “strong/marginal/risky move” advice framing
+- no “top candidates/top streamers/upgrades” advice framing
+- no “watch/monitor/risky buckets” advice framing
 - no hidden strategy assumptions
 
 ### Ops Commands (mutating, one item per command)
@@ -144,6 +143,11 @@ Decision commands are intentionally neutral:
 - `fb espn show ...`
 - `fb espn status`
 - `fb forecaster sync|show|status|clear`
+
+`fb forecaster show` includes:
+- `starts`
+- `week`
+- `warnings`
 
 Free-agent snapshots now include acquisition status:
 - `ACQ_STATUS=FREEAGENT` means immediately addable
