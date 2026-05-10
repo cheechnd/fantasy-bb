@@ -142,6 +142,7 @@ Decision commands are intentionally neutral:
 - `fb espn sync ...`
 - `fb espn show ...`
 - `fb espn status`
+- `fb mlb schedule`
 - `fb forecaster sync|show|status|clear`
 
 `fb espn show matchup` provides live weekly matchup facts:
@@ -155,6 +156,9 @@ Examples:
 ./fb espn show matchup
 ./fb --team wt espn show matchup --matchup-period 6
 ./fb espn show matchup --json
+./fb mlb schedule                 # today
+./fb mlb schedule --date 2026-05-10
+./fb mlb schedule --from 2026-05-10 --to 2026-05-12
 ```
 
 `fb forecaster show` includes:
