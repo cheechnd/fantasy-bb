@@ -144,6 +144,19 @@ Decision commands are intentionally neutral:
 - `fb espn status`
 - `fb forecaster sync|show|status|clear`
 
+`fb espn show matchup` provides live weekly matchup facts:
+- current matchup score (team vs opponent)
+- pitching starts used
+- pitching starts max/remaining (when ESPN exposes limit context)
+
+Examples:
+
+```bash
+./fb espn show matchup
+./fb --team wt espn show matchup --matchup-period 6
+./fb espn show matchup --json
+```
+
 `fb forecaster show` includes:
 - `starts`
 - `week`
@@ -161,6 +174,7 @@ Free-agent snapshots now include acquisition status:
 ./fb espn sync free-agents pitchers --limit 100
 ./fb forecaster sync --url
 ./fb espn status
+./fb espn show matchup
 
 # 2) generate decisions
 ./fb pitchers plan

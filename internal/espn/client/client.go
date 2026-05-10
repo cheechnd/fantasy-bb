@@ -108,6 +108,11 @@ type FreeAgentFetchOptions struct {
 	SlotIDs       []int
 }
 
+type MatchupFetchOptions struct {
+	MatchupPeriodID *int
+	ScoringPeriodID *int
+}
+
 func (c *Client) FetchFreeAgentPitchers(ctx context.Context, cfg config.Config, creds config.ESPNCredentials, opts FreeAgentFetchOptions) (FetchResult, error) {
 	baseURL := strings.TrimRight(cfg.ESPN.BaseURL, "/")
 	if baseURL == "" {
@@ -181,6 +186,56 @@ func (c *Client) FetchFreeAgentPitchers(ctx context.Context, cfg config.Config, 
 			msg = msg[:240] + "..."
 		}
 		return FetchResult{Endpoint: u.String(), ResponseStatus: resp.StatusCode, Payload: body}, fmt.Errorf("espn candidate request failed with status %d: %s", resp.StatusCode, msg)
+	}
+	return FetchResult{Endpoint: u.String(), ResponseStatus: resp.StatusCode, Payload: body}, nil
+}
+
+func (c *Client) FetchMatchupScore(ctx context.Context, cfg config.Config, creds config.ESPNCredentials, opts MatchupFetchOptions) (FetchResult, error) {
+	baseURL := strings.TrimRight(cfg.ESPN.BaseURL, "/")
+	if baseURL == "" {
+		baseURL = "https://lm-api-reads.fantasy.espn.com"
+	}
+	endpoint := fmt.Sprintf("%s/apis/v3/games/flb/seasons/%d/segments/0/leagues/%s", baseURL, cfg.League.Season, url.PathEscape(cfg.League.LeagueID))
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return FetchResult{}, fmt.Errorf("build espn matchup endpoint: %w", err)
+	}
+	q := u.Query()
+	q.Add("view", "mMatchupScore")
+	q.Add("view", "mSettings")
+	q.Add("view", "mTeam")
+	if opts.MatchupPeriodID != nil && *opts.MatchupPeriodID > 0 {
+		q.Set("matchupPeriodId", strconv.Itoa(*opts.MatchupPeriodID))
+	}
+	if opts.ScoringPeriodID != nil && *opts.ScoringPeriodID > 0 {
+		q.Set("scoringPeriodId", strconv.Itoa(*opts.ScoringPeriodID))
+	}
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return FetchResult{}, fmt.Errorf("create espn matchup request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", c.userAgent)
+	req.AddCookie(&http.Cookie{Name: "espn_s2", Value: creds.ESPNS2})
+	req.AddCookie(&http.Cookie{Name: "SWID", Value: creds.SWID})
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return FetchResult{}, fmt.Errorf("request espn matchup endpoint: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if err != nil {
+		return FetchResult{}, fmt.Errorf("read espn matchup response body: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		msg := strings.TrimSpace(string(body))
+		if len(msg) > 240 {
+			msg = msg[:240] + "..."
+		}
+		return FetchResult{Endpoint: u.String(), ResponseStatus: resp.StatusCode, Payload: body}, fmt.Errorf("espn matchup request failed with status %d: %s", resp.StatusCode, msg)
 	}
 	return FetchResult{Endpoint: u.String(), ResponseStatus: resp.StatusCode, Payload: body}, nil
 }

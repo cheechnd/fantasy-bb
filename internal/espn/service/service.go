@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -38,6 +39,11 @@ type FreeAgentOptions struct {
 type ShowRosterFilter struct {
 	SyncRunID    *int64
 	PitchersOnly bool
+}
+
+type MatchupOptions struct {
+	MatchupPeriodID *int
+	ScoringPeriodID *int
 }
 
 type PitcherRosterSource struct {
@@ -188,6 +194,25 @@ func (s *Service) Warnings(ctx context.Context, syncRunID *int64, limit int) ([]
 
 func (s *Service) LatestSync(ctx context.Context) (*espn.SyncRun, error) {
 	return s.repo.LatestSyncRun(ctx)
+}
+
+func (s *Service) MatchupSummary(ctx context.Context, cfg config.Config, opts MatchupOptions) (espn.MatchupSummary, error) {
+	if err := cfg.ValidateESPNUsage(); err != nil {
+		return espn.MatchupSummary{}, err
+	}
+	creds, err := cfg.LoadESPNCredentialsFromEnv()
+	if err != nil {
+		return espn.MatchupSummary{}, err
+	}
+	cli := client.New(time.Duration(cfg.ESPN.TimeoutSeconds)*time.Second, "")
+	fetchResult, err := cli.FetchMatchupScore(ctx, cfg, creds, client.MatchupFetchOptions{
+		MatchupPeriodID: opts.MatchupPeriodID,
+		ScoringPeriodID: opts.ScoringPeriodID,
+	})
+	if err != nil {
+		return espn.MatchupSummary{}, err
+	}
+	return parseMatchupSummary(fetchResult.Payload, cfg, fetchResult.Endpoint, fetchResult.ResponseStatus, opts)
 }
 
 func (s *Service) SyncFreeAgentPitchers(ctx context.Context, cfg config.Config, opts FreeAgentOptions) (espn.CandidateSummary, error) {
@@ -635,6 +660,146 @@ func warningMessages(rows []espn.ParseWarningInput) []string {
 	return out
 }
 
+func parseMatchupSummary(payload []byte, cfg config.Config, endpoint string, responseStatus int, opts MatchupOptions) (espn.MatchupSummary, error) {
+	var root map[string]any
+	if err := json.Unmarshal(payload, &root); err != nil {
+		return espn.MatchupSummary{}, fmt.Errorf("parse ESPN matchup payload: %w", err)
+	}
+
+	teamID, err := strconv.ParseInt(strings.TrimSpace(cfg.League.TeamID), 10, 64)
+	if err != nil {
+		return espn.MatchupSummary{}, fmt.Errorf("league.team_id must be numeric for ESPN endpoint: %q", cfg.League.TeamID)
+	}
+
+	matchupPeriod := toInt(mapPath(root, "status", "currentMatchupPeriod"))
+	if opts.MatchupPeriodID != nil && *opts.MatchupPeriodID > 0 {
+		matchupPeriod = *opts.MatchupPeriodID
+	}
+	if matchupPeriod <= 0 {
+		return espn.MatchupSummary{}, fmt.Errorf("unable to determine matchup period")
+	}
+
+	var teamNameByID = map[int64]string{}
+	if teams, ok := root["teams"].([]any); ok {
+		for _, raw := range teams {
+			m, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			id := int64(toInt(m["id"]))
+			if id <= 0 {
+				continue
+			}
+			name := strings.TrimSpace(toString(m["name"]))
+			if name == "" {
+				loc := strings.TrimSpace(toString(m["location"]))
+				nn := strings.TrimSpace(toString(m["nickname"]))
+				name = strings.TrimSpace(strings.TrimSpace(loc) + " " + strings.TrimSpace(nn))
+			}
+			if name == "" {
+				name = fmt.Sprintf("Team %d", id)
+			}
+			teamNameByID[id] = name
+		}
+	}
+
+	var sched map[string]any
+	if schedule, ok := root["schedule"].([]any); ok {
+		for _, raw := range schedule {
+			m, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			if toInt(m["matchupPeriodId"]) != matchupPeriod {
+				continue
+			}
+			home, _ := m["home"].(map[string]any)
+			away, _ := m["away"].(map[string]any)
+			if toInt64(mapPath(home, "teamId")) == teamID || toInt64(mapPath(away, "teamId")) == teamID {
+				sched = m
+				break
+			}
+		}
+	}
+	if sched == nil {
+		return espn.MatchupSummary{}, fmt.Errorf("no matchup found for team_id=%d in matchup_period=%d", teamID, matchupPeriod)
+	}
+
+	home, _ := sched["home"].(map[string]any)
+	away, _ := sched["away"].(map[string]any)
+	homeID := toInt64(mapPath(home, "teamId"))
+	isHome := homeID == teamID
+	self := away
+	opp := home
+	if isHome {
+		self = home
+		opp = away
+	}
+
+	selfStarts := parseStartsUsed(self)
+	selfPoints := pickLiveOrTotalPoints(self)
+	oppPoints := pickLiveOrTotalPoints(opp)
+
+	var startsMax *int
+	var startsRemaining *int
+	lineupLimit := parseStartsLimitPerScoringPeriod(root)
+	if lineupLimit > 0 {
+		max := int(math.Round(lineupLimit * 7.0))
+		startsMax = &max
+		remain := max - selfStarts
+		startsRemaining = &remain
+	}
+
+	scoringPeriodID := toInt(sched["scoringPeriodId"])
+	if scoringPeriodID <= 0 {
+		scoringPeriodID = toInt(root["scoringPeriodId"])
+	}
+
+	out := espn.MatchupSummary{
+		LeagueID:                cfg.League.LeagueID,
+		Season:                  cfg.League.Season,
+		TeamID:                  cfg.League.TeamID,
+		TeamName:                teamNameByID[teamID],
+		MatchupPeriod:           matchupPeriod,
+		OpponentTeamID:          int64Ptr(toInt64(mapPath(opp, "teamId"))),
+		OpponentName:            teamNameByID[toInt64(mapPath(opp, "teamId"))],
+		IsHome:                  isHome,
+		TeamPoints:              selfPoints,
+		OpponentPoints:          oppPoints,
+		PitchingStartsUsed:      selfStarts,
+		PitchingStartsMax:       startsMax,
+		PitchingStartsRemaining: startsRemaining,
+		StartsLimitExceeded:     toBool(mapPath(self, "cumulativeScore", "statBySlot", "22", "limitExceeded")),
+		ScoringPeriodID:         intPtrOrNil(scoringPeriodID),
+		SourceEndpoint:          endpoint,
+		ResponseStatus:          responseStatus,
+		CheckedAt:               time.Now().UTC().Format(time.RFC3339),
+	}
+	if out.TeamName == "" {
+		out.TeamName = fmt.Sprintf("Team %d", teamID)
+	}
+	if out.OpponentName == "" && out.OpponentTeamID != nil {
+		out.OpponentName = fmt.Sprintf("Team %d", *out.OpponentTeamID)
+	}
+	return out, nil
+}
+
+func parseStartsUsed(side map[string]any) int {
+	return int(math.Round(toFloat64(mapPath(side, "cumulativeScore", "statBySlot", "22", "value"))))
+}
+
+func parseStartsLimitPerScoringPeriod(root map[string]any) float64 {
+	return toFloat64(mapPath(root, "settings", "rosterSettings", "lineupSlotStatLimits", "22", "limitValue"))
+}
+
+func pickLiveOrTotalPoints(side map[string]any) float64 {
+	live := toFloat64(side["totalPointsLive"])
+	if live != 0 {
+		return live
+	}
+	return toFloat64(side["totalPoints"])
+}
+
 func parseFreeAgentCandidatesPayload(payload []byte, searchRaw string, teamRaw string, limit int) ([]espn.FreeAgentCandidate, []espn.ParseWarningInput) {
 	search := strings.ToLower(strings.TrimSpace(searchRaw))
 	teamFilter := strings.ToUpper(strings.TrimSpace(teamRaw))
@@ -830,4 +995,108 @@ func pickIntSlice(m map[string]any, key string) []int {
 		}
 	}
 	return out
+}
+
+func mapPath(v any, keys ...string) any {
+	cur := v
+	for _, key := range keys {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return nil
+		}
+		next, ok := m[key]
+		if !ok {
+			return nil
+		}
+		cur = next
+	}
+	return cur
+}
+
+func toString(v any) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+func toInt(v any) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case float32:
+		return int(n)
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case json.Number:
+		i, _ := n.Int64()
+		return int(i)
+	default:
+		return 0
+	}
+}
+
+func toInt64(v any) int64 {
+	switch n := v.(type) {
+	case float64:
+		return int64(n)
+	case float32:
+		return int64(n)
+	case int:
+		return int64(n)
+	case int64:
+		return n
+	case json.Number:
+		i, _ := n.Int64()
+		return i
+	default:
+		return 0
+	}
+}
+
+func toFloat64(v any) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case float32:
+		return float64(n)
+	case int:
+		return float64(n)
+	case int64:
+		return float64(n)
+	case json.Number:
+		f, _ := n.Float64()
+		return f
+	default:
+		return 0
+	}
+}
+
+func toBool(v any) bool {
+	switch b := v.(type) {
+	case bool:
+		return b
+	default:
+		return false
+	}
+}
+
+func int64Ptr(v int64) *int64 {
+	if v <= 0 {
+		return nil
+	}
+	out := v
+	return &out
+}
+
+func intPtrOrNil(v int) *int {
+	if v <= 0 {
+		return nil
+	}
+	out := v
+	return &out
 }

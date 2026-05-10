@@ -130,3 +130,24 @@ type CandidateSummary struct {
 	SourceEndpoint string `json:"source_endpoint"`
 	ResponseStatus int    `json:"response_status_code"`
 }
+
+type MatchupSummary struct {
+	LeagueID                string  `json:"league_id"`
+	Season                  int     `json:"season"`
+	TeamID                  string  `json:"team_id"`
+	TeamName                string  `json:"team_name"`
+	MatchupPeriod           int     `json:"matchup_period"`
+	OpponentTeamID          *int64  `json:"opponent_team_id,omitempty"`
+	OpponentName            string  `json:"opponent_name,omitempty"`
+	IsHome                  bool    `json:"is_home"`
+	TeamPoints              float64 `json:"team_points"`
+	OpponentPoints          float64 `json:"opponent_points"`
+	PitchingStartsUsed      int     `json:"pitching_starts_used"`
+	PitchingStartsMax       *int    `json:"pitching_starts_max,omitempty"`
+	PitchingStartsRemaining *int    `json:"pitching_starts_remaining,omitempty"`
+	StartsLimitExceeded     bool    `json:"starts_limit_exceeded"`
+	ScoringPeriodID         *int    `json:"scoring_period_id,omitempty"`
+	SourceEndpoint          string  `json:"source_endpoint"`
+	ResponseStatus          int     `json:"response_status_code"`
+	CheckedAt               string  `json:"checked_at"`
+}

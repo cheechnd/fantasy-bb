@@ -186,9 +186,74 @@ func newESPNShowCmd(opts *cliOptions) *cobra.Command {
 	rosterCmd.GroupID = "core"
 	leagueCmd := newESPNShowLeagueCmd(opts)
 	leagueCmd.GroupID = "core"
+	matchupCmd := newESPNShowMatchupCmd(opts)
+	matchupCmd.GroupID = "core"
 	freeAgentsCmd := newESPNShowFreeAgentsCmd(opts)
 	freeAgentsCmd.GroupID = "candidates"
-	cmd.AddCommand(rosterCmd, leagueCmd, freeAgentsCmd)
+	cmd.AddCommand(rosterCmd, leagueCmd, matchupCmd, freeAgentsCmd)
+	return cmd
+}
+
+func newESPNShowMatchupCmd(opts *cliOptions) *cobra.Command {
+	var matchupPeriod int
+	var scoringPeriod int
+	cmd := &cobra.Command{
+		Use:   "matchup",
+		Short: "Show current matchup score and pitching starts used vs max",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			v, err := withESPNService(cmd.Context(), opts, func(_ context.Context, svc *espnsvc.Service, cfg loadedConfig) (any, error) {
+				var matchupPtr *int
+				var scoringPtr *int
+				if cmd.Flags().Changed("matchup-period") && matchupPeriod > 0 {
+					matchupPtr = &matchupPeriod
+				}
+				if cmd.Flags().Changed("scoring-period") && scoringPeriod > 0 {
+					scoringPtr = &scoringPeriod
+				}
+				return svc.MatchupSummary(cmd.Context(), cfg.Config, espnsvc.MatchupOptions{
+					MatchupPeriodID: matchupPtr,
+					ScoringPeriodID: scoringPtr,
+				})
+			})
+			if err != nil {
+				return err
+			}
+			s := v.(espn.MatchupSummary)
+			if opts.OutputJSON {
+				return writeJSON(cmd, map[string]any{"ok": true, "matchup": s})
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "League: %s\n", s.LeagueID)
+			fmt.Fprintf(cmd.OutOrStdout(), "Team: %s (%s)\n", s.TeamName, s.TeamID)
+			fmt.Fprintf(cmd.OutOrStdout(), "Matchup period: %d\n", s.MatchupPeriod)
+			if s.ScoringPeriodID != nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "Scoring period: %d\n", *s.ScoringPeriodID)
+			}
+			venue := "away"
+			if s.IsHome {
+				venue = "home"
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Opponent: %s (%s)\n", s.OpponentName, venue)
+			fmt.Fprintf(cmd.OutOrStdout(), "Score: %.1f - %.1f\n", s.TeamPoints, s.OpponentPoints)
+			if s.PitchingStartsMax != nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "Pitching starts: %d/%d", s.PitchingStartsUsed, *s.PitchingStartsMax)
+				if s.PitchingStartsRemaining != nil {
+					fmt.Fprintf(cmd.OutOrStdout(), " (remaining %d)", *s.PitchingStartsRemaining)
+				}
+				fmt.Fprintln(cmd.OutOrStdout())
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "Pitching starts used: %d\n", s.PitchingStartsUsed)
+			}
+			if s.StartsLimitExceeded {
+				fmt.Fprintln(cmd.OutOrStdout(), "Starts limit exceeded: yes")
+			} else {
+				fmt.Fprintln(cmd.OutOrStdout(), "Starts limit exceeded: no")
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Checked at: %s\n", s.CheckedAt)
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&matchupPeriod, "matchup-period", 0, "Matchup period ID (defaults to ESPN current matchup period)")
+	cmd.Flags().IntVar(&scoringPeriod, "scoring-period", 0, "Optional scoring period ID override")
 	return cmd
 }
 
