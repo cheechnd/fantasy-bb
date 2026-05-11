@@ -27,7 +27,9 @@ func New(repo *repository.Repository) *Service {
 }
 
 type SyncOptions struct {
-	DryRun bool
+	DryRun           bool
+	ScoringPeriodID  *int
+	EffectiveNextDay bool
 }
 
 type FreeAgentOptions struct {
@@ -37,8 +39,10 @@ type FreeAgentOptions struct {
 }
 
 type ShowRosterFilter struct {
-	SyncRunID    *int64
-	PitchersOnly bool
+	SyncRunID        *int64
+	ScoringPeriodID  *int
+	EffectiveNextDay bool
+	PitchersOnly     bool
 }
 
 type MatchupOptions struct {
@@ -111,10 +115,24 @@ func (s *Service) SyncRoster(ctx context.Context, cfg config.Config, opts SyncOp
 		return espn.SyncSummary{}, err
 	}
 
-	client := client.New(time.Duration(cfg.ESPN.TimeoutSeconds)*time.Second, "")
-	fetchResult, err := client.FetchLeague(ctx, cfg, creds)
+	cli := client.New(time.Duration(cfg.ESPN.TimeoutSeconds)*time.Second, "")
+	scoringPeriodID := opts.ScoringPeriodID
+	effectiveNextDay := opts.EffectiveNextDay
+	fetchResult, err := cli.FetchLeagueWithOptions(ctx, cfg, creds, client.LeagueFetchOptions{ScoringPeriodID: scoringPeriodID})
 	if err != nil {
 		return espn.SyncSummary{}, err
+	}
+	if effectiveNextDay && scoringPeriodID == nil {
+		currentSP, ok := detectScoringPeriodID(fetchResult.Payload)
+		if !ok {
+			return espn.SyncSummary{}, fmt.Errorf("could not resolve current ESPN scoring period for --next-day roster sync")
+		}
+		nextSP := currentSP + 1
+		scoringPeriodID = &nextSP
+		fetchResult, err = cli.FetchLeagueWithOptions(ctx, cfg, creds, client.LeagueFetchOptions{ScoringPeriodID: scoringPeriodID})
+		if err != nil {
+			return espn.SyncSummary{}, err
+		}
 	}
 
 	parsed, err := parseLeaguePayload(fetchResult.Payload, cfg.League.TeamID)
@@ -137,6 +155,8 @@ func (s *Service) SyncRoster(ctx context.Context, cfg config.Config, opts SyncOp
 		WarningCount:       warningCount,
 		SourceEndpoint:     fetchResult.Endpoint,
 		ResponseStatusCode: fetchResult.ResponseStatus,
+		ScoringPeriodID:    scoringPeriodID,
+		EffectiveNextDay:   effectiveNextDay,
 		DryRun:             opts.DryRun,
 	}
 
@@ -145,20 +165,24 @@ func (s *Service) SyncRoster(ctx context.Context, cfg config.Config, opts SyncOp
 	}
 
 	summaryJSON := map[string]any{
-		"rostered_players": len(parsed.Roster),
-		"pitcher_count":    summary.PitcherCount,
-		"warnings":         warningMessages(parsed.Warnings),
-		"source_endpoint":  fetchResult.Endpoint,
+		"rostered_players":   len(parsed.Roster),
+		"pitcher_count":      summary.PitcherCount,
+		"warnings":           warningMessages(parsed.Warnings),
+		"source_endpoint":    fetchResult.Endpoint,
+		"scoring_period_id":  scoringPeriodID,
+		"effective_next_day": effectiveNextDay,
 	}
 
 	runID, err := s.repo.PersistSync(ctx, repository.PersistSyncInput{
-		SyncType:     "roster",
-		LeagueID:     cfg.League.LeagueID,
-		TeamID:       cfg.League.TeamID,
-		Season:       cfg.League.Season,
-		Status:       "success",
-		WarningCount: warningCount,
-		Summary:      summaryJSON,
+		SyncType:         "roster",
+		LeagueID:         cfg.League.LeagueID,
+		TeamID:           cfg.League.TeamID,
+		Season:           cfg.League.Season,
+		Status:           "success",
+		WarningCount:     warningCount,
+		ScoringPeriodID:  scoringPeriodID,
+		EffectiveNextDay: effectiveNextDay,
+		Summary:          summaryJSON,
 		Payloads: []espn.RawPayload{{
 			PayloadType:    "league_roster",
 			SourceEndpoint: fetchResult.Endpoint,
@@ -177,7 +201,7 @@ func (s *Service) SyncRoster(ctx context.Context, cfg config.Config, opts SyncOp
 }
 
 func (s *Service) ShowRoster(ctx context.Context, filter ShowRosterFilter) ([]espn.RosterSnapshot, error) {
-	return s.repo.LatestRoster(ctx, filter.SyncRunID, filter.PitchersOnly)
+	return s.repo.LatestRosterForContext(ctx, filter.SyncRunID, filter.ScoringPeriodID, filter.EffectiveNextDay, filter.PitchersOnly)
 }
 
 func (s *Service) ShowLeague(ctx context.Context, syncRunID *int64) (*espn.LeagueSnapshot, error) {
@@ -194,6 +218,10 @@ func (s *Service) Warnings(ctx context.Context, syncRunID *int64, limit int) ([]
 
 func (s *Service) LatestSync(ctx context.Context) (*espn.SyncRun, error) {
 	return s.repo.LatestSyncRun(ctx)
+}
+
+func (s *Service) SyncRunByID(ctx context.Context, syncRunID int64) (*espn.SyncRun, error) {
+	return s.repo.SyncRunByID(ctx, syncRunID)
 }
 
 func (s *Service) MatchupSummary(ctx context.Context, cfg config.Config, opts MatchupOptions) (espn.MatchupSummary, error) {
@@ -376,6 +404,23 @@ type parsedPayload struct {
 	League   espn.LeagueSnapshot
 	Roster   []espn.RosterSnapshot
 	Warnings []espn.ParseWarningInput
+}
+
+func detectScoringPeriodID(payload []byte) (int, bool) {
+	var raw map[string]any
+	if err := json.Unmarshal(payload, &raw); err != nil {
+		return 0, false
+	}
+	if v := toInt(raw["scoringPeriodId"]); v > 0 {
+		return v, true
+	}
+	if v := toInt(mapPath(raw, "status", "currentScoringPeriod")); v > 0 {
+		return v, true
+	}
+	if v := toInt(mapPath(raw, "status", "currentScoringPeriodId")); v > 0 {
+		return v, true
+	}
+	return 0, false
 }
 
 type leagueResponse struct {

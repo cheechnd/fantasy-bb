@@ -132,6 +132,49 @@ func TestSyncRosterDryRunDoesNotPersist(t *testing.T) {
 	}
 }
 
+func TestSyncRosterNextDayResolvesAndPersistsScoringPeriod(t *testing.T) {
+	store := mustOpenStore(t)
+	defer store.Close()
+
+	basePayload := string(mustReadFixture(t, "testdata/league_roster.json"))
+	currentPayload := []byte(strings.Replace(basePayload, "{", `{"status":{"currentScoringPeriod":48},`, 1))
+	nextPayload := []byte(strings.Replace(basePayload, "{", `{"scoringPeriodId":49,`, 1))
+	requestedNext := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("scoringPeriodId") == "49" {
+			requestedNext = true
+			_, _ = w.Write(nextPayload)
+			return
+		}
+		_, _ = w.Write(currentPayload)
+	}))
+	defer srv.Close()
+
+	svc := New(repository.New(store.DB()))
+	cfg := baseTestConfig(srv.URL)
+	t.Setenv(cfg.Auth.ESPNS2Env, "cookie-s2")
+	t.Setenv(cfg.Auth.SWIDEnv, "{cookie-swid}")
+
+	summary, err := svc.SyncRoster(context.Background(), cfg, SyncOptions{EffectiveNextDay: true})
+	if err != nil {
+		t.Fatalf("SyncRoster next-day: %v", err)
+	}
+	if !requestedNext {
+		t.Fatalf("expected scoringPeriodId=49 fetch")
+	}
+	if summary.ScoringPeriodID == nil || *summary.ScoringPeriodID != 49 || !summary.EffectiveNextDay {
+		t.Fatalf("unexpected next-day summary: %+v", summary)
+	}
+	rows, err := svc.ShowRoster(context.Background(), ShowRosterFilter{EffectiveNextDay: true})
+	if err != nil {
+		t.Fatalf("ShowRoster next-day: %v", err)
+	}
+	if len(rows) != 4 {
+		t.Fatalf("next-day roster rows = %d, want 4", len(rows))
+	}
+}
+
 func TestParseFreeAgentCandidatesPayload(t *testing.T) {
 	payload := mustReadFixture(t, "testdata/free_agents_pitchers.json")
 	rows, warnings := parseFreeAgentCandidatesPayload(payload, "", "", 25)

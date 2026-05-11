@@ -183,6 +183,63 @@ func TestPreflightAddOnlyBlockedWhenRosterCapacityFull(t *testing.T) {
 	}
 }
 
+func TestPreflightNextDayAddOnlyUsesEffectiveRosterCapacity(t *testing.T) {
+	svc, closeFn := seededService(t, seededInputs{
+		addName:                  "Add Arm",
+		dropName:                 "",
+		rosterNames:              []string{"A", "B"},
+		effectiveRosterNames:     []string{"A"},
+		effectiveScoringPeriodID: 49,
+		candidates:               []string{"Add Arm"},
+		leagueSettings:           `{"lineupSlotCounts":{"13":1,"16":1}}`,
+	})
+	defer closeFn()
+
+	run, err := svc.Preflight(context.Background(), execute.Options{Limit: 10, EffectiveNextDay: true})
+	if err != nil {
+		t.Fatalf("Preflight: %v", err)
+	}
+	if len(run.Items) != 1 || run.Items[0].ValidationStatus != execute.StatusExecutable {
+		t.Fatalf("expected executable next-day add-only item, got %+v", run.Items)
+	}
+	ctx, _ := run.Items[0].Details["roster_context"].(map[string]any)
+	if ctx["effective_next_day"] != true {
+		t.Fatalf("expected effective_next_day detail, got %+v", ctx)
+	}
+	if ctx["effective_roster_capacity_full"] == true {
+		t.Fatalf("expected effective roster capacity to be open, got %+v", ctx)
+	}
+}
+
+func TestPreflightWarnsOnInactiveAddTargetStatus(t *testing.T) {
+	svc, closeFn := seededService(t, seededInputs{
+		addName:             "Add Arm",
+		dropName:            "Drop Arm",
+		rosterNames:         []string{"Drop Arm"},
+		candidates:          []string{"Add Arm"},
+		candidateStatusTags: []string{"FIFTEEN_DAY_DL"},
+	})
+	defer closeFn()
+
+	run, err := svc.Preflight(context.Background(), execute.Options{Limit: 10})
+	if err != nil {
+		t.Fatalf("Preflight: %v", err)
+	}
+	if run.Items[0].ValidationStatus != execute.StatusExecutable {
+		t.Fatalf("expected warning not to block execution, got %s", run.Items[0].ValidationStatus)
+	}
+	found := false
+	for _, r := range run.Items[0].ValidationReasons {
+		if r.Code == "add_target_status_warning" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected add_target_status_warning, got %+v", run.Items[0].ValidationReasons)
+	}
+}
+
 func TestPreflightStaleByTime(t *testing.T) {
 	svc, closeFn := seededService(t, seededInputs{
 		addName:        "Add Arm",
@@ -255,14 +312,17 @@ func TestPreflightNoApprovedItems(t *testing.T) {
 }
 
 type seededInputs struct {
-	addName           string
-	dropName          string
-	rosterNames       []string
-	candidates        []string
-	candidateStatuses []string
-	leagueSettings    string
-	approvalAgeHrs    int
-	withPending       bool
+	addName                  string
+	dropName                 string
+	rosterNames              []string
+	effectiveRosterNames     []string
+	effectiveScoringPeriodID int
+	candidates               []string
+	candidateStatuses        []string
+	candidateStatusTags      []string
+	leagueSettings           string
+	approvalAgeHrs           int
+	withPending              bool
 }
 
 func seededService(t *testing.T, in seededInputs) (*Service, func()) {
@@ -317,8 +377,12 @@ func seededService(t *testing.T, in seededInputs) (*Service, func()) {
 		if idx < len(in.candidateStatuses) {
 			acq = in.candidateStatuses[idx]
 		}
+		statusTag := "ACTIVE"
+		if idx < len(in.candidateStatusTags) {
+			statusTag = in.candidateStatusTags[idx]
+		}
 		cands = append(cands, espn.FreeAgentCandidate{
-			PlayerName: name, NormalizedName: strings.ToLower(name), IsPitcher: true, AcquisitionStatus: acq, CreatedAt: time.Now().UTC(),
+			PlayerName: name, NormalizedName: strings.ToLower(name), IsPitcher: true, AcquisitionStatus: acq, StatusTag: statusTag, CreatedAt: time.Now().UTC(),
 		})
 	}
 	syncRunID, err := er.PersistSync(context.Background(), esrepo.PersistSyncInput{
@@ -328,6 +392,31 @@ func seededService(t *testing.T, in seededInputs) (*Service, func()) {
 	})
 	if err != nil {
 		t.Fatalf("PersistSync: %v", err)
+	}
+	if len(in.effectiveRosterNames) > 0 {
+		effectiveRoster := make([]espn.RosterSnapshot, 0, len(in.effectiveRosterNames))
+		for _, name := range in.effectiveRosterNames {
+			effectiveRoster = append(effectiveRoster, espn.RosterSnapshot{
+				PlayerName: name, NormalizedName: strings.ToLower(name), IsPitcher: true, CreatedAt: time.Now().UTC(),
+			})
+		}
+		sp := in.effectiveScoringPeriodID
+		if sp <= 0 {
+			sp = 49
+		}
+		if _, err := er.PersistSync(context.Background(), esrepo.PersistSyncInput{
+			SyncType:         "roster",
+			LeagueID:         "1",
+			TeamID:           "1",
+			Season:           2026,
+			Status:           "success",
+			ScoringPeriodID:  &sp,
+			EffectiveNextDay: true,
+			League:           espn.LeagueSnapshot{LeagueID: "1", TeamID: "1", Season: 2026, LeagueName: "L", TeamName: "T", SettingsJSON: in.leagueSettings, CreatedAt: time.Now().UTC()},
+			Roster:           effectiveRoster,
+		}); err != nil {
+			t.Fatalf("PersistSync effective: %v", err)
+		}
 	}
 	_, err = er.PersistCandidates(context.Background(), esrepo.PersistCandidateInput{
 		SyncRunID: &syncRunID,

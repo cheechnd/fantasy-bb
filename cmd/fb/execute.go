@@ -171,14 +171,21 @@ func newExecuteLineupDirectCmd(opts *cliOptions) *cobra.Command {
 func newExecutePreflightCmd(opts *cliOptions) *cobra.Command {
 	var itemID int64
 	var limit int
+	var scoringPeriodID int
+	var nextDay bool
 	cmd := &cobra.Command{
 		Use:   "preflight",
 		Short: "Validate approved transaction items against current live state",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if cmd.Flags().Changed("scoring-period-id") && nextDay {
+				return fmt.Errorf("use only one of --scoring-period-id or --next-day")
+			}
 			v, err := withExecuteService(cmd.Context(), opts, func(ctx context.Context, svc *exesvc.Service) (any, error) {
 				return svc.Preflight(ctx, execute.Options{
-					ItemID: optionalInt64(cmd, "item", itemID),
-					Limit:  limit,
+					ItemID:           optionalInt64(cmd, "item", itemID),
+					Limit:            limit,
+					ScoringPeriodID:  optionalInt(cmd, "scoring-period-id", scoringPeriodID),
+					EffectiveNextDay: nextDay,
 				})
 			})
 			if err != nil {
@@ -194,20 +201,29 @@ func newExecutePreflightCmd(opts *cliOptions) *cobra.Command {
 	}
 	cmd.Flags().Int64Var(&itemID, "item", 0, "Optional approved item ID")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Maximum approved queue items to validate")
+	cmd.Flags().IntVar(&scoringPeriodID, "scoring-period-id", 0, "Validate against a specific ESPN scoring period roster sync")
+	cmd.Flags().BoolVar(&nextDay, "next-day", false, "Validate against the next-day ESPN roster sync")
 	return cmd
 }
 
 func newExecuteDryRunCmd(opts *cliOptions) *cobra.Command {
 	var itemID int64
 	var limit int
+	var scoringPeriodID int
+	var nextDay bool
 	cmd := &cobra.Command{
 		Use:   "dry-run",
 		Short: "Generate dry-run execution previews for approved items",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if cmd.Flags().Changed("scoring-period-id") && nextDay {
+				return fmt.Errorf("use only one of --scoring-period-id or --next-day")
+			}
 			v, err := withExecuteService(cmd.Context(), opts, func(ctx context.Context, svc *exesvc.Service) (any, error) {
 				return svc.DryRun(ctx, execute.Options{
-					ItemID: optionalInt64(cmd, "item", itemID),
-					Limit:  limit,
+					ItemID:           optionalInt64(cmd, "item", itemID),
+					Limit:            limit,
+					ScoringPeriodID:  optionalInt(cmd, "scoring-period-id", scoringPeriodID),
+					EffectiveNextDay: nextDay,
 				})
 			})
 			if err != nil {
@@ -223,6 +239,8 @@ func newExecuteDryRunCmd(opts *cliOptions) *cobra.Command {
 	}
 	cmd.Flags().Int64Var(&itemID, "item", 0, "Optional approved item ID")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Maximum approved queue items to validate")
+	cmd.Flags().IntVar(&scoringPeriodID, "scoring-period-id", 0, "Preview against a specific ESPN scoring period roster sync")
+	cmd.Flags().BoolVar(&nextDay, "next-day", false, "Preview against the next-day ESPN roster sync")
 	return cmd
 }
 
@@ -672,6 +690,14 @@ func withAdHocAndRealExecuteService(ctx context.Context, opts *cliOptions, fn fu
 }
 
 func optionalInt64(cmd *cobra.Command, name string, value int64) *int64 {
+	if cmd.Flags().Changed(name) {
+		v := value
+		return &v
+	}
+	return nil
+}
+
+func optionalInt(cmd *cobra.Command, name string, value int) *int {
 	if cmd.Flags().Changed(name) {
 		v := value
 		return &v

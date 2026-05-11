@@ -26,6 +26,17 @@ type Service struct {
 	cfg        execute.ServiceConfig
 }
 
+type rosterPreflightContext struct {
+	currentRoster      []espn.RosterSnapshot
+	effectiveRoster    []espn.RosterSnapshot
+	currentSync        *espn.SyncRun
+	effectiveSync      *espn.SyncRun
+	league             *espn.LeagueSnapshot
+	scoringPeriodID    *int
+	effectiveNextDay   bool
+	usingEffectiveView bool
+}
+
 func New(execRepo *exerepo.Repository, reviewRepo *reviewrepo.Repository, espnRepo *esrepo.Repository, tranRepo *tranrepo.Repository, cfg execute.ServiceConfig) *Service {
 	return &Service{
 		execRepo:   execRepo,
@@ -121,20 +132,48 @@ func (s *Service) generate(ctx context.Context, runType execute.RunType, opts ex
 		}
 	}
 
-	var roster []espn.RosterSnapshot
-	if s.cfg.RequireLiveRosterCheck {
-		roster, err = s.espnRepo.LatestRoster(ctx, nil, false)
-		if err != nil {
-			return nil, err
-		}
-	}
-	latestSync, err := s.espnRepo.LatestSyncRun(ctx)
+	currentSync, err := s.espnRepo.LatestSyncRun(ctx)
 	if err != nil {
 		return nil, err
 	}
 	latestLeague, err := s.espnRepo.LatestLeague(ctx, nil)
 	if err != nil {
 		return nil, err
+	}
+	rosterCtx := rosterPreflightContext{
+		currentSync:      currentSync,
+		effectiveSync:    currentSync,
+		league:           latestLeague,
+		scoringPeriodID:  opts.ScoringPeriodID,
+		effectiveNextDay: opts.EffectiveNextDay,
+	}
+	if s.cfg.RequireLiveRosterCheck {
+		rosterCtx.currentRoster, err = s.espnRepo.LatestRoster(ctx, nil, false)
+		if err != nil {
+			return nil, err
+		}
+		if opts.EffectiveNextDay || opts.ScoringPeriodID != nil {
+			rosterCtx.usingEffectiveView = true
+			rosterCtx.effectiveRoster, err = s.espnRepo.LatestRosterForContext(ctx, nil, opts.ScoringPeriodID, opts.EffectiveNextDay, false)
+			if err != nil {
+				return nil, err
+			}
+			rosterCtx.effectiveSync, err = s.espnRepo.LatestSyncRunForContext(ctx, opts.ScoringPeriodID, opts.EffectiveNextDay)
+			if err != nil {
+				return nil, err
+			}
+			if rosterCtx.effectiveSync != nil && rosterCtx.effectiveSync.ScoringPeriodID != nil && rosterCtx.scoringPeriodID == nil {
+				v := *rosterCtx.effectiveSync.ScoringPeriodID
+				rosterCtx.scoringPeriodID = &v
+			}
+			if league, err := s.espnRepo.LatestLeagueForContext(ctx, nil, opts.ScoringPeriodID, opts.EffectiveNextDay); err == nil && league != nil {
+				rosterCtx.league = league
+			} else if err != nil {
+				return nil, err
+			}
+		} else {
+			rosterCtx.effectiveRoster = rosterCtx.currentRoster
+		}
 	}
 	latestCandidateRun, err := s.espnRepo.LatestCandidateRun(ctx)
 	if err != nil {
@@ -152,7 +191,7 @@ func (s *Service) generate(ctx context.Context, runType execute.RunType, opts ex
 	items := make([]execute.RunItem, 0, len(approved))
 	statusCounts := map[execute.ValidationStatus]int{}
 	for _, row := range approved {
-		item := s.validateItem(ctx, row, runType, roster, latestSync, latestLeague, latestCandidateRun, candidates)
+		item := s.validateItem(ctx, row, runType, rosterCtx, latestCandidateRun, candidates)
 		items = append(items, item)
 		statusCounts[item.ValidationStatus]++
 	}
@@ -176,6 +215,12 @@ func (s *Service) generate(ctx context.Context, runType execute.RunType, opts ex
 		"run_type":      runType,
 		"item_count":    len(items),
 	}
+	if opts.EffectiveNextDay {
+		summary["effective_next_day"] = true
+	}
+	if rosterCtx.scoringPeriodID != nil {
+		summary["preflight_scoring_period_id"] = *rosterCtx.scoringPeriodID
+	}
 	runID, err := s.execRepo.SaveRun(ctx, exerepo.CreateRunInput{
 		RunType: runType,
 		Status:  "success",
@@ -188,7 +233,7 @@ func (s *Service) generate(ctx context.Context, runType execute.RunType, opts ex
 	return s.Show(ctx, runID)
 }
 
-func (s *Service) validateItem(ctx context.Context, q espnQueueRow, runType execute.RunType, roster []espn.RosterSnapshot, latestSync *espn.SyncRun, latestLeague *espn.LeagueSnapshot, latestCandidateRun *espn.CandidateRun, candidates []espn.FreeAgentCandidate) execute.RunItem {
+func (s *Service) validateItem(ctx context.Context, q espnQueueRow, runType execute.RunType, rosterCtx rosterPreflightContext, latestCandidateRun *espn.CandidateRun, candidates []espn.FreeAgentCandidate) execute.RunItem {
 	reasons := make([]execute.Reason, 0)
 	blocked, conflict, stale, unknown := false, false, false, false
 
@@ -203,10 +248,24 @@ func (s *Service) validateItem(ctx context.Context, q espnQueueRow, runType exec
 	}
 
 	rosterSet := map[string]int{}
+	currentRosterSet := map[string]int{}
 	if s.cfg.RequireLiveRosterCheck {
+		roster := rosterCtx.effectiveRoster
+		if len(rosterCtx.currentRoster) > 0 {
+			for _, row := range rosterCtx.currentRoster {
+				k := matching.NormalizeName(row.PlayerName)
+				if k != "" {
+					currentRosterSet[k]++
+				}
+			}
+		}
 		if len(roster) == 0 {
 			unknown = true
-			reasons = append(reasons, execute.Reason{Code: "live_roster_missing", Message: "no live roster snapshot available"})
+			msg := "no live roster snapshot available"
+			if rosterCtx.usingEffectiveView {
+				msg = "no effective roster snapshot available; run `fb espn sync roster --next-day` first"
+			}
+			reasons = append(reasons, execute.Reason{Code: "live_roster_missing", Message: msg})
 		} else {
 			for _, row := range roster {
 				k := matching.NormalizeName(row.PlayerName)
@@ -224,9 +283,13 @@ func (s *Service) validateItem(ctx context.Context, q espnQueueRow, runType exec
 				reasons = append(reasons, execute.Reason{Code: "add_target_already_rostered", Message: "add target is already on roster"})
 			}
 			if addOnly {
-				if cap, ok := rosterCapacityFromLeagueSettings(latestLeague); ok && cap > 0 && len(roster) >= cap {
+				if cap, ok := rosterCapacityFromLeagueSettings(rosterCtx.league); ok && cap > 0 && len(roster) >= cap {
 					blocked = true
-					reasons = append(reasons, execute.Reason{Code: "roster_capacity_full", Message: "no open roster slot available for add-only move"})
+					msg := "no open roster slot available for add-only move"
+					if rosterCtx.usingEffectiveView {
+						msg = "no open effective roster slot available for add-only move"
+					}
+					reasons = append(reasons, execute.Reason{Code: "roster_capacity_full", Message: msg})
 				}
 			}
 		}
@@ -234,6 +297,7 @@ func (s *Service) validateItem(ctx context.Context, q espnQueueRow, runType exec
 
 	candidateSet := map[string]int{}
 	waiverSet := map[string]int{}
+	addCandidateStatus := ""
 	if s.cfg.RequireLiveAvailabilityCheck {
 		if latestCandidateRun == nil || len(candidates) == 0 {
 			unknown = true
@@ -246,6 +310,9 @@ func (s *Service) validateItem(ctx context.Context, q espnQueueRow, runType exec
 				}
 				if espn.IsImmediateFreeAgent(c.AcquisitionStatus) {
 					candidateSet[k]++
+					if k == addKey && addCandidateStatus == "" {
+						addCandidateStatus = strings.TrimSpace(c.StatusTag)
+					}
 					continue
 				}
 				if espn.IsWaiver(c.AcquisitionStatus) {
@@ -264,6 +331,12 @@ func (s *Service) validateItem(ctx context.Context, q espnQueueRow, runType exec
 				unknown = true
 				reasons = append(reasons, execute.Reason{Code: "add_target_ambiguous", Message: "multiple matching add-target identities found"})
 			}
+			if candidateSet[addKey] > 0 && shouldWarnCandidateStatus(addCandidateStatus) {
+				reasons = append(reasons, execute.Reason{
+					Code:    "add_target_status_warning",
+					Message: fmt.Sprintf("add target is marked %s by ESPN; verify projected start before adding/starting", addCandidateStatus),
+				})
+			}
 		}
 	}
 
@@ -274,7 +347,7 @@ func (s *Service) validateItem(ctx context.Context, q espnQueueRow, runType exec
 			reasons = append(reasons, execute.Reason{Code: "approval_stale", Message: fmt.Sprintf("approval is older than %d hours", s.cfg.StaleHoursThreshold)})
 		}
 	}
-	if latestSync != nil && latestSync.CompletedAt.After(q.ApprovedAt) {
+	if rosterCtx.effectiveSync != nil && rosterCtx.effectiveSync.CompletedAt.After(q.ApprovedAt) {
 		stale = true
 		reasons = append(reasons, execute.Reason{Code: "roster_updated_since_approval", Message: "roster sync is newer than approval"})
 	}
@@ -289,8 +362,8 @@ func (s *Service) validateItem(ctx context.Context, q espnQueueRow, runType exec
 	}
 
 	var syncRunID *int64
-	if latestSync != nil {
-		v := latestSync.ID
+	if rosterCtx.effectiveSync != nil {
+		v := rosterCtx.effectiveSync.ID
 		syncRunID = &v
 	}
 	var candidateRunID *int64
@@ -331,9 +404,10 @@ func (s *Service) validateItem(ctx context.Context, q espnQueueRow, runType exec
 		ValidationReasons: reasons,
 		ActionPreview:     preview,
 		Details: map[string]any{
-			"approval_note": q.Note,
-			"approved_at":   q.ApprovedAt.Format(time.RFC3339),
-			"run_type":      runType,
+			"approval_note":  q.Note,
+			"approved_at":    q.ApprovedAt.Format(time.RFC3339),
+			"run_type":       runType,
+			"roster_context": rosterContextDetails(rosterCtx, rosterSet, currentRosterSet),
 		},
 		CreatedAt: time.Now().UTC(),
 	}
@@ -352,6 +426,50 @@ func deriveStatus(conflict, blocked, unknown, stale bool) execute.ValidationStat
 	default:
 		return execute.StatusExecutable
 	}
+}
+
+func shouldWarnCandidateStatus(status string) bool {
+	s := strings.ToUpper(strings.TrimSpace(status))
+	if s == "" || s == "ACTIVE" {
+		return false
+	}
+	return true
+}
+
+func rosterContextDetails(ctx rosterPreflightContext, effectiveSet, currentSet map[string]int) map[string]any {
+	details := map[string]any{
+		"effective_next_day": ctx.effectiveNextDay,
+	}
+	if ctx.scoringPeriodID != nil {
+		details["preflight_scoring_period_id"] = *ctx.scoringPeriodID
+	}
+	if ctx.currentSync != nil {
+		details["current_roster_sync_run_id"] = ctx.currentSync.ID
+	}
+	if ctx.effectiveSync != nil {
+		details["effective_roster_sync_run_id"] = ctx.effectiveSync.ID
+	}
+	currentTotal := len(ctx.currentRoster)
+	effectiveTotal := len(ctx.effectiveRoster)
+	details["current_roster_total"] = currentTotal
+	details["effective_roster_total"] = effectiveTotal
+	if cap, ok := rosterCapacityFromLeagueSettings(ctx.league); ok && cap > 0 {
+		details["roster_capacity"] = cap
+		details["current_open_slots"] = maxInt(0, cap-currentTotal)
+		details["effective_open_slots"] = maxInt(0, cap-effectiveTotal)
+		details["current_roster_capacity_full"] = currentTotal >= cap
+		details["effective_roster_capacity_full"] = effectiveTotal >= cap
+	}
+	details["current_distinct_rostered"] = len(currentSet)
+	details["effective_distinct_rostered"] = len(effectiveSet)
+	return details
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func actionType(addOnly bool) string {

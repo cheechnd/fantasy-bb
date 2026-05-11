@@ -19,17 +19,19 @@ func New(db *sql.DB) *Repository {
 }
 
 type PersistSyncInput struct {
-	SyncType     string
-	LeagueID     string
-	TeamID       string
-	Season       int
-	Status       string
-	WarningCount int
-	Summary      map[string]any
-	Payloads     []espn.RawPayload
-	League       espn.LeagueSnapshot
-	Roster       []espn.RosterSnapshot
-	Warnings     []espn.ParseWarningInput
+	SyncType         string
+	LeagueID         string
+	TeamID           string
+	Season           int
+	Status           string
+	WarningCount     int
+	ScoringPeriodID  *int
+	EffectiveNextDay bool
+	Summary          map[string]any
+	Payloads         []espn.RawPayload
+	League           espn.LeagueSnapshot
+	Roster           []espn.RosterSnapshot
+	Warnings         []espn.ParseWarningInput
 }
 
 type PersistCandidateInput struct {
@@ -62,9 +64,9 @@ func (r *Repository) PersistSync(ctx context.Context, input PersistSyncInput) (i
 	res, err := tx.ExecContext(ctx, `
 		INSERT INTO espn_sync_runs (
 			sync_type, league_id, team_id, season, started_at, completed_at,
-			status, warning_count, summary_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, input.SyncType, input.LeagueID, input.TeamID, input.Season, startedAt, completedAt, input.Status, input.WarningCount, summaryJSON)
+			status, warning_count, scoring_period_id, effective_next_day, summary_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, input.SyncType, input.LeagueID, input.TeamID, input.Season, startedAt, completedAt, input.Status, input.WarningCount, nullInt(input.ScoringPeriodID), boolInt(input.EffectiveNextDay), summaryJSON)
 	if err != nil {
 		return 0, fmt.Errorf("insert espn_sync_run: %w", err)
 	}
@@ -210,21 +212,38 @@ func (r *Repository) PersistCandidates(ctx context.Context, input PersistCandida
 }
 
 func (r *Repository) LatestSyncRun(ctx context.Context) (*espn.SyncRun, error) {
+	return r.latestSyncRun(ctx, nil, false)
+}
+
+func (r *Repository) LatestSyncRunForContext(ctx context.Context, scoringPeriodID *int, effectiveNextDay bool) (*espn.SyncRun, error) {
+	return r.latestSyncRun(ctx, scoringPeriodID, effectiveNextDay)
+}
+
+func (r *Repository) latestSyncRun(ctx context.Context, scoringPeriodID *int, effectiveNextDay bool) (*espn.SyncRun, error) {
+	where, args := syncContextWhere(scoringPeriodID, effectiveNextDay)
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, sync_type, league_id, team_id, season, started_at,
 		       COALESCE(completed_at, started_at), status, warning_count,
+		       scoring_period_id, effective_next_day,
 		       COALESCE(summary_json, '{}')
 		FROM espn_sync_runs
+		WHERE `+where+`
 		ORDER BY id DESC
 		LIMIT 1
-	`)
+	`, args...)
+	return scanSyncRunRow(row, "latest espn sync run")
+}
+
+func scanSyncRunRow(row *sql.Row, label string) (*espn.SyncRun, error) {
 	var out espn.SyncRun
+	var scoringPeriodID sql.NullInt64
+	var effectiveNextDay int
 	var startedAtRaw, completedAtRaw string
-	if err := row.Scan(&out.ID, &out.SyncType, &out.LeagueID, &out.TeamID, &out.Season, &startedAtRaw, &completedAtRaw, &out.Status, &out.WarningCount, &out.SummaryJSON); err != nil {
+	if err := row.Scan(&out.ID, &out.SyncType, &out.LeagueID, &out.TeamID, &out.Season, &startedAtRaw, &completedAtRaw, &out.Status, &out.WarningCount, &scoringPeriodID, &effectiveNextDay, &out.SummaryJSON); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("query latest espn sync run: %w", err)
+		return nil, fmt.Errorf("query %s: %w", label, err)
 	}
 	startedAt, err := time.Parse(time.RFC3339, startedAtRaw)
 	if err != nil {
@@ -236,6 +255,11 @@ func (r *Repository) LatestSyncRun(ctx context.Context) (*espn.SyncRun, error) {
 	}
 	out.StartedAt = startedAt
 	out.CompletedAt = completedAt
+	if scoringPeriodID.Valid {
+		v := int(scoringPeriodID.Int64)
+		out.ScoringPeriodID = &v
+	}
+	out.EffectiveNextDay = effectiveNextDay == 1
 	return &out, nil
 }
 
@@ -243,29 +267,12 @@ func (r *Repository) SyncRunByID(ctx context.Context, syncRunID int64) (*espn.Sy
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, sync_type, league_id, team_id, season, started_at,
 		       COALESCE(completed_at, started_at), status, warning_count,
+		       scoring_period_id, effective_next_day,
 		       COALESCE(summary_json, '{}')
 		FROM espn_sync_runs
 		WHERE id = ?
 	`, syncRunID)
-	var out espn.SyncRun
-	var startedAtRaw, completedAtRaw string
-	if err := row.Scan(&out.ID, &out.SyncType, &out.LeagueID, &out.TeamID, &out.Season, &startedAtRaw, &completedAtRaw, &out.Status, &out.WarningCount, &out.SummaryJSON); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("query espn sync run by id: %w", err)
-	}
-	startedAt, err := time.Parse(time.RFC3339, startedAtRaw)
-	if err != nil {
-		return nil, fmt.Errorf("parse espn sync started_at: %w", err)
-	}
-	completedAt, err := time.Parse(time.RFC3339, completedAtRaw)
-	if err != nil {
-		return nil, fmt.Errorf("parse espn sync completed_at: %w", err)
-	}
-	out.StartedAt = startedAt
-	out.CompletedAt = completedAt
-	return &out, nil
+	return scanSyncRunRow(row, "espn sync run by id")
 }
 
 func (r *Repository) ListSyncRuns(ctx context.Context, limit int) ([]espn.SyncRun, error) {
@@ -275,6 +282,7 @@ func (r *Repository) ListSyncRuns(ctx context.Context, limit int) ([]espn.SyncRu
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, sync_type, league_id, team_id, season, started_at,
 		       COALESCE(completed_at, started_at), status, warning_count,
+		       scoring_period_id, effective_next_day,
 		       COALESCE(summary_json, '{}')
 		FROM espn_sync_runs
 		ORDER BY id DESC
@@ -288,8 +296,10 @@ func (r *Repository) ListSyncRuns(ctx context.Context, limit int) ([]espn.SyncRu
 	out := []espn.SyncRun{}
 	for rows.Next() {
 		var row espn.SyncRun
+		var scoringPeriodID sql.NullInt64
+		var effectiveNextDay int
 		var startedAtRaw, completedAtRaw string
-		if err := rows.Scan(&row.ID, &row.SyncType, &row.LeagueID, &row.TeamID, &row.Season, &startedAtRaw, &completedAtRaw, &row.Status, &row.WarningCount, &row.SummaryJSON); err != nil {
+		if err := rows.Scan(&row.ID, &row.SyncType, &row.LeagueID, &row.TeamID, &row.Season, &startedAtRaw, &completedAtRaw, &row.Status, &row.WarningCount, &scoringPeriodID, &effectiveNextDay, &row.SummaryJSON); err != nil {
 			return nil, fmt.Errorf("scan espn sync run row: %w", err)
 		}
 		startedAt, err := time.Parse(time.RFC3339, startedAtRaw)
@@ -302,6 +312,11 @@ func (r *Repository) ListSyncRuns(ctx context.Context, limit int) ([]espn.SyncRu
 		}
 		row.StartedAt = startedAt
 		row.CompletedAt = completedAt
+		if scoringPeriodID.Valid {
+			v := int(scoringPeriodID.Int64)
+			row.ScoringPeriodID = &v
+		}
+		row.EffectiveNextDay = effectiveNextDay == 1
 		out = append(out, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -311,8 +326,15 @@ func (r *Repository) ListSyncRuns(ctx context.Context, limit int) ([]espn.SyncRu
 }
 
 func (r *Repository) LatestRoster(ctx context.Context, syncRunID *int64, pitchersOnly bool) ([]espn.RosterSnapshot, error) {
-	where := "sync_run_id = COALESCE(?, (SELECT id FROM espn_sync_runs ORDER BY id DESC LIMIT 1))"
+	return r.LatestRosterForContext(ctx, syncRunID, nil, false, pitchersOnly)
+}
+
+func (r *Repository) LatestRosterForContext(ctx context.Context, syncRunID *int64, scoringPeriodID *int, effectiveNextDay bool, pitchersOnly bool) ([]espn.RosterSnapshot, error) {
+	where := "sync_run_id = COALESCE(?, (SELECT id FROM espn_sync_runs WHERE " + syncContextSubqueryWhere(scoringPeriodID, effectiveNextDay) + " ORDER BY id DESC LIMIT 1))"
 	args := []any{nullInt64(syncRunID)}
+	if scoringPeriodID != nil {
+		args = append(args, *scoringPeriodID)
+	}
 	if pitchersOnly {
 		where += " AND is_pitcher = 1"
 	}
@@ -358,15 +380,24 @@ func (r *Repository) LatestRoster(ctx context.Context, syncRunID *int64, pitcher
 }
 
 func (r *Repository) LatestLeague(ctx context.Context, syncRunID *int64) (*espn.LeagueSnapshot, error) {
+	return r.LatestLeagueForContext(ctx, syncRunID, nil, false)
+}
+
+func (r *Repository) LatestLeagueForContext(ctx context.Context, syncRunID *int64, scoringPeriodID *int, effectiveNextDay bool) (*espn.LeagueSnapshot, error) {
+	where := "sync_run_id = COALESCE(?, (SELECT id FROM espn_sync_runs WHERE " + syncContextSubqueryWhere(scoringPeriodID, effectiveNextDay) + " ORDER BY id DESC LIMIT 1))"
+	args := []any{nullInt64(syncRunID)}
+	if scoringPeriodID != nil {
+		args = append(args, *scoringPeriodID)
+	}
 	row := r.db.QueryRowContext(ctx, `
 		SELECT sync_run_id, league_id, season, COALESCE(league_name, ''),
 		       team_id, COALESCE(team_name, ''), COALESCE(scoring_type, ''),
 		       COALESCE(settings_json, '{}'), created_at
 		FROM espn_league_snapshots
-		WHERE sync_run_id = COALESCE(?, (SELECT id FROM espn_sync_runs ORDER BY id DESC LIMIT 1))
+		WHERE `+where+`
 		ORDER BY id DESC
 		LIMIT 1
-	`, nullInt64(syncRunID))
+	`, args...)
 	var out espn.LeagueSnapshot
 	var createdAtRaw string
 	if err := row.Scan(&out.SyncRunID, &out.LeagueID, &out.Season, &out.LeagueName, &out.TeamID, &out.TeamName, &out.ScoringType, &out.SettingsJSON, &createdAtRaw); err != nil {
@@ -519,4 +550,38 @@ func nullInt64(v *int64) any {
 		return nil
 	}
 	return *v
+}
+
+func nullInt(v *int) any {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
+
+func boolInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
+}
+
+func syncContextWhere(scoringPeriodID *int, effectiveNextDay bool) (string, []any) {
+	if scoringPeriodID != nil {
+		return "sync_type = 'roster' AND scoring_period_id = ? AND effective_next_day = ?", []any{*scoringPeriodID, boolInt(effectiveNextDay)}
+	}
+	if effectiveNextDay {
+		return "sync_type = 'roster' AND effective_next_day = 1", nil
+	}
+	return "sync_type = 'roster' AND scoring_period_id IS NULL AND effective_next_day = ?", []any{boolInt(effectiveNextDay)}
+}
+
+func syncContextSubqueryWhere(scoringPeriodID *int, effectiveNextDay bool) string {
+	if scoringPeriodID != nil {
+		return "sync_type = 'roster' AND scoring_period_id = ? AND effective_next_day = " + fmt.Sprintf("%d", boolInt(effectiveNextDay))
+	}
+	if effectiveNextDay {
+		return "sync_type = 'roster' AND effective_next_day = 1"
+	}
+	return "sync_type = 'roster' AND scoring_period_id IS NULL AND effective_next_day = " + fmt.Sprintf("%d", boolInt(effectiveNextDay))
 }

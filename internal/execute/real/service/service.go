@@ -82,7 +82,12 @@ func (s *Service) ExecuteOne(ctx context.Context, cfg config.Config, opts execut
 		return nil, err
 	}
 
-	preflightRun, err := s.preflightService.Preflight(ctx, execute.Options{ItemID: &opts.ItemID, Limit: 1})
+	preflightRun, err := s.preflightService.Preflight(ctx, execute.Options{
+		ItemID:           &opts.ItemID,
+		Limit:            1,
+		ScoringPeriodID:  intPtrFromInt64(opts.ScoringPeriodID),
+		EffectiveNextDay: opts.EffectiveNextDay,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -547,6 +552,14 @@ func actionType(addOnly bool) string {
 		return "add_pitcher"
 	}
 	return "add_drop_pitcher"
+}
+
+func intPtrFromInt64(v *int64) *int {
+	if v == nil {
+		return nil
+	}
+	out := int(*v)
+	return &out
 }
 
 func (s *Service) findApprovedItem(ctx context.Context, itemID int64) (*transactions.ApprovalQueueItem, error) {

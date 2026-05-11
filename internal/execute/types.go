@@ -65,8 +65,10 @@ type Run struct {
 }
 
 type Options struct {
-	ItemID *int64
-	Limit  int
+	ItemID           *int64
+	Limit            int
+	ScoringPeriodID  *int
+	EffectiveNextDay bool
 }
 
 type QueueRow struct {

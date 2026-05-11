@@ -3,16 +3,18 @@ package espn
 import "time"
 
 type SyncRun struct {
-	ID           int64     `json:"id"`
-	SyncType     string    `json:"sync_type"`
-	LeagueID     string    `json:"league_id"`
-	TeamID       string    `json:"team_id"`
-	Season       int       `json:"season"`
-	StartedAt    time.Time `json:"started_at"`
-	CompletedAt  time.Time `json:"completed_at"`
-	Status       string    `json:"status"`
-	WarningCount int       `json:"warning_count"`
-	SummaryJSON  string    `json:"summary_json,omitempty"`
+	ID               int64     `json:"id"`
+	SyncType         string    `json:"sync_type"`
+	LeagueID         string    `json:"league_id"`
+	TeamID           string    `json:"team_id"`
+	Season           int       `json:"season"`
+	StartedAt        time.Time `json:"started_at"`
+	CompletedAt      time.Time `json:"completed_at"`
+	Status           string    `json:"status"`
+	WarningCount     int       `json:"warning_count"`
+	ScoringPeriodID  *int      `json:"scoring_period_id,omitempty"`
+	EffectiveNextDay bool      `json:"effective_next_day"`
+	SummaryJSON      string    `json:"summary_json,omitempty"`
 }
 
 type RawPayload struct {
@@ -60,6 +62,8 @@ type SyncSummary struct {
 	WarningCount       int    `json:"warning_count"`
 	SourceEndpoint     string `json:"source_endpoint"`
 	ResponseStatusCode int    `json:"response_status_code"`
+	ScoringPeriodID    *int   `json:"scoring_period_id,omitempty"`
+	EffectiveNextDay   bool   `json:"effective_next_day"`
 	DryRun             bool   `json:"dry_run"`
 }
 

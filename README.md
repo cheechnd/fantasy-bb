@@ -161,6 +161,22 @@ Examples:
 ./fb mlb schedule --from 2026-05-10 --to 2026-05-12
 ```
 
+Roster context views (useful after games start):
+
+```bash
+# current scoring period roster view
+./fb espn sync roster
+./fb espn show roster
+
+# explicit scoring period roster view
+./fb espn sync roster --scoring-period-id 49
+./fb espn show roster --scoring-period-id 49
+
+# next-day effective roster view (auto-resolves next scoring period)
+./fb espn sync roster --next-day
+./fb espn show roster --next-day
+```
+
 `fb forecaster show` includes:
 - `starts`
 - `week`
@@ -199,6 +215,10 @@ Free-agent snapshots now include acquisition status:
 ./fb execute pending
 ./fb execute verify --execution-id <id>
 ./fb execute reconcile --execution-id <id>
+
+# optional: preflight/preview against next-day effective roster context
+./fb execute preflight --next-day
+./fb execute dry-run --next-day
 ```
 
 ## Transaction Ops

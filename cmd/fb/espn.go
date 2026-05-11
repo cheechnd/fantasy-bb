@@ -138,16 +138,25 @@ func newESPNFreeAgentsPitchersCmd(opts *cliOptions) *cobra.Command {
 
 func newESPNSyncRosterCmd(opts *cliOptions) *cobra.Command {
 	var dryRun bool
+	var scoringPeriodID int
+	var nextDay bool
 	cmd := &cobra.Command{
 		Use:   "roster",
 		Short: "Fetch and persist ESPN league/roster snapshots",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if cmd.Flags().Changed("scoring-period-id") && nextDay {
+				return fmt.Errorf("use only one of --scoring-period-id or --next-day")
+			}
 			v, err := withESPNService(cmd.Context(), opts, func(_ context.Context, svc *espnsvc.Service, cfg loadedConfig) (any, error) {
 				execOpts := executionOptionsFromConfigAndFlags(cmd, cfg.Config, opts)
 				if cmd.Flags().Changed("dry-run") {
 					execOpts.DryRun = dryRun
 				}
-				return svc.SyncRoster(cmd.Context(), cfg.Config, espnsvc.SyncOptions{DryRun: execOpts.DryRun})
+				return svc.SyncRoster(cmd.Context(), cfg.Config, espnsvc.SyncOptions{
+					DryRun:           execOpts.DryRun,
+					ScoringPeriodID:  optionalInt(cmd, "scoring-period-id", scoringPeriodID),
+					EffectiveNextDay: nextDay,
+				})
 			})
 			if err != nil {
 				return err
@@ -163,6 +172,12 @@ func newESPNSyncRosterCmd(opts *cliOptions) *cobra.Command {
 			if summary.SyncRunID != nil {
 				fmt.Fprintf(cmd.OutOrStdout(), "Sync run: %d\n", *summary.SyncRunID)
 			}
+			if summary.ScoringPeriodID != nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "Scoring period: %d\n", *summary.ScoringPeriodID)
+			}
+			if summary.EffectiveNextDay {
+				fmt.Fprintln(cmd.OutOrStdout(), "Effective: next-day")
+			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Rostered players: %d\n", summary.RosteredPlayers)
 			fmt.Fprintf(cmd.OutOrStdout(), "Pitchers identified: %d\n", summary.PitcherCount)
 			fmt.Fprintf(cmd.OutOrStdout(), "Warnings: %d\n", summary.WarningCount)
@@ -173,6 +188,8 @@ func newESPNSyncRosterCmd(opts *cliOptions) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Fetch and parse but do not persist")
+	cmd.Flags().IntVar(&scoringPeriodID, "scoring-period-id", 0, "Fetch roster for a specific ESPN scoring period")
+	cmd.Flags().BoolVar(&nextDay, "next-day", false, "Fetch roster for the next ESPN scoring period")
 	return cmd
 }
 
@@ -259,22 +276,45 @@ func newESPNShowMatchupCmd(opts *cliOptions) *cobra.Command {
 
 func newESPNShowRosterCmd(opts *cliOptions) *cobra.Command {
 	var syncRunID int64
+	var scoringPeriodID int
+	var nextDay bool
 	var pitchersOnly bool
 	cmd := &cobra.Command{
 		Use:   "roster",
 		Short: "Show latest or selected ESPN roster snapshot",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if cmd.Flags().Changed("scoring-period-id") && nextDay {
+				return fmt.Errorf("use only one of --scoring-period-id or --next-day")
+			}
 			var runID *int64
 			if cmd.Flags().Changed("sync-run") {
 				runID = &syncRunID
 			}
 			v, err := withESPNService(cmd.Context(), opts, func(_ context.Context, svc *espnsvc.Service, _ loadedConfig) (any, error) {
-				return svc.ShowRoster(cmd.Context(), espnsvc.ShowRosterFilter{SyncRunID: runID, PitchersOnly: pitchersOnly})
+				rows, err := svc.ShowRoster(cmd.Context(), espnsvc.ShowRosterFilter{
+					SyncRunID:        runID,
+					ScoringPeriodID:  optionalInt(cmd, "scoring-period-id", scoringPeriodID),
+					EffectiveNextDay: nextDay,
+					PitchersOnly:     pitchersOnly,
+				})
+				if err != nil {
+					return nil, err
+				}
+				var syncRun *espn.SyncRun
+				if len(rows) > 0 {
+					syncRun, err = svc.SyncRunByID(cmd.Context(), rows[0].SyncRunID)
+					if err != nil {
+						return nil, err
+					}
+				}
+				return map[string]any{"rows": rows, "sync_run": syncRun}, nil
 			})
 			if err != nil {
 				return err
 			}
-			rows := v.([]espn.RosterSnapshot)
+			payload := v.(map[string]any)
+			rows := payload["rows"].([]espn.RosterSnapshot)
+			syncRun, _ := payload["sync_run"].(*espn.SyncRun)
 			if opts.OutputJSON {
 				enhanced := make([]map[string]any, 0, len(rows))
 				for _, row := range rows {
@@ -297,13 +337,31 @@ func newESPNShowRosterCmd(opts *cliOptions) *cobra.Command {
 					}
 					enhanced = append(enhanced, item)
 				}
-				return writeJSON(cmd, map[string]any{"ok": true, "count": len(rows), "rows": enhanced})
+				out := map[string]any{"ok": true, "count": len(rows), "rows": enhanced}
+				if syncRun != nil {
+					out["sync_run_id"] = syncRun.ID
+					out["effective_next_day"] = syncRun.EffectiveNextDay
+					if syncRun.ScoringPeriodID != nil {
+						out["scoring_period_id"] = *syncRun.ScoringPeriodID
+					}
+				}
+				return writeJSON(cmd, out)
+			}
+			if syncRun != nil {
+				if syncRun.ScoringPeriodID != nil {
+					fmt.Fprintf(cmd.OutOrStdout(), "Scoring period: %d\n", *syncRun.ScoringPeriodID)
+				}
+				if syncRun.EffectiveNextDay {
+					fmt.Fprintln(cmd.OutOrStdout(), "Effective: next-day")
+				}
 			}
 			printESPNRosterTable(cmd, rows)
 			return nil
 		},
 	}
 	cmd.Flags().Int64Var(&syncRunID, "sync-run", 0, "Specific ESPN sync run ID (defaults to latest)")
+	cmd.Flags().IntVar(&scoringPeriodID, "scoring-period-id", 0, "Show roster for a specific ESPN scoring period")
+	cmd.Flags().BoolVar(&nextDay, "next-day", false, "Show roster from the next-day ESPN sync")
 	cmd.Flags().BoolVar(&pitchersOnly, "pitchers-only", false, "Show only pitchers")
 	return cmd
 }
