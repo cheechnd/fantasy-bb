@@ -59,11 +59,7 @@
   },
   "lineup": {
     "pitchers": {
-      "enabled": true,
-      "auto_generate_from_pitcher_plan": true,
-      "allow_monitor_actions": false,
-      "require_confirmation": true,
-      "block_on_ambiguous_slot_mapping": true
+      "enabled": true
     }
   },
   "monitoring": {

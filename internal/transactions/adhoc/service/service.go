@@ -29,6 +29,11 @@ type Service struct {
 	cfg        Config
 }
 
+type ResolveOptions struct {
+	ScoringPeriodID  *int
+	EffectiveNextDay bool
+}
+
 func New(repo *adhocrepo.Repository, espnRepo *esrepo.Repository, tranRepo *tranrepo.Repository, reviewRepo *reviewrepo.Repository, cfg Config) *Service {
 	return &Service{
 		repo:       repo,
@@ -40,6 +45,10 @@ func New(repo *adhocrepo.Repository, espnRepo *esrepo.Repository, tranRepo *tran
 }
 
 func (s *Service) CreateAndResolve(ctx context.Context, addName, dropName string) (*transactions.AdHocRequest, error) {
+	return s.CreateAndResolveWithOptions(ctx, addName, dropName, ResolveOptions{})
+}
+
+func (s *Service) CreateAndResolveWithOptions(ctx context.Context, addName, dropName string, opts ResolveOptions) (*transactions.AdHocRequest, error) {
 	if !s.cfg.Enabled {
 		return nil, fmt.Errorf("ad hoc transactions are disabled by config")
 	}
@@ -62,7 +71,7 @@ func (s *Service) CreateAndResolve(ctx context.Context, addName, dropName string
 		"drop": dropName,
 	})
 
-	req, err := s.resolve(ctx, id)
+	req, err := s.resolve(ctx, id, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -189,7 +198,7 @@ func (s *Service) LinkExecutionResult(ctx context.Context, requestID int64, atte
 	return nil
 }
 
-func (s *Service) resolve(ctx context.Context, requestID int64) (*transactions.AdHocRequest, error) {
+func (s *Service) resolve(ctx context.Context, requestID int64, opts ResolveOptions) (*transactions.AdHocRequest, error) {
 	req, err := s.repo.ByID(ctx, requestID)
 	if err != nil {
 		return nil, err
@@ -198,7 +207,7 @@ func (s *Service) resolve(ctx context.Context, requestID int64) (*transactions.A
 		return nil, fmt.Errorf("ad hoc request %d not found", requestID)
 	}
 
-	roster, err := s.espnRepo.LatestRoster(ctx, nil, false)
+	roster, err := s.espnRepo.LatestRosterForContext(ctx, nil, opts.ScoringPeriodID, opts.EffectiveNextDay, false)
 	if err != nil {
 		return nil, err
 	}

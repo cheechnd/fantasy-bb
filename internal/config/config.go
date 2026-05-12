@@ -146,11 +146,7 @@ type LineupConfig struct {
 }
 
 type LineupPitchersConfig struct {
-	Enabled                     bool `json:"enabled"`
-	AutoGenerateFromPitcherPlan bool `json:"auto_generate_from_pitcher_plan"`
-	AllowMonitorActions         bool `json:"allow_monitor_actions"`
-	RequireConfirmation         bool `json:"require_confirmation"`
-	BlockOnAmbiguousSlotMapping bool `json:"block_on_ambiguous_slot_mapping"`
+	Enabled bool `json:"enabled"`
 }
 
 type MonitoringConfig struct {
@@ -269,11 +265,7 @@ func Default() Config {
 		},
 		Lineup: LineupConfig{
 			Pitchers: LineupPitchersConfig{
-				Enabled:                     true,
-				AutoGenerateFromPitcherPlan: true,
-				AllowMonitorActions:         false,
-				RequireConfirmation:         true,
-				BlockOnAmbiguousSlotMapping: true,
+				Enabled: true,
 			},
 		},
 		Monitoring: MonitoringConfig{
@@ -522,9 +514,6 @@ func (c Config) Validate() error {
 	}
 	if c.Execution.Hardening.VerificationPendingWindowSeconds < 0 || c.Execution.Hardening.VerificationPendingWindowSeconds > 600 {
 		problems = append(problems, "execution.hardening.verification_pending_window_seconds must be between 0 and 600")
-	}
-	if c.Lineup.Pitchers.RequireConfirmation && !c.Execution.Real.RequireConfirmation {
-		problems = append(problems, "lineup.pitchers.require_confirmation requires execution.real.require_confirmation=true")
 	}
 	if c.Monitoring.PlansStaleHours < 0 || c.Monitoring.PlansStaleHours > 168 {
 		problems = append(problems, "monitoring.plans_stale_hours must be between 0 and 168")

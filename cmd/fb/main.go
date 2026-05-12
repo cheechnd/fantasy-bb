@@ -91,12 +91,10 @@ func newRootCmd() *cobra.Command {
 	pitchersCmd.GroupID = "team"
 	pickupsCmd := newPickupsCmd(opts)
 	pickupsCmd.GroupID = "team"
-	lineupCmd := newLineupCmd(opts)
-	lineupCmd.GroupID = "team"
 	executeCmd := newExecuteCmd(opts)
 	executeCmd.GroupID = "ops"
 
-	root.AddCommand(versionCmd, doctorCmd, healthCmd, initCmd, configCmd, teamCmd, dbCmd, forecasterCmd, espnCmd, mlbCmd, pitchersCmd, pickupsCmd, lineupCmd, executeCmd)
+	root.AddCommand(versionCmd, doctorCmd, healthCmd, initCmd, configCmd, teamCmd, dbCmd, forecasterCmd, espnCmd, mlbCmd, pitchersCmd, pickupsCmd, executeCmd)
 
 	return root
 }

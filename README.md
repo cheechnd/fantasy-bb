@@ -21,7 +21,6 @@ Design philosophy:
 - ESPN roster + free-agent snapshot sync
 - Factual rostered-pitcher projection views (`fb pitchers plan|last`)
 - Factual available-pitcher projection views (`fb pickups plan|last`)
-- Factual pitcher lineup action plans (`fb lineup plan|last`)
 - Direct single-item transaction execution (`add/drop` and `add-only`)
 - Direct single-item lineup slot execution
 - Execution follow-up (`pending`, `verify`, `reconcile`, `resolve`)
@@ -126,7 +125,6 @@ Note: `fb team add` registers the team entry immediately, but the team DB path i
 ### Decision Commands (non-mutating)
 - `fb pitchers plan|last`
 - `fb pickups plan|last`
-- `fb lineup plan|last`
 
 Decision commands are intentionally neutral:
 - no “top candidates/top streamers/upgrades” advice framing
@@ -137,6 +135,8 @@ Decision commands are intentionally neutral:
 - `fb execute transaction`
 - `fb execute lineup`
 - `fb execute history|pending|verify|reconcile|resolve`
+
+Lineup planning/review commands were intentionally removed; lineup is now an explicit direct operation via `fb execute lineup`.
 
 ### Source Data
 - `fb espn sync ...`
@@ -199,7 +199,6 @@ Free-agent snapshots now include acquisition status:
 # 2) generate decisions
 ./fb pitchers plan
 ./fb pickups plan
-./fb lineup plan
 
 # use your OpenClaw skill/agent to choose actions from these factual views
 
@@ -207,7 +206,7 @@ Free-agent snapshots now include acquisition status:
 ./fb execute transaction --add "Roki Sasaki" --drop "Sandy Alcantara"
 ./fb execute transaction --add "Roki Sasaki" --drop "Sandy Alcantara" --confirm
 
-# 4) execute one lineup move
+# 4) optionally execute one lineup move
 ./fb execute lineup --player "Kris Bubic" --to-slot P
 ./fb execute lineup --player "Kris Bubic" --to-slot P --confirm
 
@@ -236,10 +235,14 @@ Direct transaction execution (no plan approval step required):
 
 # next-day effective execution
 ./fb execute transaction --add "Roki Sasaki" --next-day --confirm
+
+# explicit scoring-period context
+./fb execute transaction --add "Seth Lugo" --drop "Tatsuya Imai" --scoring-period-id 49 --confirm
 ```
 
 Notes:
 - Transaction resolution/preflight treat `WAIVERS` as not immediately available.
+- For direct `fb execute transaction`, `--next-day` / `--scoring-period-id` apply to drop-target roster resolution too.
 - If a player shows `On Waivers` in ESPN UI, sync candidates first and confirm `ACQ_STATUS`:
 
 ```bash

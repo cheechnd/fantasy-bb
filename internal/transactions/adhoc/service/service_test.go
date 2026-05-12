@@ -209,9 +209,36 @@ func TestCreateAndResolveUsesLatestRunCandidateCountNotAdHocLimit(t *testing.T) 
 	}
 }
 
+func TestCreateAndResolveWithOptionsUsesNextDayRosterContext(t *testing.T) {
+	svc, closeFn := seededService(t, seedInput{
+		roster: []espn.RosterSnapshot{
+			{PlayerName: "Other Arm", NormalizedName: "otherarm", IsPitcher: true, ESPNPlayerID: ptr64(202)},
+		},
+		nextDayRoster: []espn.RosterSnapshot{
+			{PlayerName: "Tatsuya Imai", NormalizedName: "tatsuyaimai", IsPitcher: true, ESPNPlayerID: ptr64(303)},
+		},
+		cands: []espn.FreeAgentCandidate{
+			{PlayerName: "Seth Lugo", NormalizedName: "sethlugo", IsPitcher: true, ESPNPlayerID: ptr64(101)},
+		},
+	})
+	defer closeFn()
+
+	req, err := svc.CreateAndResolveWithOptions(context.Background(), "Seth Lugo", "Tatsuya Imai", ResolveOptions{EffectiveNextDay: true})
+	if err != nil {
+		t.Fatalf("CreateAndResolveWithOptions: %v", err)
+	}
+	if req.ResolutionStatus != transactions.AdHocResolutionResolved {
+		t.Fatalf("expected resolved with next-day roster, got %s", req.ResolutionStatus)
+	}
+	if req.ResolvedDropPlayerName != "Tatsuya Imai" {
+		t.Fatalf("expected next-day drop resolution, got %q", req.ResolvedDropPlayerName)
+	}
+}
+
 type seedInput struct {
-	roster []espn.RosterSnapshot
-	cands  []espn.FreeAgentCandidate
+	roster        []espn.RosterSnapshot
+	nextDayRoster []espn.RosterSnapshot
+	cands         []espn.FreeAgentCandidate
 }
 
 func seededService(t *testing.T, in seedInput) (*Service, func()) {
@@ -242,6 +269,24 @@ func seededService(t *testing.T, in seedInput) (*Service, func()) {
 	})
 	if err != nil {
 		t.Fatalf("PersistSync: %v", err)
+	}
+	if len(in.nextDayRoster) > 0 {
+		sp := 49
+		if _, err := er.PersistSync(context.Background(), esrepo.PersistSyncInput{
+			SyncType:         "roster",
+			LeagueID:         "1",
+			TeamID:           "1",
+			Season:           2026,
+			Status:           "success",
+			ScoringPeriodID:  &sp,
+			EffectiveNextDay: true,
+			League: espn.LeagueSnapshot{
+				LeagueID: "1", TeamID: "1", Season: 2026, LeagueName: "L", TeamName: "T", CreatedAt: now,
+			},
+			Roster: in.nextDayRoster,
+		}); err != nil {
+			t.Fatalf("PersistSync next-day: %v", err)
+		}
 	}
 	_, err = er.PersistCandidates(context.Background(), esrepo.PersistCandidateInput{
 		SyncRunID: &syncID,

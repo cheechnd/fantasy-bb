@@ -15,6 +15,7 @@ import (
 	exerepo "fantasy-baseball/internal/execute/repository"
 	exesvc "fantasy-baseball/internal/execute/service"
 	lp "fantasy-baseball/internal/lineup/pitchers"
+	pitchplan "fantasy-baseball/internal/pitchers/planner"
 	"fantasy-baseball/internal/store/sqlite"
 	adhocrepo "fantasy-baseball/internal/transactions/adhoc/repository"
 	adhocsvc "fantasy-baseball/internal/transactions/adhoc/service"
@@ -34,6 +35,10 @@ func newExecuteCmd(opts *cliOptions) *cobra.Command {
 	txCmd.GroupID = "run"
 	lineupCmd := newExecuteLineupDirectCmd(opts)
 	lineupCmd.GroupID = "run"
+	preflightCmd := newExecutePreflightCmd(opts)
+	preflightCmd.GroupID = "run"
+	dryRunCmd := newExecuteDryRunCmd(opts)
+	dryRunCmd.GroupID = "run"
 	historyCmd := newExecuteHistoryCmd(opts)
 	historyCmd.GroupID = "followup"
 	verifyCmd := newExecuteVerifyCmd(opts)
@@ -44,7 +49,7 @@ func newExecuteCmd(opts *cliOptions) *cobra.Command {
 	reconcileCmd.GroupID = "followup"
 	pendingCmd := newExecutePendingCmd(opts)
 	pendingCmd.GroupID = "followup"
-	cmd.AddCommand(txCmd, lineupCmd, historyCmd, verifyCmd, resolveCmd, reconcileCmd, pendingCmd)
+	cmd.AddCommand(txCmd, lineupCmd, preflightCmd, dryRunCmd, historyCmd, verifyCmd, resolveCmd, reconcileCmd, pendingCmd)
 	return cmd
 }
 
@@ -64,7 +69,10 @@ func newExecuteTransactionDirectCmd(opts *cliOptions) *cobra.Command {
 				return fmt.Errorf("use only one of --scoring-period-id or --next-day")
 			}
 			v, err := withAdHocAndRealExecuteService(cmd.Context(), opts, func(ctx context.Context, cfg config.Config, adhoc *adhocsvc.Service, real *exerealsvc.Service) (any, error) {
-				req, err := adhoc.CreateAndResolve(ctx, addName, dropName)
+				req, err := adhoc.CreateAndResolveWithOptions(ctx, addName, dropName, adhocsvc.ResolveOptions{
+					ScoringPeriodID:  intPtrFromInt64(optionalInt64(cmd, "scoring-period-id", scoringPeriodID)),
+					EffectiveNextDay: nextDay,
+				})
 				if err != nil {
 					return nil, err
 				}
@@ -689,6 +697,40 @@ func withAdHocAndRealExecuteService(ctx context.Context, opts *cliOptions, fn fu
 	return fn(ctx, cfg, adHocSvc, realSvc)
 }
 
+func withLineupService(ctx context.Context, opts *cliOptions, fn func(context.Context, config.Config, *lp.Service) (any, error)) (any, error) {
+	cfg, _, err := loadConfigWithOverrides(opts)
+	if err != nil {
+		return nil, err
+	}
+	s, err := sqlite.Open(cfg.DBPath)
+	if err != nil {
+		return nil, err
+	}
+	defer s.Close()
+	if _, err := s.Migrate(ctx); err != nil {
+		return nil, err
+	}
+
+	repo := lp.NewRepository(s.DB())
+	pitcherPlanRepo := pitchplan.NewRepository(s.DB())
+	espnRepo := esrepo.New(s.DB())
+	svc := lp.NewService(
+		repo,
+		pitcherPlanRepo,
+		espnRepo,
+		lp.NewESPNWriter(lineupTimeoutDuration(cfg.ESPN.TimeoutSeconds)),
+		lp.NewESPNVerifier(lineupTimeoutDuration(cfg.ESPN.TimeoutSeconds)),
+	)
+	return fn(ctx, cfg, svc)
+}
+
+func lineupTimeoutDuration(seconds int) time.Duration {
+	if seconds <= 0 {
+		seconds = 20
+	}
+	return time.Duration(seconds) * time.Second
+}
+
 func optionalInt64(cmd *cobra.Command, name string, value int64) *int64 {
 	if cmd.Flags().Changed(name) {
 		v := value
@@ -703,6 +745,14 @@ func optionalInt(cmd *cobra.Command, name string, value int) *int {
 		return &v
 	}
 	return nil
+}
+
+func intPtrFromInt64(v *int64) *int {
+	if v == nil {
+		return nil
+	}
+	out := int(*v)
+	return &out
 }
 
 func printExecutionRun(cmd *cobra.Command, run *execute.Run) {
@@ -960,4 +1010,24 @@ func formatExecutionAction(addName, dropName string) string {
 		return fmt.Sprintf("add %s", addName)
 	}
 	return fmt.Sprintf("add %s / drop %s", addName, dropName)
+}
+
+func printLineupExecutionPreview(cmd *cobra.Command, itemID int64, payload map[string]any) {
+	pre, _ := payload["preflight"].(*lp.PreflightItem)
+	attempt, _ := payload["attempt"].(*lp.ExecutionAttempt)
+	willWrite, _ := payload["will_write"].(bool)
+	msg, _ := payload["message"].(string)
+
+	fmt.Fprintf(cmd.OutOrStdout(), "Approved Lineup Item: %d\n", itemID)
+	if pre != nil {
+		fmt.Fprintf(cmd.OutOrStdout(), "Action: %s %s (%s -> %s)\n", pre.ActionType, pre.PlayerName, firstNonEmpty(pre.CurrentSlot, "-"), firstNonEmpty(pre.TargetSlot, "-"))
+		fmt.Fprintf(cmd.OutOrStdout(), "Immediate preflight: %s\n", pre.ValidationStatus)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Will write: %t\n", willWrite)
+	if attempt != nil {
+		fmt.Fprintf(cmd.OutOrStdout(), "Execution ID: %d\n", attempt.ID)
+		fmt.Fprintf(cmd.OutOrStdout(), "Execution status: %s\n", attempt.ExecutionStatus)
+		fmt.Fprintf(cmd.OutOrStdout(), "Verification status: %s\n", attempt.VerificationStatus)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Message: %s\n", msg)
 }
