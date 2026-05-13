@@ -243,6 +243,7 @@ Direct transaction execution (no plan approval step required):
 Notes:
 - Transaction resolution/preflight treat `WAIVERS` as not immediately available.
 - For direct `fb execute transaction`, `--next-day` / `--scoring-period-id` apply to drop-target roster resolution too.
+- Add-only preflight checks active roster capacity separately from ESPN IL capacity. In JSON output, use `active_roster_capacity_excluding_il`, `current_open_active_roster_slots_excluding_il`, and `effective_open_active_roster_slots_excluding_il` to determine whether a direct add has a usable non-IL roster slot.
 - If a player shows `On Waivers` in ESPN UI, sync candidates first and confirm `ACQ_STATUS`:
 
 ```bash

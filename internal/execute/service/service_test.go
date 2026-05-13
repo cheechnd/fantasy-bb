@@ -183,6 +183,39 @@ func TestPreflightAddOnlyBlockedWhenRosterCapacityFull(t *testing.T) {
 	}
 }
 
+func TestPreflightAddOnlyUsesNonILRosterCapacity(t *testing.T) {
+	svc, closeFn := seededService(t, seededInputs{
+		addName:        "Add Arm",
+		dropName:       "",
+		rosterNames:    []string{"A", "IL Arm"},
+		rosterSlots:    []string{"P", "IL"},
+		candidates:     []string{"Add Arm"},
+		leagueSettings: `{"lineupSlotCounts":{"13":1,"17":1}}`,
+	})
+	defer closeFn()
+
+	run, err := svc.Preflight(context.Background(), execute.Options{Limit: 10})
+	if err != nil {
+		t.Fatalf("Preflight: %v", err)
+	}
+	if len(run.Items) != 1 || run.Items[0].ValidationStatus != execute.StatusBlocked {
+		t.Fatalf("expected blocked add-only item with full normal roster, got %+v", run.Items)
+	}
+	ctx, _ := run.Items[0].Details["roster_context"].(map[string]any)
+	if !jsonNumberEquals(ctx["active_roster_capacity_excluding_il"], 1) {
+		t.Fatalf("expected active_roster_capacity_excluding_il=1, got %+v", ctx)
+	}
+	if !jsonNumberEquals(ctx["il_roster_capacity"], 1) {
+		t.Fatalf("expected il_roster_capacity=1, got %+v", ctx)
+	}
+	if !jsonNumberEquals(ctx["current_active_roster_total_excluding_il"], 1) {
+		t.Fatalf("expected current_active_roster_total_excluding_il=1, got %+v", ctx)
+	}
+	if !jsonNumberEquals(ctx["current_il_roster_total"], 1) {
+		t.Fatalf("expected current_il_roster_total=1, got %+v", ctx)
+	}
+}
+
 func TestPreflightNextDayAddOnlyUsesEffectiveRosterCapacity(t *testing.T) {
 	svc, closeFn := seededService(t, seededInputs{
 		addName:                  "Add Arm",
@@ -206,7 +239,7 @@ func TestPreflightNextDayAddOnlyUsesEffectiveRosterCapacity(t *testing.T) {
 	if ctx["effective_next_day"] != true {
 		t.Fatalf("expected effective_next_day detail, got %+v", ctx)
 	}
-	if ctx["effective_roster_capacity_full"] == true {
+	if ctx["effective_active_roster_capacity_full_excluding_il"] == true {
 		t.Fatalf("expected effective roster capacity to be open, got %+v", ctx)
 	}
 }
@@ -315,7 +348,9 @@ type seededInputs struct {
 	addName                  string
 	dropName                 string
 	rosterNames              []string
+	rosterSlots              []string
 	effectiveRosterNames     []string
+	effectiveRosterSlots     []string
 	effectiveScoringPeriodID int
 	candidates               []string
 	candidateStatuses        []string
@@ -366,9 +401,13 @@ func seededService(t *testing.T, in seededInputs) (*Service, func()) {
 	}
 
 	roster := make([]espn.RosterSnapshot, 0, len(in.rosterNames))
-	for _, name := range in.rosterNames {
+	for idx, name := range in.rosterNames {
+		slot := ""
+		if idx < len(in.rosterSlots) {
+			slot = in.rosterSlots[idx]
+		}
 		roster = append(roster, espn.RosterSnapshot{
-			PlayerName: name, NormalizedName: strings.ToLower(name), IsPitcher: true, CreatedAt: time.Now().UTC(),
+			PlayerName: name, NormalizedName: strings.ToLower(name), RosterSlot: slot, IsPitcher: true, CreatedAt: time.Now().UTC(),
 		})
 	}
 	cands := make([]espn.FreeAgentCandidate, 0, len(in.candidates))
@@ -395,9 +434,13 @@ func seededService(t *testing.T, in seededInputs) (*Service, func()) {
 	}
 	if len(in.effectiveRosterNames) > 0 {
 		effectiveRoster := make([]espn.RosterSnapshot, 0, len(in.effectiveRosterNames))
-		for _, name := range in.effectiveRosterNames {
+		for idx, name := range in.effectiveRosterNames {
+			slot := ""
+			if idx < len(in.effectiveRosterSlots) {
+				slot = in.effectiveRosterSlots[idx]
+			}
 			effectiveRoster = append(effectiveRoster, espn.RosterSnapshot{
-				PlayerName: name, NormalizedName: strings.ToLower(name), IsPitcher: true, CreatedAt: time.Now().UTC(),
+				PlayerName: name, NormalizedName: strings.ToLower(name), RosterSlot: slot, IsPitcher: true, CreatedAt: time.Now().UTC(),
 			})
 		}
 		sp := in.effectiveScoringPeriodID
@@ -475,4 +518,17 @@ func seededService(t *testing.T, in seededInputs) (*Service, func()) {
 		},
 	)
 	return svc, func() { store.Close() }
+}
+
+func jsonNumberEquals(v any, want int) bool {
+	switch n := v.(type) {
+	case int:
+		return n == want
+	case int64:
+		return int(n) == want
+	case float64:
+		return int(n) == want
+	default:
+		return false
+	}
 }

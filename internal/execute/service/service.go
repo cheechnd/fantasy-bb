@@ -283,7 +283,7 @@ func (s *Service) validateItem(ctx context.Context, q espnQueueRow, runType exec
 				reasons = append(reasons, execute.Reason{Code: "add_target_already_rostered", Message: "add target is already on roster"})
 			}
 			if addOnly {
-				if cap, ok := rosterCapacityFromLeagueSettings(rosterCtx.league); ok && cap > 0 && len(roster) >= cap {
+				if cap, ok := normalRosterCapacityFromLeagueSettings(rosterCtx.league); ok && cap > 0 && activeRosterExcludingILCount(roster) >= cap {
 					blocked = true
 					msg := "no open roster slot available for add-only move"
 					if rosterCtx.usingEffectiveView {
@@ -453,12 +453,25 @@ func rosterContextDetails(ctx rosterPreflightContext, effectiveSet, currentSet m
 	effectiveTotal := len(ctx.effectiveRoster)
 	details["current_roster_total"] = currentTotal
 	details["effective_roster_total"] = effectiveTotal
-	if cap, ok := rosterCapacityFromLeagueSettings(ctx.league); ok && cap > 0 {
-		details["roster_capacity"] = cap
-		details["current_open_slots"] = maxInt(0, cap-currentTotal)
-		details["effective_open_slots"] = maxInt(0, cap-effectiveTotal)
-		details["current_roster_capacity_full"] = currentTotal >= cap
-		details["effective_roster_capacity_full"] = effectiveTotal >= cap
+	currentActiveTotal := activeRosterExcludingILCount(ctx.currentRoster)
+	effectiveActiveTotal := activeRosterExcludingILCount(ctx.effectiveRoster)
+	currentILTotal := ilRosterCount(ctx.currentRoster)
+	effectiveILTotal := ilRosterCount(ctx.effectiveRoster)
+	details["current_active_roster_total_excluding_il"] = currentActiveTotal
+	details["effective_active_roster_total_excluding_il"] = effectiveActiveTotal
+	details["current_il_roster_total"] = currentILTotal
+	details["effective_il_roster_total"] = effectiveILTotal
+	if cap, ilCap, ok := rosterCapacitiesFromLeagueSettings(ctx.league); ok && cap > 0 {
+		totalCap := cap + ilCap
+		details["total_roster_capacity_including_il"] = totalCap
+		details["active_roster_capacity_excluding_il"] = cap
+		details["il_roster_capacity"] = ilCap
+		details["current_open_active_roster_slots_excluding_il"] = maxInt(0, cap-currentActiveTotal)
+		details["effective_open_active_roster_slots_excluding_il"] = maxInt(0, cap-effectiveActiveTotal)
+		details["current_active_roster_capacity_full_excluding_il"] = currentActiveTotal >= cap
+		details["effective_active_roster_capacity_full_excluding_il"] = effectiveActiveTotal >= cap
+		details["current_open_total_roster_slots_including_il"] = maxInt(0, totalCap-currentTotal)
+		details["effective_open_total_roster_slots_including_il"] = maxInt(0, totalCap-effectiveTotal)
 	}
 	details["current_distinct_rostered"] = len(currentSet)
 	details["effective_distinct_rostered"] = len(effectiveSet)
@@ -479,39 +492,76 @@ func actionType(addOnly bool) string {
 	return "add_drop_pitcher"
 }
 
-func rosterCapacityFromLeagueSettings(league *espn.LeagueSnapshot) (int, bool) {
+func normalRosterCapacityFromLeagueSettings(league *espn.LeagueSnapshot) (int, bool) {
+	normal, _, ok := rosterCapacitiesFromLeagueSettings(league)
+	return normal, ok
+}
+
+func rosterCapacitiesFromLeagueSettings(league *espn.LeagueSnapshot) (normal int, il int, ok bool) {
 	if league == nil || strings.TrimSpace(league.SettingsJSON) == "" {
-		return 0, false
+		return 0, 0, false
 	}
 	var raw map[string]any
 	if err := json.Unmarshal([]byte(league.SettingsJSON), &raw); err != nil {
-		return 0, false
+		return 0, 0, false
 	}
 	slotCounts, ok := raw["lineupSlotCounts"].(map[string]any)
 	if !ok || len(slotCounts) == 0 {
-		return 0, false
+		return 0, 0, false
 	}
-	total := 0
-	for _, v := range slotCounts {
+	for slotID, v := range slotCounts {
+		count := 0
 		switch t := v.(type) {
 		case float64:
 			if t > 0 {
-				total += int(t)
+				count = int(t)
 			}
 		case int:
 			if t > 0 {
-				total += t
+				count = t
 			}
 		case int64:
 			if t > 0 {
-				total += int(t)
+				count = int(t)
 			}
 		}
+		if count <= 0 {
+			continue
+		}
+		if slotID == "17" {
+			il += count
+			continue
+		}
+		normal += count
 	}
-	if total <= 0 {
-		return 0, false
+	if normal <= 0 && il <= 0 {
+		return 0, 0, false
 	}
-	return total, true
+	return normal, il, true
+}
+
+func activeRosterExcludingILCount(rows []espn.RosterSnapshot) int {
+	count := 0
+	for _, row := range rows {
+		if !isILRosterSlot(row.RosterSlot) {
+			count++
+		}
+	}
+	return count
+}
+
+func ilRosterCount(rows []espn.RosterSnapshot) int {
+	count := 0
+	for _, row := range rows {
+		if isILRosterSlot(row.RosterSlot) {
+			count++
+		}
+	}
+	return count
+}
+
+func isILRosterSlot(slot string) bool {
+	return strings.EqualFold(strings.TrimSpace(slot), "IL")
 }
 
 func readinessRank(status execute.ValidationStatus) int {
