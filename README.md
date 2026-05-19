@@ -326,6 +326,7 @@ If blocked on availability, inspect `ACQ_STATUS`:
 
 ```bash
 ./fb forecaster show starts --from YYYY-MM-DD --to YYYY-MM-DD --include-tbd
+./fb forecaster show starts --mlb-team NYY
 ./fb forecaster sync --url
 ```
 

@@ -135,7 +135,7 @@ func newForecasterShowCmd(opts *cliOptions) *cobra.Command {
 func newForecasterListCmd(opts *cliOptions) *cobra.Command {
 	var from string
 	var to string
-	var team string
+	var mlbTeam string
 	var pitcher string
 	var throws string
 	var minFPTS float64
@@ -146,7 +146,7 @@ func newForecasterListCmd(opts *cliOptions) *cobra.Command {
 		Use:   "list",
 		Short: "List normalized probable starts",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			filter := forecaster.ListFilter{Team: team, Pitcher: pitcher, ThrowsHand: strings.ToUpper(throws), IncludeTBD: includeTBD}
+			filter := forecaster.ListFilter{Team: mlbTeam, Pitcher: pitcher, ThrowsHand: strings.ToUpper(throws), IncludeTBD: includeTBD}
 			fromDate, err := parseDateFlag(from)
 			if err != nil {
 				return err
@@ -179,7 +179,7 @@ func newForecasterListCmd(opts *cliOptions) *cobra.Command {
 
 	cmd.Flags().StringVar(&from, "from", "", "Filter from date (YYYY-MM-DD)")
 	cmd.Flags().StringVar(&to, "to", "", "Filter to date (YYYY-MM-DD)")
-	cmd.Flags().StringVar(&team, "team", "", "Team code filter (e.g., NYY)")
+	cmd.Flags().StringVar(&mlbTeam, "mlb-team", "", "MLB team code filter (e.g., NYY)")
 	cmd.Flags().StringVar(&pitcher, "pitcher", "", "Pitcher name contains filter")
 	cmd.Flags().StringVar(&throws, "throws", "", "Throws hand filter (L|R)")
 	cmd.Flags().Float64Var(&minFPTS, "min-fpts", 0, "Minimum projected FPTS")
