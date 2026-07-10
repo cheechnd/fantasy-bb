@@ -221,6 +221,18 @@ func TestParseMatchupSummaryDerivesAllStarStartsMaxFromScheduleGap(t *testing.T)
 	if summary.PitchingStartsRemaining == nil || *summary.PitchingStartsRemaining != 11 {
 		t.Fatalf("expected 11 starts remaining, got %+v", summary.PitchingStartsRemaining)
 	}
+	if summary.MatchupScoringPeriodStart == nil || *summary.MatchupScoringPeriodStart != 104 {
+		t.Fatalf("expected start scoring period 104, got %+v", summary.MatchupScoringPeriodStart)
+	}
+	if summary.MatchupScoringPeriodEnd == nil || *summary.MatchupScoringPeriodEnd != 114 {
+		t.Fatalf("expected end scoring period 114, got %+v", summary.MatchupScoringPeriodEnd)
+	}
+	if summary.MatchupScoringPeriodCount != 11 || !summary.MultiWeekScoringMatchup {
+		t.Fatalf("expected 11-period multi-week scoring matchup, got count=%d multi=%t", summary.MatchupScoringPeriodCount, summary.MultiWeekScoringMatchup)
+	}
+	if summary.ConfiguredMatchupWeeks != 1 {
+		t.Fatalf("expected one configured fantasy matchup week, got %d", summary.ConfiguredMatchupWeeks)
+	}
 }
 
 func TestParseMatchupSummaryUsesSevenDayStartsMaxWithoutScheduleGap(t *testing.T) {
@@ -262,6 +274,9 @@ func TestParseMatchupSummaryUsesSevenDayStartsMaxWithoutScheduleGap(t *testing.T
 	}
 	if summary.PitchingStartsMax == nil || *summary.PitchingStartsMax != 12 {
 		t.Fatalf("expected 12 max starts for normal matchup, got %+v", summary.PitchingStartsMax)
+	}
+	if summary.MatchupScoringPeriodCount != 7 || summary.MultiWeekScoringMatchup {
+		t.Fatalf("expected normal 7-period matchup, got count=%d multi=%t", summary.MatchupScoringPeriodCount, summary.MultiWeekScoringMatchup)
 	}
 }
 
@@ -313,6 +328,12 @@ func TestParseMatchupSummaryDerivesTwoWeekPlayoffStartsMax(t *testing.T) {
 	}
 	if summary.PitchingStartsRemaining == nil || *summary.PitchingStartsRemaining != 19 {
 		t.Fatalf("expected 19 starts remaining, got %+v", summary.PitchingStartsRemaining)
+	}
+	if summary.MatchupScoringPeriodCount != 14 || !summary.MultiWeekScoringMatchup {
+		t.Fatalf("expected 14-period multi-week scoring matchup, got count=%d multi=%t", summary.MatchupScoringPeriodCount, summary.MultiWeekScoringMatchup)
+	}
+	if summary.ConfiguredMatchupWeeks != 2 {
+		t.Fatalf("expected two configured fantasy matchup weeks, got %d", summary.ConfiguredMatchupWeeks)
 	}
 }
 

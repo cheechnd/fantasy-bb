@@ -794,14 +794,16 @@ func parseMatchupSummary(payload []byte, seasonSchedulePayload []byte, cfg confi
 		scoringPeriodID = toInt(root["scoringPeriodId"])
 	}
 
+	span := deriveMatchupScoringPeriodSpan(root, seasonSchedulePayload, self, opp, matchupPeriod, scoringPeriodID)
+	periodCount := span.Count
+	if periodCount <= 0 {
+		periodCount = 7
+	}
+
 	var startsMax *int
 	var startsRemaining *int
 	lineupLimit := parseStartsLimitPerScoringPeriod(root)
 	if lineupLimit > 0 {
-		periodCount := deriveMatchupScoringPeriodCount(root, seasonSchedulePayload, self, opp, matchupPeriod, scoringPeriodID)
-		if periodCount <= 0 {
-			periodCount = 7
-		}
 		max := int(math.Round(lineupLimit * float64(periodCount)))
 		startsMax = &max
 		remain := max - selfStarts
@@ -809,24 +811,29 @@ func parseMatchupSummary(payload []byte, seasonSchedulePayload []byte, cfg confi
 	}
 
 	out := espn.MatchupSummary{
-		LeagueID:                cfg.League.LeagueID,
-		Season:                  cfg.League.Season,
-		TeamID:                  cfg.League.TeamID,
-		TeamName:                teamNameByID[teamID],
-		MatchupPeriod:           matchupPeriod,
-		OpponentTeamID:          int64Ptr(toInt64(mapPath(opp, "teamId"))),
-		OpponentName:            teamNameByID[toInt64(mapPath(opp, "teamId"))],
-		IsHome:                  isHome,
-		TeamPoints:              selfPoints,
-		OpponentPoints:          oppPoints,
-		PitchingStartsUsed:      selfStarts,
-		PitchingStartsMax:       startsMax,
-		PitchingStartsRemaining: startsRemaining,
-		StartsLimitExceeded:     toBool(mapPath(self, "cumulativeScore", "statBySlot", "22", "limitExceeded")),
-		ScoringPeriodID:         intPtrOrNil(scoringPeriodID),
-		SourceEndpoint:          endpoint,
-		ResponseStatus:          responseStatus,
-		CheckedAt:               time.Now().UTC().Format(time.RFC3339),
+		LeagueID:                  cfg.League.LeagueID,
+		Season:                    cfg.League.Season,
+		TeamID:                    cfg.League.TeamID,
+		TeamName:                  teamNameByID[teamID],
+		MatchupPeriod:             matchupPeriod,
+		OpponentTeamID:            int64Ptr(toInt64(mapPath(opp, "teamId"))),
+		OpponentName:              teamNameByID[toInt64(mapPath(opp, "teamId"))],
+		IsHome:                    isHome,
+		TeamPoints:                selfPoints,
+		OpponentPoints:            oppPoints,
+		MatchupScoringPeriodStart: intPtrOrNil(span.Start),
+		MatchupScoringPeriodEnd:   intPtrOrNil(span.End),
+		MatchupScoringPeriodCount: span.Count,
+		ConfiguredMatchupWeeks:    span.ConfiguredWeeks,
+		MultiWeekScoringMatchup:   span.Count > 7 || span.ConfiguredWeeks > 1,
+		PitchingStartsUsed:        selfStarts,
+		PitchingStartsMax:         startsMax,
+		PitchingStartsRemaining:   startsRemaining,
+		StartsLimitExceeded:       toBool(mapPath(self, "cumulativeScore", "statBySlot", "22", "limitExceeded")),
+		ScoringPeriodID:           intPtrOrNil(scoringPeriodID),
+		SourceEndpoint:            endpoint,
+		ResponseStatus:            responseStatus,
+		CheckedAt:                 time.Now().UTC().Format(time.RFC3339),
 	}
 	if out.TeamName == "" {
 		out.TeamName = fmt.Sprintf("Team %d", teamID)
@@ -845,21 +852,30 @@ func parseStartsLimitPerScoringPeriod(root map[string]any) float64 {
 	return toFloat64(mapPath(root, "settings", "rosterSettings", "lineupSlotStatLimits", "22", "limitValue"))
 }
 
-func deriveMatchupScoringPeriodCount(root map[string]any, seasonSchedulePayload []byte, self map[string]any, opp map[string]any, matchupPeriod int, scoringPeriodID int) int {
+type matchupScoringPeriodSpan struct {
+	Start           int
+	End             int
+	Count           int
+	ConfiguredWeeks int
+}
+
+func deriveMatchupScoringPeriodSpan(root map[string]any, seasonSchedulePayload []byte, self map[string]any, opp map[string]any, matchupPeriod int, scoringPeriodID int) matchupScoringPeriodSpan {
 	start := matchupStartScoringPeriod(self, opp, scoringPeriodID)
 	if start <= 0 {
-		return 0
+		return matchupScoringPeriodSpan{}
 	}
-	baseDays := matchupConfiguredDayCount(root, matchupPeriod)
-	if baseDays <= 0 {
+	configuredWeeks := matchupConfiguredWeekCount(root, matchupPeriod)
+	baseDays := configuredWeeks * 7
+	if configuredWeeks <= 0 || baseDays <= 0 {
+		configuredWeeks = 1
 		baseDays = 7
 	}
+	end := start + baseDays - 1
 	gamePeriods := seasonGameScoringPeriods(seasonSchedulePayload)
 	if len(gamePeriods) == 0 {
-		return baseDays
+		return matchupScoringPeriodSpan{Start: start, End: end, Count: baseDays, ConfiguredWeeks: configuredWeeks}
 	}
 
-	end := start + baseDays - 1
 	// ESPN extends the All-Star matchup through the no-game break and the first
 	// post-break scoring period. The game schedule endpoint exposes those empty
 	// scoring periods by omission, so extend a normal week only across that gap.
@@ -872,10 +888,10 @@ func deriveMatchupScoringPeriodCount(root map[string]any, seasonSchedulePayload 
 	if gapDays > 0 && gamePeriods[probe] {
 		end = probe
 	}
-	return end - start + 1
+	return matchupScoringPeriodSpan{Start: start, End: end, Count: end - start + 1, ConfiguredWeeks: configuredWeeks}
 }
 
-func matchupConfiguredDayCount(root map[string]any, matchupPeriod int) int {
+func matchupConfiguredWeekCount(root map[string]any, matchupPeriod int) int {
 	if matchupPeriod <= 0 {
 		return 0
 	}
@@ -887,7 +903,7 @@ func matchupConfiguredDayCount(root map[string]any, matchupPeriod int) int {
 	if !ok || len(periods) == 0 {
 		return 0
 	}
-	return len(periods) * 7
+	return len(periods)
 }
 
 func matchupStartScoringPeriod(self map[string]any, opp map[string]any, scoringPeriodID int) int {

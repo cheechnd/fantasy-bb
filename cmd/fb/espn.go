@@ -251,6 +251,17 @@ func newESPNShowMatchupCmd(opts *cliOptions) *cobra.Command {
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Opponent: %s (%s)\n", s.OpponentName, venue)
 			fmt.Fprintf(cmd.OutOrStdout(), "Score: %.1f - %.1f\n", s.TeamPoints, s.OpponentPoints)
+			if s.MatchupScoringPeriodCount > 0 {
+				span := fmt.Sprintf("%d scoring periods", s.MatchupScoringPeriodCount)
+				if s.MatchupScoringPeriodStart != nil && s.MatchupScoringPeriodEnd != nil {
+					span = fmt.Sprintf("%d-%d (%d scoring periods)", *s.MatchupScoringPeriodStart, *s.MatchupScoringPeriodEnd, s.MatchupScoringPeriodCount)
+				}
+				multi := "no"
+				if s.MultiWeekScoringMatchup {
+					multi = "yes"
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Matchup scoring span: %s; multi-week scoring matchup: %s\n", span, multi)
+			}
 			if s.PitchingStartsMax != nil {
 				fmt.Fprintf(cmd.OutOrStdout(), "Pitching starts: %d/%d", s.PitchingStartsUsed, *s.PitchingStartsMax)
 				if s.PitchingStartsRemaining != nil {

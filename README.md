@@ -148,7 +148,8 @@ Lineup planning/review commands were intentionally removed; lineup is now an exp
 `fb espn show matchup` provides live weekly matchup facts:
 - current matchup score (team vs opponent)
 - pitching starts used
-- pitching starts max/remaining (when ESPN exposes limit context)
+- pitching starts max/remaining
+- matchup scoring-period span, including `multi_week_scoring_matchup` for All-Star or playoff-length scoring windows
 
 Examples:
 

@@ -136,22 +136,27 @@ type CandidateSummary struct {
 }
 
 type MatchupSummary struct {
-	LeagueID                string  `json:"league_id"`
-	Season                  int     `json:"season"`
-	TeamID                  string  `json:"team_id"`
-	TeamName                string  `json:"team_name"`
-	MatchupPeriod           int     `json:"matchup_period"`
-	OpponentTeamID          *int64  `json:"opponent_team_id,omitempty"`
-	OpponentName            string  `json:"opponent_name,omitempty"`
-	IsHome                  bool    `json:"is_home"`
-	TeamPoints              float64 `json:"team_points"`
-	OpponentPoints          float64 `json:"opponent_points"`
-	PitchingStartsUsed      int     `json:"pitching_starts_used"`
-	PitchingStartsMax       *int    `json:"pitching_starts_max,omitempty"`
-	PitchingStartsRemaining *int    `json:"pitching_starts_remaining,omitempty"`
-	StartsLimitExceeded     bool    `json:"starts_limit_exceeded"`
-	ScoringPeriodID         *int    `json:"scoring_period_id,omitempty"`
-	SourceEndpoint          string  `json:"source_endpoint"`
-	ResponseStatus          int     `json:"response_status_code"`
-	CheckedAt               string  `json:"checked_at"`
+	LeagueID                  string  `json:"league_id"`
+	Season                    int     `json:"season"`
+	TeamID                    string  `json:"team_id"`
+	TeamName                  string  `json:"team_name"`
+	MatchupPeriod             int     `json:"matchup_period"`
+	OpponentTeamID            *int64  `json:"opponent_team_id,omitempty"`
+	OpponentName              string  `json:"opponent_name,omitempty"`
+	IsHome                    bool    `json:"is_home"`
+	TeamPoints                float64 `json:"team_points"`
+	OpponentPoints            float64 `json:"opponent_points"`
+	MatchupScoringPeriodStart *int    `json:"matchup_scoring_period_start,omitempty"`
+	MatchupScoringPeriodEnd   *int    `json:"matchup_scoring_period_end,omitempty"`
+	MatchupScoringPeriodCount int     `json:"matchup_scoring_period_count,omitempty"`
+	ConfiguredMatchupWeeks    int     `json:"configured_matchup_weeks,omitempty"`
+	MultiWeekScoringMatchup   bool    `json:"multi_week_scoring_matchup"`
+	PitchingStartsUsed        int     `json:"pitching_starts_used"`
+	PitchingStartsMax         *int    `json:"pitching_starts_max,omitempty"`
+	PitchingStartsRemaining   *int    `json:"pitching_starts_remaining,omitempty"`
+	StartsLimitExceeded       bool    `json:"starts_limit_exceeded"`
+	ScoringPeriodID           *int    `json:"scoring_period_id,omitempty"`
+	SourceEndpoint            string  `json:"source_endpoint"`
+	ResponseStatus            int     `json:"response_status_code"`
+	CheckedAt                 string  `json:"checked_at"`
 }
