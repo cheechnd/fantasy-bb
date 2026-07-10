@@ -175,6 +175,147 @@ func TestSyncRosterNextDayResolvesAndPersistsScoringPeriod(t *testing.T) {
 	}
 }
 
+func TestParseMatchupSummaryDerivesAllStarStartsMaxFromScheduleGap(t *testing.T) {
+	matchupPayload := []byte(`{
+	  "status": {"currentMatchupPeriod": 15},
+	  "scoringPeriodId": 108,
+	  "settings": {"rosterSettings": {"lineupSlotStatLimits": {"22": {"limitValue": 1.714285714285714, "statId": 33}}}},
+	  "teams": [{"id": 8, "name": "MAG"}, {"id": 7, "name": "Opponent"}],
+	  "schedule": [{
+	    "matchupPeriodId": 15,
+	    "home": {
+	      "teamId": 8,
+	      "totalPointsLive": 254,
+	      "pointsByScoringPeriod": {"104": 9, "105": 77, "106": 99, "107": 69},
+	      "cumulativeScore": {"statBySlot": {"22": {"value": 8, "limitExceeded": false}}}
+	    },
+	    "away": {
+	      "teamId": 7,
+	      "totalPointsLive": 81,
+	      "pointsByScoringPeriod": {"104": 4, "105": 32, "106": 28, "107": 17},
+	      "cumulativeScore": {"statBySlot": {"22": {"value": 2, "limitExceeded": false}}}
+	    }
+	  }]
+	}`)
+	seasonPayload := []byte(`{
+	  "settings": {"proTeams": [
+	    {"proGamesByScoringPeriod": {
+	      "104": [{}], "105": [{}], "106": [{}], "107": [{}], "108": [{}], "109": [{}], "110": [{}],
+	      "114": [{}], "115": [{}]
+	    }}
+	  ]}
+	}`)
+
+	cfg := config.Default()
+	cfg.League.LeagueID = "1460388409"
+	cfg.League.TeamID = "8"
+	cfg.League.Season = 2026
+
+	summary, err := parseMatchupSummary(matchupPayload, seasonPayload, cfg, "test", 200, MatchupOptions{})
+	if err != nil {
+		t.Fatalf("parseMatchupSummary: %v", err)
+	}
+	if summary.PitchingStartsMax == nil || *summary.PitchingStartsMax != 19 {
+		t.Fatalf("expected 19 max starts for all-star matchup, got %+v", summary.PitchingStartsMax)
+	}
+	if summary.PitchingStartsRemaining == nil || *summary.PitchingStartsRemaining != 11 {
+		t.Fatalf("expected 11 starts remaining, got %+v", summary.PitchingStartsRemaining)
+	}
+}
+
+func TestParseMatchupSummaryUsesSevenDayStartsMaxWithoutScheduleGap(t *testing.T) {
+	matchupPayload := []byte(`{
+	  "status": {"currentMatchupPeriod": 14},
+	  "scoringPeriodId": 101,
+	  "settings": {"rosterSettings": {"lineupSlotStatLimits": {"22": {"limitValue": 1.714285714285714, "statId": 33}}}},
+	  "teams": [{"id": 8, "name": "MAG"}, {"id": 7, "name": "Opponent"}],
+	  "schedule": [{
+	    "matchupPeriodId": 14,
+	    "home": {
+	      "teamId": 8,
+	      "totalPointsLive": 100,
+	      "pointsByScoringPeriod": {"97": 1, "98": 2},
+	      "cumulativeScore": {"statBySlot": {"22": {"value": 3, "limitExceeded": false}}}
+	    },
+	    "away": {
+	      "teamId": 7,
+	      "totalPointsLive": 80,
+	      "pointsByScoringPeriod": {"97": 1, "98": 2},
+	      "cumulativeScore": {"statBySlot": {"22": {"value": 2, "limitExceeded": false}}}
+	    }
+	  }]
+	}`)
+	seasonPayload := []byte(`{
+	  "settings": {"proTeams": [
+	    {"proGamesByScoringPeriod": {"97": [{}], "98": [{}], "99": [{}], "100": [{}], "101": [{}], "102": [{}], "103": [{}], "104": [{}]}}
+	  ]}
+	}`)
+
+	cfg := config.Default()
+	cfg.League.LeagueID = "1460388409"
+	cfg.League.TeamID = "8"
+	cfg.League.Season = 2026
+
+	summary, err := parseMatchupSummary(matchupPayload, seasonPayload, cfg, "test", 200, MatchupOptions{})
+	if err != nil {
+		t.Fatalf("parseMatchupSummary: %v", err)
+	}
+	if summary.PitchingStartsMax == nil || *summary.PitchingStartsMax != 12 {
+		t.Fatalf("expected 12 max starts for normal matchup, got %+v", summary.PitchingStartsMax)
+	}
+}
+
+func TestParseMatchupSummaryDerivesTwoWeekPlayoffStartsMax(t *testing.T) {
+	matchupPayload := []byte(`{
+	  "status": {"currentMatchupPeriod": 22},
+	  "scoringPeriodId": 153,
+	  "settings": {
+	    "scheduleSettings": {"matchupPeriods": {"22": [22, 23]}},
+	    "rosterSettings": {"lineupSlotStatLimits": {"22": {"limitValue": 1.714285714285714, "statId": 33}}}
+	  },
+	  "teams": [{"id": 8, "name": "MAG"}, {"id": 7, "name": "Opponent"}],
+	  "schedule": [{
+	    "matchupPeriodId": 22,
+	    "home": {
+	      "teamId": 8,
+	      "totalPointsLive": 100,
+	      "pointsByScoringPeriod": {"153": 1, "154": 2},
+	      "cumulativeScore": {"statBySlot": {"22": {"value": 5, "limitExceeded": false}}}
+	    },
+	    "away": {
+	      "teamId": 7,
+	      "totalPointsLive": 80,
+	      "pointsByScoringPeriod": {"153": 1, "154": 2},
+	      "cumulativeScore": {"statBySlot": {"22": {"value": 2, "limitExceeded": false}}}
+	    }
+	  }]
+	}`)
+	seasonPayload := []byte(`{
+	  "settings": {"proTeams": [
+	    {"proGamesByScoringPeriod": {
+	      "153": [{}], "154": [{}], "155": [{}], "156": [{}], "157": [{}], "158": [{}], "159": [{}],
+	      "160": [{}], "161": [{}], "162": [{}], "163": [{}], "164": [{}], "165": [{}], "166": [{}]
+	    }}
+	  ]}
+	}`)
+
+	cfg := config.Default()
+	cfg.League.LeagueID = "1460388409"
+	cfg.League.TeamID = "8"
+	cfg.League.Season = 2026
+
+	summary, err := parseMatchupSummary(matchupPayload, seasonPayload, cfg, "test", 200, MatchupOptions{})
+	if err != nil {
+		t.Fatalf("parseMatchupSummary: %v", err)
+	}
+	if summary.PitchingStartsMax == nil || *summary.PitchingStartsMax != 24 {
+		t.Fatalf("expected 24 max starts for two-week playoff matchup, got %+v", summary.PitchingStartsMax)
+	}
+	if summary.PitchingStartsRemaining == nil || *summary.PitchingStartsRemaining != 19 {
+		t.Fatalf("expected 19 starts remaining, got %+v", summary.PitchingStartsRemaining)
+	}
+}
+
 func TestParseFreeAgentCandidatesPayload(t *testing.T) {
 	payload := mustReadFixture(t, "testdata/free_agents_pitchers.json")
 	rows, warnings := parseFreeAgentCandidatesPayload(payload, "", "", 25)

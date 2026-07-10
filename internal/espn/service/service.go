@@ -240,7 +240,11 @@ func (s *Service) MatchupSummary(ctx context.Context, cfg config.Config, opts Ma
 	if err != nil {
 		return espn.MatchupSummary{}, err
 	}
-	return parseMatchupSummary(fetchResult.Payload, cfg, fetchResult.Endpoint, fetchResult.ResponseStatus, opts)
+	var seasonSchedulePayload []byte
+	if seasonFetch, scheduleErr := cli.FetchSeasonProTeamSchedules(ctx, cfg, creds); scheduleErr == nil {
+		seasonSchedulePayload = seasonFetch.Payload
+	}
+	return parseMatchupSummary(fetchResult.Payload, seasonSchedulePayload, cfg, fetchResult.Endpoint, fetchResult.ResponseStatus, opts)
 }
 
 func (s *Service) SyncFreeAgentPitchers(ctx context.Context, cfg config.Config, opts FreeAgentOptions) (espn.CandidateSummary, error) {
@@ -705,7 +709,7 @@ func warningMessages(rows []espn.ParseWarningInput) []string {
 	return out
 }
 
-func parseMatchupSummary(payload []byte, cfg config.Config, endpoint string, responseStatus int, opts MatchupOptions) (espn.MatchupSummary, error) {
+func parseMatchupSummary(payload []byte, seasonSchedulePayload []byte, cfg config.Config, endpoint string, responseStatus int, opts MatchupOptions) (espn.MatchupSummary, error) {
 	var root map[string]any
 	if err := json.Unmarshal(payload, &root); err != nil {
 		return espn.MatchupSummary{}, fmt.Errorf("parse ESPN matchup payload: %w", err)
@@ -785,19 +789,23 @@ func parseMatchupSummary(payload []byte, cfg config.Config, endpoint string, res
 	selfPoints := pickLiveOrTotalPoints(self)
 	oppPoints := pickLiveOrTotalPoints(opp)
 
+	scoringPeriodID := toInt(sched["scoringPeriodId"])
+	if scoringPeriodID <= 0 {
+		scoringPeriodID = toInt(root["scoringPeriodId"])
+	}
+
 	var startsMax *int
 	var startsRemaining *int
 	lineupLimit := parseStartsLimitPerScoringPeriod(root)
 	if lineupLimit > 0 {
-		max := int(math.Round(lineupLimit * 7.0))
+		periodCount := deriveMatchupScoringPeriodCount(root, seasonSchedulePayload, self, opp, matchupPeriod, scoringPeriodID)
+		if periodCount <= 0 {
+			periodCount = 7
+		}
+		max := int(math.Round(lineupLimit * float64(periodCount)))
 		startsMax = &max
 		remain := max - selfStarts
 		startsRemaining = &remain
-	}
-
-	scoringPeriodID := toInt(sched["scoringPeriodId"])
-	if scoringPeriodID <= 0 {
-		scoringPeriodID = toInt(root["scoringPeriodId"])
 	}
 
 	out := espn.MatchupSummary{
@@ -835,6 +843,111 @@ func parseStartsUsed(side map[string]any) int {
 
 func parseStartsLimitPerScoringPeriod(root map[string]any) float64 {
 	return toFloat64(mapPath(root, "settings", "rosterSettings", "lineupSlotStatLimits", "22", "limitValue"))
+}
+
+func deriveMatchupScoringPeriodCount(root map[string]any, seasonSchedulePayload []byte, self map[string]any, opp map[string]any, matchupPeriod int, scoringPeriodID int) int {
+	start := matchupStartScoringPeriod(self, opp, scoringPeriodID)
+	if start <= 0 {
+		return 0
+	}
+	baseDays := matchupConfiguredDayCount(root, matchupPeriod)
+	if baseDays <= 0 {
+		baseDays = 7
+	}
+	gamePeriods := seasonGameScoringPeriods(seasonSchedulePayload)
+	if len(gamePeriods) == 0 {
+		return baseDays
+	}
+
+	end := start + baseDays - 1
+	// ESPN extends the All-Star matchup through the no-game break and the first
+	// post-break scoring period. The game schedule endpoint exposes those empty
+	// scoring periods by omission, so extend a normal week only across that gap.
+	probe := end + 1
+	gapDays := 0
+	for gapDays < 14 && !gamePeriods[probe] {
+		gapDays++
+		probe++
+	}
+	if gapDays > 0 && gamePeriods[probe] {
+		end = probe
+	}
+	return end - start + 1
+}
+
+func matchupConfiguredDayCount(root map[string]any, matchupPeriod int) int {
+	if matchupPeriod <= 0 {
+		return 0
+	}
+	raw, ok := mapPath(root, "settings", "scheduleSettings", "matchupPeriods").(map[string]any)
+	if !ok {
+		return 0
+	}
+	periods, ok := raw[strconv.Itoa(matchupPeriod)].([]any)
+	if !ok || len(periods) == 0 {
+		return 0
+	}
+	return len(periods) * 7
+}
+
+func matchupStartScoringPeriod(self map[string]any, opp map[string]any, scoringPeriodID int) int {
+	start := 0
+	for _, side := range []map[string]any{self, opp} {
+		raw, ok := side["pointsByScoringPeriod"].(map[string]any)
+		if !ok {
+			continue
+		}
+		for k := range raw {
+			sp, err := strconv.Atoi(k)
+			if err != nil || sp <= 0 {
+				continue
+			}
+			if start == 0 || sp < start {
+				start = sp
+			}
+		}
+	}
+	if start <= 0 && scoringPeriodID > 0 {
+		start = scoringPeriodID
+	}
+	return start
+}
+
+func seasonGameScoringPeriods(payload []byte) map[int]bool {
+	out := map[int]bool{}
+	if len(payload) == 0 {
+		return out
+	}
+	var root map[string]any
+	if err := json.Unmarshal(payload, &root); err != nil {
+		return out
+	}
+	proTeams, ok := mapPath(root, "settings", "proTeams").([]any)
+	if !ok {
+		return out
+	}
+	for _, rawTeam := range proTeams {
+		team, ok := rawTeam.(map[string]any)
+		if !ok {
+			continue
+		}
+		byPeriod, ok := team["proGamesByScoringPeriod"].(map[string]any)
+		if !ok {
+			continue
+		}
+		for key, rawGames := range byPeriod {
+			games, ok := rawGames.([]any)
+			if !ok || len(games) == 0 {
+				continue
+			}
+			sp, err := strconv.Atoi(key)
+			if err != nil || sp <= 0 {
+				continue
+			}
+			out[sp] = true
+		}
+	}
+	return out
 }
 
 func pickLiveOrTotalPoints(side map[string]any) float64 {

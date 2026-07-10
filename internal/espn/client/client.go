@@ -239,3 +239,45 @@ func (c *Client) FetchMatchupScore(ctx context.Context, cfg config.Config, creds
 	}
 	return FetchResult{Endpoint: u.String(), ResponseStatus: resp.StatusCode, Payload: body}, nil
 }
+
+func (c *Client) FetchSeasonProTeamSchedules(ctx context.Context, cfg config.Config, creds config.ESPNCredentials) (FetchResult, error) {
+	baseURL := strings.TrimRight(cfg.ESPN.BaseURL, "/")
+	if baseURL == "" {
+		baseURL = "https://lm-api-reads.fantasy.espn.com"
+	}
+	endpoint := fmt.Sprintf("%s/apis/v3/games/flb/seasons/%d", baseURL, cfg.League.Season)
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return FetchResult{}, fmt.Errorf("build espn season schedule endpoint: %w", err)
+	}
+	q := u.Query()
+	q.Add("view", "proTeamSchedules_wl")
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return FetchResult{}, fmt.Errorf("create espn season schedule request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", c.userAgent)
+	req.AddCookie(&http.Cookie{Name: "espn_s2", Value: creds.ESPNS2})
+	req.AddCookie(&http.Cookie{Name: "SWID", Value: creds.SWID})
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return FetchResult{}, fmt.Errorf("request espn season schedule endpoint: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if err != nil {
+		return FetchResult{}, fmt.Errorf("read espn season schedule response body: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		msg := strings.TrimSpace(string(body))
+		if len(msg) > 240 {
+			msg = msg[:240] + "..."
+		}
+		return FetchResult{Endpoint: u.String(), ResponseStatus: resp.StatusCode, Payload: body}, fmt.Errorf("espn season schedule request failed with status %d: %s", resp.StatusCode, msg)
+	}
+	return FetchResult{Endpoint: u.String(), ResponseStatus: resp.StatusCode, Payload: body}, nil
+}
