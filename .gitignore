@@ -4,7 +4,7 @@
 *.out
 
 # Local completions
-fb-completions.zsh
+scripts/fb-completions.zsh
 
 # Local runtime data
 *.db
@@ -14,7 +14,6 @@ fb-completions.zsh
 
 # Temp/local scratch
 tmp/
-scripts/
 *.tmp
 
 # OS/editor
