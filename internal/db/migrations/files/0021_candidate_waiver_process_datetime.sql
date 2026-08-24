@@ -1,0 +1,4 @@
+ALTER TABLE espn_free_agent_candidates ADD COLUMN waiver_process_datetime TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_espn_free_agent_candidates_waiver_process_datetime
+ON espn_free_agent_candidates(waiver_process_datetime);

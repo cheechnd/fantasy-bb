@@ -298,6 +298,8 @@ func (s *Service) validateItem(ctx context.Context, q espnQueueRow, runType exec
 	candidateSet := map[string]int{}
 	waiverSet := map[string]int{}
 	addCandidateStatus := ""
+	addCandidateAcquisitionStatus := ""
+	var addWaiverProcessDatetime *string
 	if s.cfg.RequireLiveAvailabilityCheck {
 		if latestCandidateRun == nil || len(candidates) == 0 {
 			unknown = true
@@ -312,11 +314,16 @@ func (s *Service) validateItem(ctx context.Context, q espnQueueRow, runType exec
 					candidateSet[k]++
 					if k == addKey && addCandidateStatus == "" {
 						addCandidateStatus = strings.TrimSpace(c.StatusTag)
+						addCandidateAcquisitionStatus = espn.NormalizeAcquisitionStatus(c.AcquisitionStatus)
 					}
 					continue
 				}
 				if espn.IsWaiver(c.AcquisitionStatus) {
 					waiverSet[k]++
+					if k == addKey && addWaiverProcessDatetime == nil {
+						addCandidateAcquisitionStatus = espn.NormalizeAcquisitionStatus(c.AcquisitionStatus)
+						addWaiverProcessDatetime = c.WaiverProcessDatetime
+					}
 				}
 			}
 			if candidateSet[addKey] == 0 {
@@ -372,18 +379,20 @@ func (s *Service) validateItem(ctx context.Context, q espnQueueRow, runType exec
 		candidateRunID = &v
 	}
 	preview := execute.ActionPreview{
-		ActionType:              actionType(addOnly),
-		ApprovedItemID:          q.TransactionPlanItemID,
-		SourcePlanID:            q.PlanID,
-		AddPlayerName:           q.AddPlayerName,
-		DropPlayerName:          q.DropPlayerName,
-		RosterSyncRunID:         syncRunID,
-		CandidateRunID:          candidateRunID,
-		RosterCheckPassed:       s.cfg.RequireLiveRosterCheck && (addOnly || rosterSet[dropKey] > 0),
-		AvailabilityCheckPassed: s.cfg.RequireLiveAvailabilityCheck && candidateSet[addKey] == 1,
-		AddAlreadyRostered:      rosterSet[addKey] > 0,
-		ExecutionReadiness:      string(status),
-		CheckedAt:               time.Now().UTC().Format(time.RFC3339),
+		ActionType:               actionType(addOnly),
+		ApprovedItemID:           q.TransactionPlanItemID,
+		SourcePlanID:             q.PlanID,
+		AddPlayerName:            q.AddPlayerName,
+		DropPlayerName:           q.DropPlayerName,
+		RosterSyncRunID:          syncRunID,
+		CandidateRunID:           candidateRunID,
+		RosterCheckPassed:        s.cfg.RequireLiveRosterCheck && (addOnly || rosterSet[dropKey] > 0),
+		AvailabilityCheckPassed:  s.cfg.RequireLiveAvailabilityCheck && candidateSet[addKey] == 1,
+		AddAlreadyRostered:       rosterSet[addKey] > 0,
+		AddAcquisitionStatus:     addCandidateAcquisitionStatus,
+		AddWaiverProcessDatetime: addWaiverProcessDatetime,
+		ExecutionReadiness:       string(status),
+		CheckedAt:                time.Now().UTC().Format(time.RFC3339),
 	}
 	if runType == execute.RunTypeDryRun {
 		if addOnly {
@@ -394,6 +403,18 @@ func (s *Service) validateItem(ctx context.Context, q espnQueueRow, runType exec
 	}
 
 	rank := readinessRank(status)
+	details := map[string]any{
+		"approval_note":  q.Note,
+		"approved_at":    q.ApprovedAt.Format(time.RFC3339),
+		"run_type":       runType,
+		"roster_context": rosterContextDetails(rosterCtx, rosterSet, currentRosterSet),
+	}
+	if addCandidateAcquisitionStatus != "" || addWaiverProcessDatetime != nil {
+		details["add_candidate"] = map[string]any{
+			"acquisition_status":      firstNonEmpty(addCandidateAcquisitionStatus, "unknown"),
+			"waiver_process_datetime": addWaiverProcessDatetime,
+		}
+	}
 	return execute.RunItem{
 		ApprovedItemID:    q.TransactionPlanItemID,
 		SourcePlanID:      q.PlanID,
@@ -403,13 +424,8 @@ func (s *Service) validateItem(ctx context.Context, q espnQueueRow, runType exec
 		ReadinessRank:     &rank,
 		ValidationReasons: reasons,
 		ActionPreview:     preview,
-		Details: map[string]any{
-			"approval_note":  q.Note,
-			"approved_at":    q.ApprovedAt.Format(time.RFC3339),
-			"run_type":       runType,
-			"roster_context": rosterContextDetails(rosterCtx, rosterSet, currentRosterSet),
-		},
-		CreatedAt: time.Now().UTC(),
+		Details:           details,
+		CreatedAt:         time.Now().UTC(),
 	}
 }
 
@@ -434,6 +450,15 @@ func shouldWarnCandidateStatus(status string) bool {
 		return false
 	}
 	return true
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func rosterContextDetails(ctx rosterPreflightContext, effectiveSet, currentSet map[string]int) map[string]any {

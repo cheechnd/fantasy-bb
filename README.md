@@ -59,6 +59,7 @@ Required for ESPN:
 - `league.league_id`
 - `league.team_id`
 - `league.season`
+- `league.timezone` (defaults to `America/New_York`)
 - `auth.espn_s2_env`
 - `auth.swid_env`
 
@@ -190,6 +191,7 @@ Roster context views (useful after games start):
 Free-agent snapshots now include acquisition status:
 - `ACQ_STATUS=FREEAGENT` means immediately addable
 - `ACQ_STATUS=WAIVERS` means claim/waiver flow (not immediately addable)
+- `waiver_process_datetime` is ESPN's waiver processing timestamp when ESPN provides `waiverProcessDate`; it is formatted in `league.timezone` and is not necessarily the claim deadline
 
 Reliever depth chart facts:
 

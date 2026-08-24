@@ -25,18 +25,20 @@ type Reason struct {
 }
 
 type ActionPreview struct {
-	ActionType              string `json:"action_type"`
-	ApprovedItemID          int64  `json:"approved_item_id"`
-	SourcePlanID            int64  `json:"source_plan_id"`
-	AddPlayerName           string `json:"add_player_name"`
-	DropPlayerName          string `json:"drop_player_name"`
-	RosterSyncRunID         *int64 `json:"roster_sync_run_id,omitempty"`
-	CandidateRunID          *int64 `json:"candidate_run_id,omitempty"`
-	RosterCheckPassed       bool   `json:"roster_check_passed"`
-	AvailabilityCheckPassed bool   `json:"availability_check_passed"`
-	AddAlreadyRostered      bool   `json:"add_already_rostered"`
-	ExecutionReadiness      string `json:"execution_readiness"`
-	CheckedAt               string `json:"checked_at"`
+	ActionType               string  `json:"action_type"`
+	ApprovedItemID           int64   `json:"approved_item_id"`
+	SourcePlanID             int64   `json:"source_plan_id"`
+	AddPlayerName            string  `json:"add_player_name"`
+	DropPlayerName           string  `json:"drop_player_name"`
+	RosterSyncRunID          *int64  `json:"roster_sync_run_id,omitempty"`
+	CandidateRunID           *int64  `json:"candidate_run_id,omitempty"`
+	RosterCheckPassed        bool    `json:"roster_check_passed"`
+	AvailabilityCheckPassed  bool    `json:"availability_check_passed"`
+	AddAlreadyRostered       bool    `json:"add_already_rostered"`
+	AddAcquisitionStatus     string  `json:"add_acquisition_status,omitempty"`
+	AddWaiverProcessDatetime *string `json:"add_waiver_process_datetime"`
+	ExecutionReadiness       string  `json:"execution_readiness"`
+	CheckedAt                string  `json:"checked_at"`
 }
 
 type RunItem struct {

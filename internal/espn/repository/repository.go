@@ -197,9 +197,9 @@ func (r *Repository) PersistCandidates(ctx context.Context, input PersistCandida
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO espn_free_agent_candidates (
 				candidate_run_id, espn_player_id, player_name, normalized_name,
-				mlb_team, is_pitcher, role, acquisition_status, status_tag, raw_player_json, created_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, candidateRunID, nullInt64(c.ESPNPlayerID), c.PlayerName, c.NormalizedName, c.MLBTeam, isPitcher, c.Role, c.AcquisitionStatus, c.StatusTag, c.RawPlayerJSON, createdAt.UTC().Format(time.RFC3339))
+				mlb_team, is_pitcher, role, acquisition_status, waiver_process_datetime, status_tag, raw_player_json, created_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, candidateRunID, nullInt64(c.ESPNPlayerID), c.PlayerName, c.NormalizedName, c.MLBTeam, isPitcher, c.Role, c.AcquisitionStatus, nullStringPtr(c.WaiverProcessDatetime), c.StatusTag, c.RawPlayerJSON, createdAt.UTC().Format(time.RFC3339))
 		if err != nil {
 			return 0, fmt.Errorf("insert espn free agent candidate: %w", err)
 		}
@@ -479,7 +479,7 @@ func (r *Repository) ListCandidates(ctx context.Context, candidateRunID *int64, 
 	}
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, candidate_run_id, espn_player_id, player_name, normalized_name,
-		       COALESCE(mlb_team, ''), is_pitcher, COALESCE(role, ''), COALESCE(acquisition_status, ''), COALESCE(status_tag, ''),
+		       COALESCE(mlb_team, ''), is_pitcher, COALESCE(role, ''), COALESCE(acquisition_status, ''), waiver_process_datetime, COALESCE(status_tag, ''),
 		       COALESCE(raw_player_json, '{}'), created_at
 		FROM espn_free_agent_candidates
 		WHERE candidate_run_id = COALESCE(?, (SELECT id FROM espn_candidate_runs ORDER BY id DESC LIMIT 1))
@@ -496,8 +496,9 @@ func (r *Repository) ListCandidates(ctx context.Context, candidateRunID *int64, 
 		var c espn.FreeAgentCandidate
 		var playerID sql.NullInt64
 		var isPitcher int
+		var waiverProcess sql.NullString
 		var createdAtRaw string
-		if err := rows.Scan(&c.ID, &c.CandidateRunID, &playerID, &c.PlayerName, &c.NormalizedName, &c.MLBTeam, &isPitcher, &c.Role, &c.AcquisitionStatus, &c.StatusTag, &c.RawPlayerJSON, &createdAtRaw); err != nil {
+		if err := rows.Scan(&c.ID, &c.CandidateRunID, &playerID, &c.PlayerName, &c.NormalizedName, &c.MLBTeam, &isPitcher, &c.Role, &c.AcquisitionStatus, &waiverProcess, &c.StatusTag, &c.RawPlayerJSON, &createdAtRaw); err != nil {
 			return nil, fmt.Errorf("scan espn free agent candidate: %w", err)
 		}
 		if playerID.Valid {
@@ -505,6 +506,10 @@ func (r *Repository) ListCandidates(ctx context.Context, candidateRunID *int64, 
 			c.ESPNPlayerID = &v
 		}
 		c.IsPitcher = isPitcher == 1
+		if waiverProcess.Valid {
+			v := waiverProcess.String
+			c.WaiverProcessDatetime = &v
+		}
 		tm, err := time.Parse(time.RFC3339, createdAtRaw)
 		if err != nil {
 			return nil, fmt.Errorf("parse espn free agent candidate created_at: %w", err)
@@ -554,6 +559,13 @@ func nullInt64(v *int64) any {
 
 func nullInt(v *int) any {
 	if v == nil {
+		return nil
+	}
+	return *v
+}
+
+func nullStringPtr(v *string) any {
+	if v == nil || *v == "" {
 		return nil
 	}
 	return *v

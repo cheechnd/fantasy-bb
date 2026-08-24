@@ -464,18 +464,19 @@ func newESPNShowFreeAgentsCmd(opts *cliOptions) *cobra.Command {
 				enhanced := make([]map[string]any, 0, len(rows))
 				for _, row := range rows {
 					item := map[string]any{
-						"id":                 row.ID,
-						"candidate_run_id":   row.CandidateRunID,
-						"espn_player_id":     row.ESPNPlayerID,
-						"player_name":        row.PlayerName,
-						"normalized_name":    row.NormalizedName,
-						"mlb_team":           row.MLBTeam,
-						"is_pitcher":         row.IsPitcher,
-						"role":               row.Role,
-						"acquisition_status": row.AcquisitionStatus,
-						"status_tag":         row.StatusTag,
-						"raw_player_json":    row.RawPlayerJSON,
-						"created_at":         row.CreatedAt,
+						"id":                      row.ID,
+						"candidate_run_id":        row.CandidateRunID,
+						"espn_player_id":          row.ESPNPlayerID,
+						"player_name":             row.PlayerName,
+						"normalized_name":         row.NormalizedName,
+						"mlb_team":                row.MLBTeam,
+						"is_pitcher":              row.IsPitcher,
+						"role":                    row.Role,
+						"acquisition_status":      row.AcquisitionStatus,
+						"waiver_process_datetime": row.WaiverProcessDatetime,
+						"status_tag":              row.StatusTag,
+						"raw_player_json":         row.RawPlayerJSON,
+						"created_at":              row.CreatedAt,
 					}
 					if e, ok := enrichment[row.ID]; ok {
 						addRelieverEnrichmentFields(item, e)

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const (
@@ -45,6 +46,7 @@ type LeagueConfig struct {
 	LeagueID string `json:"league_id"`
 	TeamID   string `json:"team_id"`
 	Season   int    `json:"season"`
+	Timezone string `json:"timezone"`
 }
 
 type AuthConfig struct {
@@ -193,6 +195,7 @@ func Default() Config {
 		League: LeagueConfig{
 			Platform: "espn",
 			Season:   2026,
+			Timezone: "America/New_York",
 		},
 		Auth: AuthConfig{
 			ESPNS2Env: "ESPN_S2",
@@ -406,6 +409,11 @@ func (c Config) Validate() error {
 	}
 	if c.League.Season < 2000 || c.League.Season > 2100 {
 		problems = append(problems, "league.season must be between 2000 and 2100")
+	}
+	if strings.TrimSpace(c.League.Timezone) == "" {
+		problems = append(problems, "league.timezone is required")
+	} else if _, err := time.LoadLocation(strings.TrimSpace(c.League.Timezone)); err != nil {
+		problems = append(problems, "league.timezone must be a valid IANA timezone")
 	}
 	if strings.TrimSpace(c.Auth.ESPNS2Env) == "" {
 		problems = append(problems, "auth.espn_s2_env is required")

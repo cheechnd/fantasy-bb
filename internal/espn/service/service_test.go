@@ -409,6 +409,12 @@ func TestParseFreeAgentCandidatesPayloadEntryStatusOverridesNestedPlayerMap(t *t
 	if rows[0].AcquisitionStatus != espn.AcquisitionStatusWaivers {
 		t.Fatalf("expected WAIVERS, got %q", rows[0].AcquisitionStatus)
 	}
+	if rows[0].WaiverProcessDatetime == nil {
+		t.Fatal("expected waiver process datetime")
+	}
+	if *rows[0].WaiverProcessDatetime != "2026-04-14T03:00:00-04:00" {
+		t.Fatalf("expected waiver process datetime in fantasy timezone, got %q", *rows[0].WaiverProcessDatetime)
+	}
 }
 
 func TestSyncFreeAgentPitchersPersistsCandidates(t *testing.T) {

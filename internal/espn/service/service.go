@@ -283,7 +283,7 @@ func (s *Service) SyncFreeAgentPitchers(ctx context.Context, cfg config.Config, 
 		if fetchErr != nil {
 			return espn.CandidateSummary{}, fetchErr
 		}
-		candidates, warnings = parseFreeAgentCandidatesPayload(fetchResult.Payload, opts.Search, opts.Team, limit)
+		candidates, warnings = parseFreeAgentCandidatesPayload(fetchResult.Payload, opts.Search, opts.Team, limit, cfg.League.Timezone)
 		if len(candidates) > 0 {
 			break
 		}
@@ -974,9 +974,10 @@ func pickLiveOrTotalPoints(side map[string]any) float64 {
 	return toFloat64(side["totalPoints"])
 }
 
-func parseFreeAgentCandidatesPayload(payload []byte, searchRaw string, teamRaw string, limit int) ([]espn.FreeAgentCandidate, []espn.ParseWarningInput) {
+func parseFreeAgentCandidatesPayload(payload []byte, searchRaw string, teamRaw string, limit int, timezoneRaw ...string) ([]espn.FreeAgentCandidate, []espn.ParseWarningInput) {
 	search := strings.ToLower(strings.TrimSpace(searchRaw))
 	teamFilter := strings.ToUpper(strings.TrimSpace(teamRaw))
+	tz := fantasyTimezone(firstString(timezoneRaw, "America/New_York"))
 	seen := map[string]struct{}{}
 	out := []espn.FreeAgentCandidate{}
 	warnings := []espn.ParseWarningInput{}
@@ -989,7 +990,7 @@ func parseFreeAgentCandidatesPayload(payload []byte, searchRaw string, teamRaw s
 		}}
 	}
 
-	appendCandidate := func(playerMap map[string]any, acquisitionStatusRaw string) {
+	appendCandidate := func(playerMap map[string]any, acquisitionStatusRaw string, waiverProcessRaw any) {
 		name, _ := pickString(playerMap, "fullName", "playerName", "name")
 		if strings.TrimSpace(name) == "" {
 			return
@@ -1028,18 +1029,23 @@ func parseFreeAgentCandidatesPayload(payload []byte, searchRaw string, teamRaw s
 		if acquisitionStatus == "" {
 			acquisitionStatus = espn.AcquisitionStatusFreeAgent
 		}
+		if waiverProcessRaw == nil {
+			waiverProcessRaw = playerMap["waiverProcessDate"]
+		}
+		waiverProcessDatetime := formatWaiverProcessDatetime(waiverProcessRaw, tz)
 		rawJSON, _ := json.Marshal(playerMap)
 		row := espn.FreeAgentCandidate{
-			ESPNPlayerID:      playerID,
-			PlayerName:        strings.TrimSpace(name),
-			NormalizedName:    matching.NormalizeName(name),
-			MLBTeam:           mlbTeam,
-			IsPitcher:         true,
-			Role:              role,
-			AcquisitionStatus: acquisitionStatus,
-			StatusTag:         strings.TrimSpace(statusTag),
-			RawPlayerJSON:     string(rawJSON),
-			CreatedAt:         time.Now().UTC(),
+			ESPNPlayerID:          playerID,
+			PlayerName:            strings.TrimSpace(name),
+			NormalizedName:        matching.NormalizeName(name),
+			MLBTeam:               mlbTeam,
+			IsPitcher:             true,
+			Role:                  role,
+			AcquisitionStatus:     acquisitionStatus,
+			WaiverProcessDatetime: waiverProcessDatetime,
+			StatusTag:             strings.TrimSpace(statusTag),
+			RawPlayerJSON:         string(rawJSON),
+			CreatedAt:             time.Now().UTC(),
 		}
 		seen[key] = struct{}{}
 		out = append(out, row)
@@ -1064,7 +1070,7 @@ func parseFreeAgentCandidatesPayload(payload []byte, searchRaw string, teamRaw s
 					playerMap = nested
 				}
 				entryStatus, _ := pickString(entry, "status")
-				appendCandidate(playerMap, entryStatus)
+				appendCandidate(playerMap, entryStatus, entry["waiverProcessDate"])
 			}
 		}
 	}
@@ -1072,7 +1078,7 @@ func parseFreeAgentCandidatesPayload(payload []byte, searchRaw string, teamRaw s
 	// Fallback for payload variants that do not expose players[].
 	if len(out) == 0 {
 		visitAny(root, func(playerMap map[string]any) {
-			appendCandidate(playerMap, "")
+			appendCandidate(playerMap, "", nil)
 		})
 	}
 
@@ -1134,20 +1140,60 @@ func pickInt(m map[string]any, key string) int {
 func pickInt64(m map[string]any, keys ...string) *int64 {
 	for _, key := range keys {
 		if v, ok := m[key]; ok {
-			switch n := v.(type) {
-			case float64:
-				iv := int64(n)
-				return &iv
-			case int64:
-				iv := n
-				return &iv
-			case int:
-				iv := int64(n)
+			if iv, ok := anyInt64(v); ok {
 				return &iv
 			}
 		}
 	}
 	return nil
+}
+
+func anyInt64(v any) (int64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return int64(n), true
+	case int64:
+		return n, true
+	case int:
+		return int64(n), true
+	case json.Number:
+		iv, err := n.Int64()
+		return iv, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func firstString(values []string, fallback string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return fallback
+}
+
+func fantasyTimezone(raw string) *time.Location {
+	loc, err := time.LoadLocation(strings.TrimSpace(raw))
+	if err != nil {
+		loc, _ = time.LoadLocation("America/New_York")
+	}
+	if loc == nil {
+		return time.Local
+	}
+	return loc
+}
+
+func formatWaiverProcessDatetime(raw any, loc *time.Location) *string {
+	ms, ok := anyInt64(raw)
+	if !ok || ms <= 0 {
+		return nil
+	}
+	if loc == nil {
+		loc = time.Local
+	}
+	formatted := time.UnixMilli(ms).In(loc).Format(time.RFC3339)
+	return &formatted
 }
 
 func pickIntSlice(m map[string]any, key string) []int {

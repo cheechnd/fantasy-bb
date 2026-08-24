@@ -213,17 +213,18 @@ func printPickupItemsTable(cmd *cobra.Command, rows []pickups.RecommendationItem
 }
 
 type neutralPickupRow struct {
-	PlayerName          string                `json:"player_name"`
-	MLBTeam             string                `json:"mlb_team,omitempty"`
-	Starts              []projectionStartJSON `json:"starts"`
-	ProjectedStartCount int                   `json:"-"`
-	Schedule            []string              `json:"-"`
-	TotalProjectedFPTS  *float64              `json:"-"`
-	BestStartFPTS       *float64              `json:"-"`
-	ProjectionState     string                `json:"projection_state"`
-	AvailabilityState   string                `json:"availability_state"`
-	Flags               []string              `json:"flags,omitempty"`
-	Notes               []string              `json:"notes,omitempty"`
+	PlayerName            string                `json:"player_name"`
+	MLBTeam               string                `json:"mlb_team,omitempty"`
+	Starts                []projectionStartJSON `json:"starts"`
+	WaiverProcessDatetime *string               `json:"waiver_process_datetime"`
+	ProjectedStartCount   int                   `json:"-"`
+	Schedule              []string              `json:"-"`
+	TotalProjectedFPTS    *float64              `json:"-"`
+	BestStartFPTS         *float64              `json:"-"`
+	ProjectionState       string                `json:"projection_state"`
+	AvailabilityState     string                `json:"availability_state"`
+	Flags                 []string              `json:"flags,omitempty"`
+	Notes                 []string              `json:"notes,omitempty"`
 }
 
 func neutralPickupRows(r pickups.RecommendResult) []neutralPickupRow {
@@ -284,17 +285,36 @@ func toNeutralPickupRow(item pickups.RecommendationItem) neutralPickupRow {
 	starts := pickupStarts(item)
 	best := pickupBestStartFPTS(item)
 	return neutralPickupRow{
-		PlayerName:          item.PlayerName,
-		MLBTeam:             item.MLBTeam,
-		Starts:              projectionStartsFromDetails(item.Details),
-		ProjectedStartCount: item.ProjectedStartCount,
-		Schedule:            starts,
-		TotalProjectedFPTS:  item.TotalProjectedFPTS,
-		BestStartFPTS:       best,
-		ProjectionState:     state,
-		AvailabilityState:   pickupAvailabilityState(item),
-		Flags:               neutralFlags(item.Flags),
-		Notes:               neutralNotes(item.Notes),
+		PlayerName:            item.PlayerName,
+		MLBTeam:               item.MLBTeam,
+		Starts:                projectionStartsFromDetails(item.Details),
+		WaiverProcessDatetime: pickupWaiverProcessDatetime(item),
+		ProjectedStartCount:   item.ProjectedStartCount,
+		Schedule:              starts,
+		TotalProjectedFPTS:    item.TotalProjectedFPTS,
+		BestStartFPTS:         best,
+		ProjectionState:       state,
+		AvailabilityState:     pickupAvailabilityState(item),
+		Flags:                 neutralFlags(item.Flags),
+		Notes:                 neutralNotes(item.Notes),
+	}
+}
+
+func pickupWaiverProcessDatetime(item pickups.RecommendationItem) *string {
+	if item.Details == nil {
+		return nil
+	}
+	switch v := item.Details["waiver_process_datetime"].(type) {
+	case string:
+		if strings.TrimSpace(v) == "" {
+			return nil
+		}
+		out := strings.TrimSpace(v)
+		return &out
+	case *string:
+		return v
+	default:
+		return nil
 	}
 }
 

@@ -167,7 +167,11 @@ func applyTeamContext(cfg Config, paths Paths, overrides Overrides) (Config, err
 	if cfg.TeamContextSource == "" {
 		cfg.TeamContextSource = "teams"
 	}
+	baseTimezone := cfg.League.Timezone
 	cfg.DBPath = dbPath
 	cfg.League = team.League
+	if strings.TrimSpace(cfg.League.Timezone) == "" {
+		cfg.League.Timezone = firstNonEmpty(baseTimezone, Default().League.Timezone)
+	}
 	return cfg, nil
 }

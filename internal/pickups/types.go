@@ -10,20 +10,21 @@ const (
 )
 
 type CandidateProjection struct {
-	PlayerName           string    `json:"player_name"`
-	MLBTeam              string    `json:"mlb_team,omitempty"`
-	ESPNPlayerID         *int64    `json:"espn_player_id,omitempty"`
-	AcquisitionStatus    string    `json:"acquisition_status,omitempty"`
-	MatchedPitcherName   string    `json:"matched_pitcher_name,omitempty"`
-	ProjectedStartCount  int       `json:"projected_start_count"`
-	TotalProjectedFPTS   float64   `json:"total_projected_fpts"`
-	AverageProjectedFPTS float64   `json:"average_projected_fpts"`
-	HighestSingleFPTS    float64   `json:"highest_single_start_fpts"`
-	Starts               []Start   `json:"starts,omitempty"`
-	Flags                []string  `json:"flags,omitempty"`
-	Notes                []string  `json:"notes,omitempty"`
-	Unmatched            bool      `json:"unmatched,omitempty"`
-	CreatedAt            time.Time `json:"created_at,omitempty"`
+	PlayerName            string    `json:"player_name"`
+	MLBTeam               string    `json:"mlb_team,omitempty"`
+	ESPNPlayerID          *int64    `json:"espn_player_id,omitempty"`
+	AcquisitionStatus     string    `json:"acquisition_status,omitempty"`
+	WaiverProcessDatetime *string   `json:"waiver_process_datetime"`
+	MatchedPitcherName    string    `json:"matched_pitcher_name,omitempty"`
+	ProjectedStartCount   int       `json:"projected_start_count"`
+	TotalProjectedFPTS    float64   `json:"total_projected_fpts"`
+	AverageProjectedFPTS  float64   `json:"average_projected_fpts"`
+	HighestSingleFPTS     float64   `json:"highest_single_start_fpts"`
+	Starts                []Start   `json:"starts,omitempty"`
+	Flags                 []string  `json:"flags,omitempty"`
+	Notes                 []string  `json:"notes,omitempty"`
+	Unmatched             bool      `json:"unmatched,omitempty"`
+	CreatedAt             time.Time `json:"created_at,omitempty"`
 }
 
 type Start struct {

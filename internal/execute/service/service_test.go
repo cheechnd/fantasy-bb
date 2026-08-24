@@ -55,11 +55,12 @@ func TestPreflightBlockedUnavailable(t *testing.T) {
 
 func TestPreflightBlockedOnWaivers(t *testing.T) {
 	svc, closeFn := seededService(t, seededInputs{
-		addName:           "Add Arm",
-		dropName:          "Drop Arm",
-		rosterNames:       []string{"Drop Arm"},
-		candidates:        []string{"Add Arm"},
-		candidateStatuses: []string{espn.AcquisitionStatusWaivers},
+		addName:                  "Add Arm",
+		dropName:                 "Drop Arm",
+		rosterNames:              []string{"Drop Arm"},
+		candidates:               []string{"Add Arm"},
+		candidateStatuses:        []string{espn.AcquisitionStatusWaivers},
+		candidateWaiverDatetimes: []*string{strPtr("2026-04-14T03:00:00-04:00")},
 	})
 	defer closeFn()
 
@@ -79,6 +80,14 @@ func TestPreflightBlockedOnWaivers(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected add_target_on_waivers reason, got %+v", run.Items[0].ValidationReasons)
+	}
+	addCandidate, ok := run.Items[0].Details["add_candidate"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected add_candidate details, got %+v", run.Items[0].Details)
+	}
+	got, ok := addCandidate["waiver_process_datetime"].(string)
+	if !ok || got != "2026-04-14T03:00:00-04:00" {
+		t.Fatalf("expected waiver process datetime in preflight details, got %#v", addCandidate["waiver_process_datetime"])
 	}
 }
 
@@ -354,6 +363,7 @@ type seededInputs struct {
 	effectiveScoringPeriodID int
 	candidates               []string
 	candidateStatuses        []string
+	candidateWaiverDatetimes []*string
 	candidateStatusTags      []string
 	leagueSettings           string
 	approvalAgeHrs           int
@@ -420,8 +430,12 @@ func seededService(t *testing.T, in seededInputs) (*Service, func()) {
 		if idx < len(in.candidateStatusTags) {
 			statusTag = in.candidateStatusTags[idx]
 		}
+		var waiverProcessDatetime *string
+		if idx < len(in.candidateWaiverDatetimes) {
+			waiverProcessDatetime = in.candidateWaiverDatetimes[idx]
+		}
 		cands = append(cands, espn.FreeAgentCandidate{
-			PlayerName: name, NormalizedName: strings.ToLower(name), IsPitcher: true, AcquisitionStatus: acq, StatusTag: statusTag, CreatedAt: time.Now().UTC(),
+			PlayerName: name, NormalizedName: strings.ToLower(name), IsPitcher: true, AcquisitionStatus: acq, WaiverProcessDatetime: waiverProcessDatetime, StatusTag: statusTag, CreatedAt: time.Now().UTC(),
 		})
 	}
 	syncRunID, err := er.PersistSync(context.Background(), esrepo.PersistSyncInput{
@@ -532,3 +546,5 @@ func jsonNumberEquals(v any, want int) bool {
 		return false
 	}
 }
+
+func strPtr(v string) *string { return &v }

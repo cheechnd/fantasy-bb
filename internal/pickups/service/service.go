@@ -112,12 +112,13 @@ type espnRosterRow struct {
 }
 
 type espnCandidateRow struct {
-	PlayerName   string
-	MLBTeam      string
-	ESPNPlayerID *int64
-	Role         string
-	StatusTag    string
-	Acquisition  string
+	PlayerName            string
+	MLBTeam               string
+	ESPNPlayerID          *int64
+	Role                  string
+	StatusTag             string
+	Acquisition           string
+	WaiverProcessDatetime *string
 }
 
 func (s *Service) resolveSources(ctx context.Context, opts pickups.RecommendOptions) (resolvedSources, error) {
@@ -186,12 +187,13 @@ func (s *Service) resolveSources(ctx context.Context, opts pickups.RecommendOpti
 			continue
 		}
 		resolved.candidates = append(resolved.candidates, espnCandidateRow{
-			PlayerName:   row.PlayerName,
-			MLBTeam:      row.MLBTeam,
-			ESPNPlayerID: row.ESPNPlayerID,
-			Role:         row.Role,
-			StatusTag:    row.StatusTag,
-			Acquisition:  acq,
+			PlayerName:            row.PlayerName,
+			MLBTeam:               row.MLBTeam,
+			ESPNPlayerID:          row.ESPNPlayerID,
+			Role:                  row.Role,
+			StatusTag:             row.StatusTag,
+			Acquisition:           acq,
+			WaiverProcessDatetime: row.WaiverProcessDatetime,
 		})
 	}
 	if len(resolved.candidates) == 0 {
@@ -225,10 +227,11 @@ func (s *Service) projectCandidates(candidates []espnCandidateRow, starts []fore
 	for _, c := range candidates {
 		m := matching.Match(c.PlayerName, c.MLBTeam, cands)
 		proj := pickups.CandidateProjection{
-			PlayerName:        c.PlayerName,
-			MLBTeam:           c.MLBTeam,
-			ESPNPlayerID:      c.ESPNPlayerID,
-			AcquisitionStatus: c.Acquisition,
+			PlayerName:            c.PlayerName,
+			MLBTeam:               c.MLBTeam,
+			ESPNPlayerID:          c.ESPNPlayerID,
+			AcquisitionStatus:     c.Acquisition,
+			WaiverProcessDatetime: c.WaiverProcessDatetime,
 		}
 		if m.MatchStatus != pitchers.MatchStatusMatched {
 			proj.Unmatched = true
@@ -366,6 +369,7 @@ func toRecommendationItem(c pickups.CandidateProjection) pickups.RecommendationI
 			"average_projected_fpts":    c.AverageProjectedFPTS,
 			"highest_single_start_fpts": c.HighestSingleFPTS,
 			"acquisition_status":        c.AcquisitionStatus,
+			"waiver_process_datetime":   c.WaiverProcessDatetime,
 		},
 		CreatedAt: time.Now().UTC(),
 	}
