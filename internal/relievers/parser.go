@@ -31,6 +31,7 @@ var (
 		"secondary setup":     "secondary_setup",
 		"middle relief":       "middle_relief",
 		"injured list":        "injured_list",
+		"sleeper":             "sleeper",
 	}
 	teamNameToCode = map[string]string{
 		"ARIZONA DIAMONDBACKS":  "ARI",
@@ -96,7 +97,7 @@ func parseDepthChartHTML(raw []byte) (parsedChart, error) {
 			if role == "" {
 				return
 			}
-			a := b.NextFiltered("a")
+			a := nextRolePlayerAnchor(b)
 			if a.Length() == 0 {
 				return
 			}
@@ -141,6 +142,31 @@ func parseDepthChartHTML(raw []byte) (parsedChart, error) {
 		return out, fmt.Errorf("reliever depth chart parse coverage too low: teams=%d rows=%d", out.Teams, len(out.Rows))
 	}
 	return out, nil
+}
+
+func nextRolePlayerAnchor(roleLabel *goquery.Selection) *goquery.Selection {
+	var out *goquery.Selection
+	roleLabel.NextAll().EachWithBreak(func(_ int, s *goquery.Selection) bool {
+		if s.Is("b") {
+			label := strings.TrimSuffix(strings.TrimSpace(s.Text()), ":")
+			if roleLabels[strings.ToLower(label)] != "" {
+				return false
+			}
+		}
+		if s.Is("a") {
+			out = s
+			return false
+		}
+		if a := s.Find("a").First(); a.Length() > 0 {
+			out = a
+			return false
+		}
+		return true
+	})
+	if out == nil {
+		return roleLabel.Find("__missing__")
+	}
+	return out
 }
 
 func sourceDate(raw []byte) string {
