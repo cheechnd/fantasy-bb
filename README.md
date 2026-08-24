@@ -283,6 +283,13 @@ Notes:
 ```bash
 ./fb execute lineup --player "Brandon Woodruff" --to-slot BE
 ./fb execute lineup --player "Brandon Woodruff" --to-slot BE --confirm
+
+# target tomorrow's ESPN scoring period
+./fb execute lineup --player "Logan Gilbert" --to-slot P --next-day
+./fb execute lineup --player "Logan Gilbert" --to-slot P --next-day --confirm
+
+# equivalent explicit scoring-period form
+./fb execute lineup --player "Logan Gilbert" --to-slot P --scoring-period-id 49 --confirm
 ```
 
 Supported target slots:
@@ -290,6 +297,13 @@ Supported target slots:
 - `SP`
 - `RP`
 - `BE`
+
+Lineup execution is scoring-period-safe:
+- no period flag means the current ESPN scoring period
+- `--next-day` and `--scoring-period-id` are mutually exclusive
+- preflight, write, and verification use the same target scoring period
+- if `--sync-run` is supplied, it must belong to the same target scoring period
+- JSON output includes the target scoring-period ID and, for next-day moves, the target date
 
 ## Status Vocabulary
 

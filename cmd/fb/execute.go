@@ -121,11 +121,16 @@ func newExecuteLineupDirectCmd(opts *cliOptions) *cobra.Command {
 	var playerName string
 	var toSlot string
 	var syncRunID int64
+	var scoringPeriodID int
+	var nextDay bool
 	var confirm bool
 	cmd := &cobra.Command{
 		Use:   "lineup",
 		Short: "Prepare or execute one lineup move directly by player and slot",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if cmd.Flags().Changed("scoring-period-id") && nextDay {
+				return fmt.Errorf("use only one of --scoring-period-id or --next-day")
+			}
 			if strings.TrimSpace(playerName) == "" {
 				return fmt.Errorf("--player is required")
 			}
@@ -133,7 +138,8 @@ func newExecuteLineupDirectCmd(opts *cliOptions) *cobra.Command {
 				return fmt.Errorf("--to-slot is required")
 			}
 			v, err := withLineupService(cmd.Context(), opts, func(ctx context.Context, cfg config.Config, svc *lp.Service) (any, error) {
-				plan, err := svc.CreateAdHocPlan(ctx, playerName, toSlot, optionalInt64(cmd, "sync-run", syncRunID))
+				lineupOpts := lineupContextOptions(cmd, cfg, syncRunID, scoringPeriodID, nextDay)
+				plan, err := svc.CreateAdHocPlanWithOptions(ctx, playerName, toSlot, lineupOpts)
 				if err != nil {
 					return nil, err
 				}
@@ -144,13 +150,14 @@ func newExecuteLineupDirectCmd(opts *cliOptions) *cobra.Command {
 				if _, err := svc.Transition(ctx, plan.ID, item.ID, lp.ReviewStateApproved, "direct_execute"); err != nil {
 					return nil, err
 				}
-				a, p, willWrite, msg, err := svc.Execute(ctx, cfg, item.ID, confirm)
+				a, p, willWrite, msg, err := svc.ExecuteWithOptions(ctx, cfg, item.ID, confirm, lineupOpts)
 				if err != nil {
 					return nil, err
 				}
 				return map[string]any{
 					"plan_id":    plan.ID,
 					"item_id":    item.ID,
+					"context":    targetLineupContextPayload(lineupOpts),
 					"attempt":    a,
 					"preflight":  p,
 					"will_write": willWrite,
@@ -172,6 +179,8 @@ func newExecuteLineupDirectCmd(opts *cliOptions) *cobra.Command {
 	cmd.Flags().StringVar(&playerName, "player", "", "Pitcher name on your roster")
 	cmd.Flags().StringVar(&toSlot, "to-slot", "", "Target slot: P|SP|RP|BE")
 	cmd.Flags().Int64Var(&syncRunID, "sync-run", 0, "ESPN sync run ID (defaults to latest)")
+	cmd.Flags().IntVar(&scoringPeriodID, "scoring-period-id", 0, "Target ESPN scoring period ID")
+	cmd.Flags().BoolVar(&nextDay, "next-day", false, "Execute lineup move in the next ESPN scoring period")
 	cmd.Flags().BoolVar(&confirm, "confirm", false, "Actually perform the real write attempt")
 	return cmd
 }
@@ -755,6 +764,36 @@ func intPtrFromInt64(v *int64) *int {
 	return &out
 }
 
+func lineupContextOptions(cmd *cobra.Command, cfg config.Config, syncRunID int64, scoringPeriodID int, nextDay bool) lp.ContextOptions {
+	opts := lp.ContextOptions{
+		SyncRunID:        optionalInt64(cmd, "sync-run", syncRunID),
+		ScoringPeriodID:  optionalInt(cmd, "scoring-period-id", scoringPeriodID),
+		EffectiveNextDay: nextDay,
+	}
+	if nextDay {
+		opts.ScoringPeriodDate = nextDayDate(cfg.League.Timezone)
+	}
+	return opts
+}
+
+func nextDayDate(timezone string) *string {
+	loc, err := time.LoadLocation(strings.TrimSpace(timezone))
+	if err != nil {
+		loc = time.Local
+	}
+	v := time.Now().In(loc).AddDate(0, 0, 1).Format("2006-01-02")
+	return &v
+}
+
+func targetLineupContextPayload(opts lp.ContextOptions) map[string]any {
+	return map[string]any{
+		"sync_run_id":                opts.SyncRunID,
+		"target_scoring_period_id":   opts.ScoringPeriodID,
+		"target_scoring_period_date": opts.ScoringPeriodDate,
+		"effective_next_day":         opts.EffectiveNextDay,
+	}
+}
+
 func printExecutionRun(cmd *cobra.Command, run *execute.Run) {
 	if run == nil {
 		fmt.Fprintln(cmd.OutOrStdout(), "No execution run found.")
@@ -1021,6 +1060,15 @@ func printLineupExecutionPreview(cmd *cobra.Command, itemID int64, payload map[s
 	fmt.Fprintf(cmd.OutOrStdout(), "Approved Lineup Item: %d\n", itemID)
 	if pre != nil {
 		fmt.Fprintf(cmd.OutOrStdout(), "Action: %s %s (%s -> %s)\n", pre.ActionType, pre.PlayerName, firstNonEmpty(pre.CurrentSlot, "-"), firstNonEmpty(pre.TargetSlot, "-"))
+		if pre.TargetScoringPeriodID != nil {
+			fmt.Fprintf(cmd.OutOrStdout(), "Target scoring period: %d\n", *pre.TargetScoringPeriodID)
+		}
+		if pre.TargetScoringPeriodDate != nil {
+			fmt.Fprintf(cmd.OutOrStdout(), "Target date: %s\n", *pre.TargetScoringPeriodDate)
+		}
+		if pre.EffectiveNextDay {
+			fmt.Fprintln(cmd.OutOrStdout(), "Effective: next-day")
+		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Immediate preflight: %s\n", pre.ValidationStatus)
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Will write: %t\n", willWrite)

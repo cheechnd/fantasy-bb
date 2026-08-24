@@ -26,12 +26,15 @@ type Verifier interface {
 }
 
 type LineupWriteRequest struct {
-	ApprovedItemID int64
-	PlanID         int64
-	PlayerName     string
-	ESPNPlayerID   int64
-	FromSlot       string
-	ToSlot         string
+	ApprovedItemID    int64
+	PlanID            int64
+	PlayerName        string
+	ESPNPlayerID      int64
+	FromSlot          string
+	ToSlot            string
+	ScoringPeriodID   *int
+	ScoringPeriodDate *string
+	EffectiveNextDay  bool
 }
 
 type LineupWriteResult struct {
@@ -111,6 +114,10 @@ func (s *Service) GeneratePlan(ctx context.Context, pitcherPlanID, syncRunID *in
 }
 
 func (s *Service) CreateAdHocPlan(ctx context.Context, playerName, toSlot string, syncRunID *int64) (*Plan, error) {
+	return s.CreateAdHocPlanWithOptions(ctx, playerName, toSlot, ContextOptions{SyncRunID: syncRunID})
+}
+
+func (s *Service) CreateAdHocPlanWithOptions(ctx context.Context, playerName, toSlot string, opts ContextOptions) (*Plan, error) {
 	playerName = strings.TrimSpace(playerName)
 	if playerName == "" {
 		return nil, fmt.Errorf("--player is required")
@@ -119,15 +126,18 @@ func (s *Service) CreateAdHocPlan(ctx context.Context, playerName, toSlot string
 	if err != nil {
 		return nil, err
 	}
+	if err := s.validateContextOptions(ctx, opts); err != nil {
+		return nil, err
+	}
 
-	rows, err := s.espnRepo.LatestRoster(ctx, syncRunID, true)
+	rows, err := s.espnRepo.LatestRosterForContext(ctx, opts.SyncRunID, opts.ScoringPeriodID, opts.EffectiveNextDay, true)
 	if err != nil {
 		return nil, err
 	}
 	if len(rows) == 0 {
 		return nil, fmt.Errorf("no ESPN pitcher roster snapshot found; run `fb espn sync roster` first")
 	}
-	resolvedSyncRunID := syncRunID
+	resolvedSyncRunID := opts.SyncRunID
 	if resolvedSyncRunID == nil {
 		v := rows[0].SyncRunID
 		resolvedSyncRunID = &v
@@ -161,6 +171,7 @@ func (s *Service) CreateAdHocPlan(ctx context.Context, playerName, toSlot string
 				"player":  playerName,
 				"to_slot": targetSlot,
 			},
+			"context": targetContextDetails(opts, s.targetScoringPeriodDate(opts)),
 		},
 		Flags:     flags,
 		CreatedAt: time.Now().UTC(),
@@ -217,6 +228,13 @@ func (s *Service) Queue(ctx context.Context, limit int) ([]QueueItem, error) {
 }
 
 func (s *Service) Preflight(ctx context.Context, itemID *int64, limit int) (*PreflightResult, error) {
+	return s.PreflightWithOptions(ctx, itemID, limit, ContextOptions{})
+}
+
+func (s *Service) PreflightWithOptions(ctx context.Context, itemID *int64, limit int, opts ContextOptions) (*PreflightResult, error) {
+	if err := s.validateContextOptions(ctx, opts); err != nil {
+		return nil, err
+	}
 	var candidates []QueueItem
 	var err error
 	if itemID != nil {
@@ -251,15 +269,20 @@ func (s *Service) Preflight(ctx context.Context, itemID *int64, limit int) (*Pre
 		return nil, fmt.Errorf("no approved lineup actions in queue")
 	}
 
-	latestSync, err := s.espnRepo.LatestSyncRun(ctx)
+	latestSync, err := s.espnRepo.LatestSyncRunForContext(ctx, opts.ScoringPeriodID, opts.EffectiveNextDay)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.espnRepo.LatestRoster(ctx, nil, true)
+	targetScoringPeriodID := opts.ScoringPeriodID
+	if targetScoringPeriodID == nil && latestSync != nil && latestSync.ScoringPeriodID != nil {
+		v := *latestSync.ScoringPeriodID
+		targetScoringPeriodID = &v
+	}
+	rows, err := s.espnRepo.LatestRosterForContext(ctx, opts.SyncRunID, opts.ScoringPeriodID, opts.EffectiveNextDay, true)
 	if err != nil {
 		return nil, err
 	}
-	league, err := s.espnRepo.LatestLeague(ctx, nil)
+	league, err := s.espnRepo.LatestLeagueForContext(ctx, opts.SyncRunID, opts.ScoringPeriodID, opts.EffectiveNextDay)
 	if err != nil {
 		return nil, err
 	}
@@ -269,6 +292,7 @@ func (s *Service) Preflight(ctx context.Context, itemID *int64, limit int) (*Pre
 
 	out := make([]PreflightItem, 0, len(candidates))
 	now := time.Now().UTC()
+	targetDate := s.targetScoringPeriodDate(opts)
 	for _, q := range candidates {
 		reasons := []execute.Reason{}
 		status := execute.StatusExecutable
@@ -310,23 +334,33 @@ func (s *Service) Preflight(ctx context.Context, itemID *int64, limit int) (*Pre
 			reasons = append(reasons, execute.Reason{Code: "ok", Message: "preflight checks passed"})
 		}
 		out = append(out, PreflightItem{
-			LineupPlanItemID: q.LineupPlanItemID,
-			PlanID:           q.PlanID,
-			PlayerName:       q.PlayerName,
-			ActionType:       q.ActionType,
-			ValidationStatus: status,
-			Reasons:          reasons,
-			CurrentSlot:      resolvedCurrent,
-			TargetSlot:       q.TargetSlot,
-			CheckedAt:        now,
+			LineupPlanItemID:        q.LineupPlanItemID,
+			PlanID:                  q.PlanID,
+			PlayerName:              q.PlayerName,
+			ActionType:              q.ActionType,
+			ValidationStatus:        status,
+			Reasons:                 reasons,
+			CurrentSlot:             resolvedCurrent,
+			TargetSlot:              q.TargetSlot,
+			TargetScoringPeriodID:   targetScoringPeriodID,
+			TargetScoringPeriodDate: targetDate,
+			EffectiveNextDay:        opts.EffectiveNextDay,
+			CheckedAt:               now,
 		})
 	}
 	return &PreflightResult{Items: out}, nil
 }
 
 func (s *Service) Execute(ctx context.Context, cfg config.Config, itemID int64, confirm bool) (*ExecutionAttempt, *PreflightItem, bool, string, error) {
+	return s.ExecuteWithOptions(ctx, cfg, itemID, confirm, ContextOptions{})
+}
+
+func (s *Service) ExecuteWithOptions(ctx context.Context, cfg config.Config, itemID int64, confirm bool, opts ContextOptions) (*ExecutionAttempt, *PreflightItem, bool, string, error) {
 	if itemID <= 0 {
 		return nil, nil, false, "", fmt.Errorf("--item must be > 0")
+	}
+	if err := s.validateContextOptions(ctx, opts); err != nil {
+		return nil, nil, false, "", err
 	}
 	it, err := s.repo.ReviewedItemByID(ctx, itemID)
 	if err != nil {
@@ -348,7 +382,7 @@ func (s *Service) Execute(ctx context.Context, cfg config.Config, itemID int64, 
 		// allow preview below
 	}
 
-	pf, err := s.Preflight(ctx, &itemID, 1)
+	pf, err := s.PreflightWithOptions(ctx, &itemID, 1, opts)
 	if err != nil {
 		return nil, nil, false, "", err
 	}
@@ -398,19 +432,25 @@ func (s *Service) Execute(ctx context.Context, cfg config.Config, itemID int64, 
 	}
 
 	req := LineupWriteRequest{
-		ApprovedItemID: itemID,
-		PlanID:         it.LineupPlanID,
-		PlayerName:     it.PlayerName,
-		ESPNPlayerID:   *it.ESPNPlayerID,
-		FromSlot:       pre.CurrentSlot,
-		ToSlot:         it.TargetSlot,
+		ApprovedItemID:    itemID,
+		PlanID:            it.LineupPlanID,
+		PlayerName:        it.PlayerName,
+		ESPNPlayerID:      *it.ESPNPlayerID,
+		FromSlot:          pre.CurrentSlot,
+		ToSlot:            it.TargetSlot,
+		ScoringPeriodID:   pre.TargetScoringPeriodID,
+		ScoringPeriodDate: pre.TargetScoringPeriodDate,
+		EffectiveNextDay:  opts.EffectiveNextDay,
 	}
 	attemptID, err := s.repo.CreateExecutionAttempt(ctx, itemID, it.LineupPlanID, execute.ExecutionStatusStarted, execute.VerificationStatusUnknown, map[string]any{
-		"action_type":    it.ActionType,
-		"player":         req.PlayerName,
-		"espn_player_id": req.ESPNPlayerID,
-		"from_slot":      req.FromSlot,
-		"to_slot":        req.ToSlot,
+		"action_type":                it.ActionType,
+		"player":                     req.PlayerName,
+		"espn_player_id":             req.ESPNPlayerID,
+		"from_slot":                  req.FromSlot,
+		"to_slot":                    req.ToSlot,
+		"target_scoring_period_id":   req.ScoringPeriodID,
+		"target_scoring_period_date": req.ScoringPeriodDate,
+		"effective_next_day":         req.EffectiveNextDay,
 	}, nil)
 	if err != nil {
 		return nil, nil, false, "", err
@@ -451,12 +491,73 @@ func (s *Service) Execute(ctx context.Context, cfg config.Config, itemID int64, 
 func (s *Service) ExecutionHistory(ctx context.Context, limit int) ([]ExecutionAttempt, error) {
 	return s.repo.ListExecutionHistory(ctx, limit)
 }
+
 func (s *Service) ExecutionResult(ctx context.Context, id int64) (*ExecutionAttempt, error) {
 	a, _, err := s.repo.ExecutionByID(ctx, id)
 	return a, err
 }
+
 func (s *Service) LatestExecution(ctx context.Context) (*ExecutionAttempt, error) {
 	return s.repo.LatestExecution(ctx)
+}
+
+func (s *Service) validateContextOptions(ctx context.Context, opts ContextOptions) error {
+	if opts.ScoringPeriodID != nil && opts.EffectiveNextDay {
+		return fmt.Errorf("use only one of --scoring-period-id or --next-day")
+	}
+	if opts.ScoringPeriodID != nil && *opts.ScoringPeriodID <= 0 {
+		return fmt.Errorf("--scoring-period-id must be > 0")
+	}
+	if opts.SyncRunID == nil {
+		return nil
+	}
+	run, err := s.espnRepo.SyncRunByID(ctx, *opts.SyncRunID)
+	if err != nil {
+		return err
+	}
+	if run == nil {
+		return fmt.Errorf("ESPN sync run %d not found", *opts.SyncRunID)
+	}
+	if run.SyncType != "roster" {
+		return fmt.Errorf("ESPN sync run %d is %q, not roster", *opts.SyncRunID, run.SyncType)
+	}
+	if opts.ScoringPeriodID != nil {
+		if run.ScoringPeriodID == nil || *run.ScoringPeriodID != *opts.ScoringPeriodID {
+			got := "today"
+			if run.ScoringPeriodID != nil {
+				got = strconv.Itoa(*run.ScoringPeriodID)
+			}
+			return fmt.Errorf("--sync-run %d belongs to scoring period %s, not %d", *opts.SyncRunID, got, *opts.ScoringPeriodID)
+		}
+	}
+	if opts.EffectiveNextDay && !run.EffectiveNextDay {
+		return fmt.Errorf("--sync-run %d is not a next-day roster sync", *opts.SyncRunID)
+	}
+	if !opts.EffectiveNextDay && opts.ScoringPeriodID == nil && run.EffectiveNextDay {
+		return fmt.Errorf("--sync-run %d is next-day; pass --next-day to target that scoring period", *opts.SyncRunID)
+	}
+	if !opts.EffectiveNextDay && opts.ScoringPeriodID == nil && run.ScoringPeriodID != nil {
+		return fmt.Errorf("--sync-run %d belongs to scoring period %d; pass --scoring-period-id %d to target that scoring period", *opts.SyncRunID, *run.ScoringPeriodID, *run.ScoringPeriodID)
+	}
+	return nil
+}
+
+func (s *Service) targetScoringPeriodDate(opts ContextOptions) *string {
+	return opts.ScoringPeriodDate
+}
+
+func targetContextDetails(opts ContextOptions, targetDate *string) map[string]any {
+	out := map[string]any{
+		"effective_next_day":         opts.EffectiveNextDay,
+		"target_scoring_period_date": targetDate,
+	}
+	if opts.SyncRunID != nil {
+		out["sync_run_id"] = *opts.SyncRunID
+	}
+	if opts.ScoringPeriodID != nil {
+		out["target_scoring_period_id"] = *opts.ScoringPeriodID
+	}
+	return out
 }
 
 func buildLineupItems(planItems []pitchplan.PlanItem, roster []espn.RosterSnapshot, slotCaps map[string]int) ([]PlanItem, map[string]any) {
@@ -473,9 +574,9 @@ func buildLineupItems(planItems []pitchplan.PlanItem, roster []espn.RosterSnapsh
 	usedBenchTargets := map[string]bool{}
 	out := make([]PlanItem, 0)
 	summary := map[string]int{
-		"activate_actions":    0,
-		"bench_actions":       0,
-		"no_action_needed":    0,
+		"activate_actions":     0,
+		"bench_actions":        0,
+		"no_action_needed":     0,
 		"ambiguous_or_blocked": 0,
 	}
 

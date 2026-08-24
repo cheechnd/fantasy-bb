@@ -75,16 +75,26 @@ type QueueItem struct {
 	State            ReviewState `json:"state"`
 }
 
+type ContextOptions struct {
+	SyncRunID         *int64  `json:"sync_run_id,omitempty"`
+	ScoringPeriodID   *int    `json:"scoring_period_id,omitempty"`
+	ScoringPeriodDate *string `json:"scoring_period_date"`
+	EffectiveNextDay  bool    `json:"effective_next_day"`
+}
+
 type PreflightItem struct {
-	LineupPlanItemID int64                    `json:"lineup_plan_item_id"`
-	PlanID           int64                    `json:"plan_id"`
-	PlayerName       string                   `json:"player_name"`
-	ActionType       ActionType               `json:"action_type"`
-	ValidationStatus execute.ValidationStatus `json:"validation_status"`
-	Reasons          []execute.Reason         `json:"reasons"`
-	CurrentSlot      string                   `json:"current_slot,omitempty"`
-	TargetSlot       string                   `json:"target_slot,omitempty"`
-	CheckedAt        time.Time                `json:"checked_at"`
+	LineupPlanItemID        int64                    `json:"lineup_plan_item_id"`
+	PlanID                  int64                    `json:"plan_id"`
+	PlayerName              string                   `json:"player_name"`
+	ActionType              ActionType               `json:"action_type"`
+	ValidationStatus        execute.ValidationStatus `json:"validation_status"`
+	Reasons                 []execute.Reason         `json:"reasons"`
+	CurrentSlot             string                   `json:"current_slot,omitempty"`
+	TargetSlot              string                   `json:"target_slot,omitempty"`
+	TargetScoringPeriodID   *int                     `json:"target_scoring_period_id,omitempty"`
+	TargetScoringPeriodDate *string                  `json:"target_scoring_period_date"`
+	EffectiveNextDay        bool                     `json:"effective_next_day"`
+	CheckedAt               time.Time                `json:"checked_at"`
 }
 
 type PreflightResult struct {

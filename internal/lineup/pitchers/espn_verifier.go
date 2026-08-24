@@ -26,7 +26,7 @@ func (v *ESPNVerifier) VerifyLineupMove(ctx context.Context, cfg config.Config, 
 	if err != nil {
 		return execute.VerificationStatusVerificationFailed, nil, err
 	}
-	fetch, err := v.client.FetchLeague(ctx, cfg, creds)
+	fetch, err := v.client.FetchLeagueWithOptions(ctx, cfg, creds, espnclient.LeagueFetchOptions{ScoringPeriodID: req.ScoringPeriodID})
 	if err != nil {
 		return execute.VerificationStatusVerificationFailed, nil, err
 	}
@@ -35,11 +35,14 @@ func (v *ESPNVerifier) VerifyLineupMove(ctx context.Context, cfg config.Config, 
 		return execute.VerificationStatusVerificationFailed, nil, err
 	}
 	details := map[string]any{
-		"endpoint":              fetch.Endpoint,
-		"response_status":       fetch.ResponseStatus,
-		"target_slot":           req.ToSlot,
-		"current_slot":          currentSlot,
-		"player_in_target_slot": ok,
+		"endpoint":                   fetch.Endpoint,
+		"response_status":            fetch.ResponseStatus,
+		"target_slot":                req.ToSlot,
+		"current_slot":               currentSlot,
+		"player_in_target_slot":      ok,
+		"target_scoring_period_id":   req.ScoringPeriodID,
+		"target_scoring_period_date": req.ScoringPeriodDate,
+		"effective_next_day":         req.EffectiveNextDay,
 	}
 	if ok {
 		details["inference"] = "likely_executed"

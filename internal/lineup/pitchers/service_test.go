@@ -22,6 +22,15 @@ func (fakeWriter) ExecuteLineupMove(context.Context, config.Config, LineupWriteR
 	return LineupWriteResult{OK: true, Endpoint: "https://example", ResponseStatus: 200, ResponseJSON: map[string]any{"ok": true}}, nil
 }
 
+type captureWriter struct {
+	req LineupWriteRequest
+}
+
+func (w *captureWriter) ExecuteLineupMove(_ context.Context, _ config.Config, req LineupWriteRequest) (LineupWriteResult, error) {
+	w.req = req
+	return LineupWriteResult{OK: true, Endpoint: "https://example", ResponseStatus: 200, ResponseJSON: map[string]any{"ok": true}}, nil
+}
+
 type fakeVerifier struct{}
 
 func (fakeVerifier) VerifyLineupMove(context.Context, config.Config, LineupWriteRequest, LineupWriteResult) (execute.VerificationStatus, map[string]any, error) {
@@ -183,6 +192,112 @@ func TestCreateAdHocPlanCreatesSingleAction(t *testing.T) {
 	}
 }
 
+func TestExecuteNextDayLineupUsesNextDayScoringPeriod(t *testing.T) {
+	svc, cfg, closeFn := testService(t)
+	defer closeFn()
+
+	nextSP := 49
+	nextDate := "2026-05-13"
+	if _, err := seedSyncWithContext(t, svc.espnRepo, cfg.League.LeagueID, cfg.League.TeamID, cfg.League.Season, map[string]any{"13": 1, "14": 0, "15": 0}, []espn.RosterSnapshot{{
+		ESPNPlayerID:   int64Ptr(101),
+		PlayerName:     "Test Pitcher",
+		NormalizedName: "testpitcher",
+		MLBTeam:        "NYM",
+		RosterSlot:     "BE",
+		IsPitcher:      true,
+		Role:           "SP",
+		CreatedAt:      time.Now().UTC(),
+	}}, &nextSP, true); err != nil {
+		t.Fatalf("seed next-day sync: %v", err)
+	}
+	writer := &captureWriter{}
+	svc.writer = writer
+
+	opts := ContextOptions{EffectiveNextDay: true, ScoringPeriodDate: &nextDate}
+	plan, err := svc.CreateAdHocPlanWithOptions(context.Background(), "Test Pitcher", "P", opts)
+	if err != nil {
+		t.Fatalf("CreateAdHocPlanWithOptions: %v", err)
+	}
+	itemID := plan.Items[0].ID
+	if _, err := svc.Transition(context.Background(), plan.ID, itemID, ReviewStateApproved, "ship"); err != nil {
+		t.Fatalf("Transition approve: %v", err)
+	}
+	_, pre, willWrite, _, err := svc.ExecuteWithOptions(context.Background(), cfg, itemID, true, opts)
+	if err != nil {
+		t.Fatalf("ExecuteWithOptions: %v", err)
+	}
+	if !willWrite {
+		t.Fatalf("expected write")
+	}
+	if pre.TargetScoringPeriodID == nil || *pre.TargetScoringPeriodID != nextSP {
+		t.Fatalf("preflight target scoring period = %v, want %d", pre.TargetScoringPeriodID, nextSP)
+	}
+	if writer.req.ScoringPeriodID == nil || *writer.req.ScoringPeriodID != nextSP {
+		t.Fatalf("writer scoring period = %v, want %d", writer.req.ScoringPeriodID, nextSP)
+	}
+	if !writer.req.EffectiveNextDay {
+		t.Fatalf("expected writer request to carry EffectiveNextDay")
+	}
+	if writer.req.ScoringPeriodDate == nil || *writer.req.ScoringPeriodDate != nextDate {
+		t.Fatalf("writer scoring period date = %v, want %s", writer.req.ScoringPeriodDate, nextDate)
+	}
+}
+
+func TestLineupContextRejectsSyncRunFromWrongScoringPeriod(t *testing.T) {
+	svc, cfg, closeFn := testService(t)
+	defer closeFn()
+
+	sp48 := 48
+	syncRunID, err := seedSyncWithContext(t, svc.espnRepo, cfg.League.LeagueID, cfg.League.TeamID, cfg.League.Season, map[string]any{"13": 1, "14": 0, "15": 0}, []espn.RosterSnapshot{{
+		ESPNPlayerID:   int64Ptr(101),
+		PlayerName:     "Test Pitcher",
+		NormalizedName: "testpitcher",
+		MLBTeam:        "NYM",
+		RosterSlot:     "BE",
+		IsPitcher:      true,
+		Role:           "SP",
+		CreatedAt:      time.Now().UTC(),
+	}}, &sp48, false)
+	if err != nil {
+		t.Fatalf("seed scoring-period sync: %v", err)
+	}
+	sp49 := 49
+	_, err = svc.CreateAdHocPlanWithOptions(context.Background(), "Test Pitcher", "P", ContextOptions{SyncRunID: &syncRunID, ScoringPeriodID: &sp49})
+	if err == nil {
+		t.Fatalf("expected mismatched sync run error")
+	}
+	if !strings.Contains(err.Error(), "not 49") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLineupContextRejectsScoringPeriodSyncRunWithoutPeriodFlag(t *testing.T) {
+	svc, cfg, closeFn := testService(t)
+	defer closeFn()
+
+	sp49 := 49
+	syncRunID, err := seedSyncWithContext(t, svc.espnRepo, cfg.League.LeagueID, cfg.League.TeamID, cfg.League.Season, map[string]any{"13": 1, "14": 0, "15": 0}, []espn.RosterSnapshot{{
+		ESPNPlayerID:   int64Ptr(101),
+		PlayerName:     "Test Pitcher",
+		NormalizedName: "testpitcher",
+		MLBTeam:        "NYM",
+		RosterSlot:     "BE",
+		IsPitcher:      true,
+		Role:           "SP",
+		CreatedAt:      time.Now().UTC(),
+	}}, &sp49, false)
+	if err != nil {
+		t.Fatalf("seed scoring-period sync: %v", err)
+	}
+	_, err = svc.CreateAdHocPlanWithOptions(context.Background(), "Test Pitcher", "P", ContextOptions{SyncRunID: &syncRunID})
+	if err == nil {
+		t.Fatalf("expected scoring-period sync run without period flag error")
+	}
+	if !strings.Contains(err.Error(), "pass --scoring-period-id 49") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestBuildLineupItemsCreatesBenchSwapWhenSlotsFull(t *testing.T) {
 	totalStart := 20.0
 	totalDrop := 0.0
@@ -307,24 +422,31 @@ func testService(t *testing.T) (*Service, config.Config, func()) {
 func int64Ptr(v int64) *int64 { return &v }
 
 func seedSync(t *testing.T, repo *esrepo.Repository, leagueID, teamID string, season int, slotCounts map[string]any, roster []espn.RosterSnapshot) error {
+	_, err := seedSyncWithContext(t, repo, leagueID, teamID, season, slotCounts, roster, nil, false)
+	return err
+}
+
+func seedSyncWithContext(t *testing.T, repo *esrepo.Repository, leagueID, teamID string, season int, slotCounts map[string]any, roster []espn.RosterSnapshot, scoringPeriodID *int, effectiveNextDay bool) (int64, error) {
 	t.Helper()
 	settings := map[string]any{"lineupSlotCounts": slotCounts}
 	settingsJSON, err := json.Marshal(settings)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	payloadJSON := string(settingsJSON)
 	if strings.TrimSpace(payloadJSON) == "" {
 		payloadJSON = "{}"
 	}
-	_, err = repo.PersistSync(context.Background(), esrepo.PersistSyncInput{
-		SyncType: "roster",
-		LeagueID: leagueID,
-		TeamID:   teamID,
-		Season:   season,
-		Status:   "success",
-		Summary:  map[string]any{"ok": true},
-		Payloads: []espn.RawPayload{{PayloadType: "league_roster", SourceEndpoint: "x", ResponseStatus: 200, PayloadJSON: payloadJSON}},
+	return repo.PersistSync(context.Background(), esrepo.PersistSyncInput{
+		SyncType:         "roster",
+		LeagueID:         leagueID,
+		TeamID:           teamID,
+		Season:           season,
+		Status:           "success",
+		ScoringPeriodID:  scoringPeriodID,
+		EffectiveNextDay: effectiveNextDay,
+		Summary:          map[string]any{"ok": true},
+		Payloads:         []espn.RawPayload{{PayloadType: "league_roster", SourceEndpoint: "x", ResponseStatus: 200, PayloadJSON: payloadJSON}},
 		League: espn.LeagueSnapshot{
 			LeagueID:     leagueID,
 			TeamID:       teamID,
@@ -336,5 +458,4 @@ func seedSync(t *testing.T, repo *esrepo.Repository, leagueID, teamID string, se
 		},
 		Roster: roster,
 	})
-	return err
 }

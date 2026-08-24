@@ -47,6 +47,13 @@ func (w *ESPNWriter) ExecuteLineupMove(ctx context.Context, cfg config.Config, r
 	if err != nil {
 		return LineupWriteResult{}, err
 	}
+	targetScoringPeriodID := meta.ScoringPeriodID
+	if req.ScoringPeriodID != nil {
+		targetScoringPeriodID = int64(*req.ScoringPeriodID)
+	}
+	if targetScoringPeriodID <= 0 {
+		return LineupWriteResult{}, fmt.Errorf("invalid target scoring period id: %d", targetScoringPeriodID)
+	}
 
 	fromSlotID := lineupSlotID(req.FromSlot)
 	toSlotID := lineupSlotID(req.ToSlot)
@@ -59,7 +66,7 @@ func (w *ESPNWriter) ExecuteLineupMove(ctx context.Context, cfg config.Config, r
 		"teamId":          teamID,
 		"type":            "ROSTER",
 		"memberId":        meta.MemberID,
-		"scoringPeriodId": meta.ScoringPeriodID,
+		"scoringPeriodId": targetScoringPeriodID,
 		"executionType":   "EXECUTE",
 		"items": []map[string]any{{
 			"type":             "LINEUP",
