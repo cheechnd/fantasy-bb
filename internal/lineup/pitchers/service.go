@@ -461,7 +461,7 @@ func (s *Service) ExecuteWithOptions(ctx context.Context, cfg config.Config, ite
 	wres, werr := s.writer.ExecuteLineupMove(ctx, cfg, req)
 	if werr != nil {
 		_ = s.repo.AddExecutionEvent(ctx, attemptID, "write_failed", map[string]any{"error": werr.Error()})
-		_ = s.repo.CompleteExecutionAttempt(ctx, attemptID, execute.ExecutionStatusFailed, execute.VerificationStatusUnknown, map[string]any{"ok": false, "endpoint": wres.Endpoint, "response_status": wres.ResponseStatus}, nil, werr.Error())
+		_ = s.repo.CompleteExecutionAttempt(ctx, attemptID, execute.ExecutionStatusFailed, execute.VerificationStatusUnknown, lineupResponseSummary(wres), nil, werr.Error())
 		a, _, _ := s.repo.ExecutionByID(ctx, attemptID)
 		return a, &pre, true, fmt.Sprintf("execution failed: %s", werr.Error()), nil
 	}
@@ -483,7 +483,7 @@ func (s *Service) ExecuteWithOptions(ctx context.Context, cfg config.Config, ite
 		}
 	}
 	execStatus := deriveExecutionStatus(verStatus)
-	_ = s.repo.CompleteExecutionAttempt(ctx, attemptID, execStatus, verStatus, map[string]any{"ok": wres.OK, "endpoint": wres.Endpoint, "response_status": wres.ResponseStatus, "response_json": wres.ResponseJSON, "message": wres.Message}, verDetails, "")
+	_ = s.repo.CompleteExecutionAttempt(ctx, attemptID, execStatus, verStatus, lineupResponseSummary(wres), verDetails, "")
 	a, _, _ := s.repo.ExecutionByID(ctx, attemptID)
 	return a, &pre, true, executionMessage(execStatus, verStatus), nil
 }
@@ -556,6 +556,21 @@ func targetContextDetails(opts ContextOptions, targetDate *string) map[string]an
 	}
 	if opts.ScoringPeriodID != nil {
 		out["target_scoring_period_id"] = *opts.ScoringPeriodID
+	}
+	return out
+}
+
+func lineupResponseSummary(wres LineupWriteResult) map[string]any {
+	out := map[string]any{
+		"ok":              wres.OK,
+		"endpoint":        wres.Endpoint,
+		"response_status": wres.ResponseStatus,
+	}
+	if strings.TrimSpace(wres.Message) != "" {
+		out["message"] = wres.Message
+	}
+	if wres.ResponseJSON != nil {
+		out["response_json"] = wres.ResponseJSON
 	}
 	return out
 }

@@ -54,6 +54,10 @@ func (w *ESPNWriter) ExecuteLineupMove(ctx context.Context, cfg config.Config, r
 	if targetScoringPeriodID <= 0 {
 		return LineupWriteResult{}, fmt.Errorf("invalid target scoring period id: %d", targetScoringPeriodID)
 	}
+	transactionType := "ROSTER"
+	if meta.TransactionScoringPeriodID > 0 && targetScoringPeriodID > meta.TransactionScoringPeriodID {
+		transactionType = "FUTURE_ROSTER"
+	}
 
 	fromSlotID := lineupSlotID(req.FromSlot)
 	toSlotID := lineupSlotID(req.ToSlot)
@@ -64,7 +68,7 @@ func (w *ESPNWriter) ExecuteLineupMove(ctx context.Context, cfg config.Config, r
 	body := map[string]any{
 		"isLeagueManager": meta.IsLeagueManager,
 		"teamId":          teamID,
-		"type":            "ROSTER",
+		"type":            transactionType,
 		"memberId":        meta.MemberID,
 		"scoringPeriodId": targetScoringPeriodID,
 		"executionType":   "EXECUTE",
@@ -127,9 +131,10 @@ func (w *ESPNWriter) ExecuteLineupMove(ctx context.Context, cfg config.Config, r
 }
 
 type writeMeta struct {
-	MemberID        string
-	ScoringPeriodID int64
-	IsLeagueManager bool
+	MemberID                   string
+	ScoringPeriodID            int64
+	TransactionScoringPeriodID int64
+	IsLeagueManager            bool
 }
 
 func (w *ESPNWriter) resolveWriteMeta(ctx context.Context, cfg config.Config, creds config.ESPNCredentials, teamID int64) (writeMeta, error) {
@@ -146,6 +151,12 @@ func (w *ESPNWriter) resolveWriteMeta(ctx context.Context, cfg config.Config, cr
 	out := writeMeta{ScoringPeriodID: pickInt64(raw, "scoringPeriodId")}
 	if out.ScoringPeriodID <= 0 {
 		out.ScoringPeriodID = 1
+	}
+	if status, ok := raw["status"].(map[string]any); ok {
+		out.TransactionScoringPeriodID = pickInt64(status, "transactionScoringPeriod")
+	}
+	if out.TransactionScoringPeriodID <= 0 {
+		out.TransactionScoringPeriodID = out.ScoringPeriodID
 	}
 
 	ownerID := ""
