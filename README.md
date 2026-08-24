@@ -162,6 +162,8 @@ Examples:
 ./fb mlb schedule --from 2026-05-10 --to 2026-05-12
 ```
 
+`fb mlb schedule --json` uses the requested display timezone (default: local machine timezone) for `game_date`, `game_time`, and `game_datetime`. The raw UTC timestamp is exposed separately as `game_datetime_utc` so late West Coast games do not appear to belong to the next local baseball date.
+
 Roster context views (useful after games start):
 
 ```bash

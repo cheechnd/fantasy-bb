@@ -88,15 +88,24 @@ func (s *Service) Schedule(ctx context.Context, fromDate, toDate time.Time, tz *
 	for _, d := range payload.Dates {
 		for _, g := range d.Games {
 			gameDate, _ := time.Parse(time.RFC3339, g.GameDate)
+			localDate := gameDate.In(tz)
+			gameTime := localDate.Format("3:04 PM")
+			if g.StartTimeTBD {
+				gameTime = "TBD"
+			}
 			row := ScheduleGame{
-				GameID:         g.GamePk,
-				GameDate:       gameDate,
-				Status:         strings.TrimSpace(g.Status.DetailedState),
-				AwayTeam:       strings.TrimSpace(g.Teams.Away.Team.Name),
-				HomeTeam:       strings.TrimSpace(g.Teams.Home.Team.Name),
-				AwayProbableSP: strings.TrimSpace(g.Teams.Away.ProbablePitcher.FullName),
-				HomeProbableSP: strings.TrimSpace(g.Teams.Home.ProbablePitcher.FullName),
-				StartTimeTBD:   g.StartTimeTBD,
+				GameID:          g.GamePk,
+				GameDate:        localDate.Format("2006-01-02"),
+				GameTime:        gameTime,
+				GameDateTime:    localDate.Format(time.RFC3339),
+				GameDateTimeUTC: gameDate.UTC().Format(time.RFC3339),
+				Status:          strings.TrimSpace(g.Status.DetailedState),
+				AwayTeam:        strings.TrimSpace(g.Teams.Away.Team.Name),
+				HomeTeam:        strings.TrimSpace(g.Teams.Home.Team.Name),
+				AwayProbableSP:  strings.TrimSpace(g.Teams.Away.ProbablePitcher.FullName),
+				HomeProbableSP:  strings.TrimSpace(g.Teams.Home.ProbablePitcher.FullName),
+				StartTimeTBD:    g.StartTimeTBD,
+				sortDateTime:    gameDate,
 			}
 			if g.Teams.Away.Score != nil {
 				v := *g.Teams.Away.Score
@@ -110,10 +119,10 @@ func (s *Service) Schedule(ctx context.Context, fromDate, toDate time.Time, tz *
 		}
 	}
 	sort.SliceStable(games, func(i, j int) bool {
-		if games[i].GameDate.Equal(games[j].GameDate) {
+		if games[i].sortDateTime.Equal(games[j].sortDateTime) {
 			return games[i].GameID < games[j].GameID
 		}
-		return games[i].GameDate.Before(games[j].GameDate)
+		return games[i].sortDateTime.Before(games[j].sortDateTime)
 	})
 
 	return ScheduleResult{

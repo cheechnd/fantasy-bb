@@ -79,7 +79,7 @@ func newMLBScheduleCmd(opts *cliOptions) *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(), "Date window: %s to %s\n", res.FromDate, res.ToDate)
 			fmt.Fprintf(cmd.OutOrStdout(), "Timezone: %s\n", res.Timezone)
 			fmt.Fprintf(cmd.OutOrStdout(), "Games: %d\n\n", res.GameCount)
-			printMLBScheduleTable(cmd, res.Games, tz)
+			printMLBScheduleTable(cmd, res.Games)
 			return nil
 		},
 	}
@@ -90,7 +90,7 @@ func newMLBScheduleCmd(opts *cliOptions) *cobra.Command {
 	return cmd
 }
 
-func printMLBScheduleTable(cmd *cobra.Command, games []mlb.ScheduleGame, tz *time.Location) {
+func printMLBScheduleTable(cmd *cobra.Command, games []mlb.ScheduleGame) {
 	if len(games) == 0 {
 		fmt.Fprintln(cmd.OutOrStdout(), "No MLB games found for this date window.")
 		return
@@ -98,8 +98,8 @@ func printMLBScheduleTable(cmd *cobra.Command, games []mlb.ScheduleGame, tz *tim
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "DATE\tTIME\tAWAY\tHOME\tPITCHING_MATCHUP\tSCORE\tSTATUS")
 	for _, g := range games {
-		date := g.GameDate.In(tz).Format("2006-01-02")
-		timeLabel := g.GameDate.In(tz).Format("3:04 PM")
+		date := g.GameDate
+		timeLabel := g.GameTime
 		if g.StartTimeTBD {
 			timeLabel = "TBD"
 		}
