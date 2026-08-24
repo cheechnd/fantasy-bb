@@ -164,15 +164,27 @@ func newInitCmd(opts *cliOptions) *cobra.Command {
 			}
 			steps = append(steps, map[string]any{"action": "ensure_config", "path": paths.ConfigPath, "created": cfgCreated})
 
-			dbCreated, err := ensureDB(paths.DBPath, execOpts.DryRun)
+			effectivePaths := paths
+			effectiveDBPath := paths.DBPath
+			if !execOpts.DryRun {
+				cfg, loadedPaths, err := loadConfigWithOverrides(opts)
+				if err != nil {
+					return err
+				}
+				effectivePaths = loadedPaths
+				effectivePaths.DBPath = cfg.DBPath
+				effectiveDBPath = cfg.DBPath
+			}
+
+			dbCreated, err := ensureDB(effectiveDBPath, execOpts.DryRun)
 			if err != nil {
 				return err
 			}
-			steps = append(steps, map[string]any{"action": "ensure_db", "path": paths.DBPath, "created": dbCreated})
+			steps = append(steps, map[string]any{"action": "ensure_db", "path": effectiveDBPath, "created": dbCreated})
 
 			migrateApplied := 0
 			if !execOpts.DryRun {
-				s, err := sqlite.Open(paths.DBPath)
+				s, err := sqlite.Open(effectiveDBPath)
 				if err != nil {
 					return err
 				}
@@ -184,7 +196,7 @@ func newInitCmd(opts *cliOptions) *cobra.Command {
 				}
 				migrateApplied = len(applied)
 			}
-			steps = append(steps, map[string]any{"action": "migrate", "path": paths.DBPath, "applied": migrateApplied, "dry_run": execOpts.DryRun})
+			steps = append(steps, map[string]any{"action": "migrate", "path": effectiveDBPath, "applied": migrateApplied, "dry_run": execOpts.DryRun})
 
 			if opts.OutputJSON {
 				return printer.Println(map[string]any{
@@ -192,7 +204,7 @@ func newInitCmd(opts *cliOptions) *cobra.Command {
 					"command":              "init",
 					"dry_run":              execOpts.DryRun,
 					"require_confirmation": execOpts.RequireConfirmation,
-					"paths":                paths,
+					"paths":                effectivePaths,
 					"steps":                steps,
 					"next_steps":           []string{"Run `fb healthcheck`", "Run `fb db status`"},
 				})

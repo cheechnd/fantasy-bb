@@ -121,6 +121,7 @@ Team references (`--team` and team subcommands) accept either:
 - alias
 
 Note: `fb team add` registers the team entry immediately, but the team DB path is prepared when you run a DB-touching command (for example `./fb --team <alias> init` and `./fb --team <alias> db migrate`).
+`fb init` uses the active team context; pass `--team <alias>` to initialize a specific team DB.
 
 ## Command Model
 
