@@ -364,6 +364,15 @@ If blocked on availability, inspect `ACQ_STATUS`:
 
 Most commands support `--json` for automation/OpenClaw.
 
+Projection-oriented output is intentionally fact-level, not strategy-level:
+- `fb pitchers plan|last` and `fb pickups plan|last` print one row per projected start
+- `fb pitchers plan --json` and `fb pickups plan --json` expose `starts`
+- transaction-plan JSON exposes `add_starts` and `drop_starts`
+- each start includes `game_date`, `opponent`, `home_away`, `projected_fpts`, and `status`
+- no-start players return an empty array (`"starts": []`)
+
+Consumers should calculate counts, totals, rankings, and best-start choices themselves. `fb` preserves the source projection facts and avoids recommendation framing.
+
 Examples:
 
 ```bash

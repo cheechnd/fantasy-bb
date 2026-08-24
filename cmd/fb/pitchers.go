@@ -531,15 +531,16 @@ type rosterState struct {
 }
 
 type factualPitcherRow struct {
-	PlayerName          string   `json:"player_name"`
-	MLBTeam             string   `json:"mlb_team,omitempty"`
-	CurrentSlot         string   `json:"current_slot,omitempty"`
-	InjuryState         string   `json:"injury_state,omitempty"`
-	ProjectedStartCount int      `json:"projected_start_count"`
-	Schedule            []string `json:"schedule,omitempty"`
-	TotalProjectedFPTS  *float64 `json:"total_projected_fpts,omitempty"`
-	Flags               []string `json:"flags,omitempty"`
-	Notes               []string `json:"notes,omitempty"`
+	PlayerName          string                `json:"player_name"`
+	MLBTeam             string                `json:"mlb_team,omitempty"`
+	CurrentSlot         string                `json:"current_slot,omitempty"`
+	InjuryState         string                `json:"injury_state,omitempty"`
+	Starts              []projectionStartJSON `json:"starts"`
+	ProjectedStartCount int                   `json:"-"`
+	Schedule            []string              `json:"-"`
+	TotalProjectedFPTS  *float64              `json:"-"`
+	Flags               []string              `json:"flags,omitempty"`
+	Notes               []string              `json:"notes,omitempty"`
 }
 
 func printFactualPitcherRowsTable(cmd *cobra.Command, rows []factualPitcherRow) {
@@ -548,29 +549,29 @@ func printFactualPitcherRowsTable(cmd *cobra.Command, rows []factualPitcherRow) 
 		return
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "PLAYER\tTEAM\tSLOT\tINJURY\tSTARTS\tSCHEDULE\tTOTAL_FPTS\tFLAGS\tNOTES")
+	fmt.Fprintln(w, "PLAYER\tTEAM\tSLOT\tINJURY\tDATE\tOPP\tHOME_AWAY\tFPTS\tSTATUS\tFLAGS\tNOTES")
 	for _, r := range rows {
-		total := "-"
-		if r.TotalProjectedFPTS != nil && *r.TotalProjectedFPTS > 0 {
-			total = fmt.Sprintf("%.1f", *r.TotalProjectedFPTS)
+		starts := r.Starts
+		if len(starts) == 0 {
+			starts = []projectionStartJSON{{}}
 		}
-		schedule := "-"
-		if len(r.Schedule) > 0 {
-			schedule = strings.Join(r.Schedule, ", ")
+		for _, start := range starts {
+			fmt.Fprintf(
+				w,
+				"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				r.PlayerName,
+				firstNonEmpty(r.MLBTeam, "-"),
+				firstNonEmpty(r.CurrentSlot, "-"),
+				firstNonEmpty(r.InjuryState, "-"),
+				firstNonEmpty(start.GameDate, "-"),
+				firstNonEmpty(start.Opponent, "-"),
+				firstNonEmpty(start.HomeAway, "-"),
+				formatProjectionFPTS(start.ProjectedFPTS),
+				firstNonEmpty(start.Status, "-"),
+				strings.Join(r.Flags, ","),
+				strings.Join(r.Notes, "; "),
+			)
 		}
-		fmt.Fprintf(
-			w,
-			"%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n",
-			r.PlayerName,
-			firstNonEmpty(r.MLBTeam, "-"),
-			firstNonEmpty(r.CurrentSlot, "-"),
-			firstNonEmpty(r.InjuryState, "-"),
-			r.ProjectedStartCount,
-			schedule,
-			total,
-			strings.Join(r.Flags, ","),
-			strings.Join(r.Notes, "; "),
-		)
 	}
 	w.Flush()
 }
@@ -604,6 +605,7 @@ func factualPitcherRows(items []planner.PlanItem, snapshots []espn.RosterSnapsho
 			MLBTeam:             item.MLBTeam,
 			CurrentSlot:         state.slot,
 			InjuryState:         state.status,
+			Starts:              projectionStartsFromDetails(item.Details),
 			ProjectedStartCount: item.ProjectedStartCount,
 			Schedule:            formatPlanScheduleParts(item),
 			TotalProjectedFPTS:  item.TotalProjectedFPTS,

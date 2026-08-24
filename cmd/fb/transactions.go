@@ -573,39 +573,52 @@ func printTransactionRowsTable(cmd *cobra.Command, rows []transactions.PlanItem)
 		return
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ADD\tADD_DATE\tADD_OPP\tDROP\tDROP_BEST_DATE\tDROP_BEST_OPP\tDELTA_START\tADD_FPTS\tDROP_FPTS\tADD_STARTS\tDROP_STARTS\tFLAGS\tNOTES")
+	fmt.Fprintln(w, "ADD\tADD_DATE\tADD_OPP\tADD_HOME_AWAY\tADD_FPTS\tADD_STATUS\tDROP\tDROP_DATE\tDROP_OPP\tDROP_HOME_AWAY\tDROP_FPTS\tDROP_STATUS\tDELTA_START\tFLAGS\tNOTES")
 	for _, row := range rows {
-		addTotal := "-"
-		if row.AddTotalProjectedFPTS != nil {
-			addTotal = fmt.Sprintf("%.1f", *row.AddTotalProjectedFPTS)
-		}
-		dropTotal := "-"
-		if row.DropTotalProjectedFPTS != nil {
-			dropTotal = fmt.Sprintf("%.1f", *row.DropTotalProjectedFPTS)
-		}
 		delta := "-"
 		if row.DeltaFPTS != nil {
 			delta = fmt.Sprintf("%+.1f", *row.DeltaFPTS)
 		}
-		fmt.Fprintf(
-			w,
-			"%s (%s)\t%s\t%s\t%s (%s)\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\n",
-			row.AddPlayerName,
-			firstNonEmpty(row.AddPlayerTeam, "-"),
-			firstNonEmpty(row.AddStartDate, "-"),
-			firstNonEmpty(row.AddStartOpponent, "-"),
-			row.DropPlayerName,
-			firstNonEmpty(row.DropPlayerTeam, "-"),
-			firstNonEmpty(row.DropBestStartDate, "-"),
-			firstNonEmpty(row.DropBestStartOpponent, "-"),
-			delta,
-			addTotal,
-			dropTotal,
-			row.AddProjectedStartCount,
-			row.DropProjectedStartCount,
-			strings.Join(neutralFlags(row.Flags), ","),
-			strings.Join(filterStrategicTransactionNotes(row.Notes), "; "),
-		)
+		addStarts := transactionStarts(row.Details, "add_starts")
+		if len(addStarts) == 0 {
+			addStarts = []projectionStartJSON{newProjectionStart(row.AddStartDate, row.AddStartOpponent, nil, "")}
+		}
+		dropStarts := transactionStarts(row.Details, "drop_starts")
+		if len(dropStarts) == 0 {
+			dropStarts = []projectionStartJSON{newProjectionStart(row.DropBestStartDate, row.DropBestStartOpponent, nil, "")}
+		}
+		rowCount := max(len(addStarts), len(dropStarts))
+		for i := 0; i < rowCount; i++ {
+			addStart := projectionStartJSON{}
+			if i < len(addStarts) {
+				addStart = addStarts[i]
+			}
+			dropStart := projectionStartJSON{}
+			if i < len(dropStarts) {
+				dropStart = dropStarts[i]
+			}
+			fmt.Fprintf(
+				w,
+				"%s (%s)\t%s\t%s\t%s\t%s\t%s\t%s (%s)\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				row.AddPlayerName,
+				firstNonEmpty(row.AddPlayerTeam, "-"),
+				firstNonEmpty(addStart.GameDate, "-"),
+				firstNonEmpty(addStart.Opponent, "-"),
+				firstNonEmpty(addStart.HomeAway, "-"),
+				formatProjectionFPTS(addStart.ProjectedFPTS),
+				firstNonEmpty(addStart.Status, "-"),
+				row.DropPlayerName,
+				firstNonEmpty(row.DropPlayerTeam, "-"),
+				firstNonEmpty(dropStart.GameDate, "-"),
+				firstNonEmpty(dropStart.Opponent, "-"),
+				firstNonEmpty(dropStart.HomeAway, "-"),
+				formatProjectionFPTS(dropStart.ProjectedFPTS),
+				firstNonEmpty(dropStart.Status, "-"),
+				delta,
+				strings.Join(neutralFlags(row.Flags), ","),
+				strings.Join(filterStrategicTransactionNotes(row.Notes), "; "),
+			)
+		}
 	}
 	w.Flush()
 }
@@ -846,45 +859,40 @@ func filterTopTransactionRows(items []transactions.PlanItem) []transactions.Plan
 }
 
 type neutralTransactionRow struct {
-	AddPlayerName           string   `json:"add_player_name"`
-	AddPlayerTeam           string   `json:"add_player_team,omitempty"`
-	AddStartDate            string   `json:"add_start_date,omitempty"`
-	AddStartOpponent        string   `json:"add_start_opponent,omitempty"`
-	DropPlayerName          string   `json:"drop_player_name"`
-	DropPlayerTeam          string   `json:"drop_player_team,omitempty"`
-	DropBestStartDate       string   `json:"drop_best_start_date,omitempty"`
-	DropBestStartOpponent   string   `json:"drop_best_start_opponent,omitempty"`
-	DeltaPerStartFPTS       *float64 `json:"delta_per_start_fpts,omitempty"`
-	AddTotalProjectedFPTS   *float64 `json:"add_total_projected_fpts,omitempty"`
-	DropTotalProjectedFPTS  *float64 `json:"drop_total_projected_fpts,omitempty"`
-	AddProjectedStartCount  int      `json:"add_projected_start_count"`
-	DropProjectedStartCount int      `json:"drop_projected_start_count"`
-	Flags                   []string `json:"flags,omitempty"`
-	Notes                   []string `json:"notes,omitempty"`
+	AddPlayerName     string                `json:"add_player_name"`
+	AddPlayerTeam     string                `json:"add_player_team,omitempty"`
+	AddStarts         []projectionStartJSON `json:"add_starts"`
+	DropPlayerName    string                `json:"drop_player_name"`
+	DropPlayerTeam    string                `json:"drop_player_team,omitempty"`
+	DropStarts        []projectionStartJSON `json:"drop_starts"`
+	DeltaPerStartFPTS *float64              `json:"delta_per_start_fpts,omitempty"`
+	Flags             []string              `json:"flags,omitempty"`
+	Notes             []string              `json:"notes,omitempty"`
 }
 
 func neutralTransactionRows(items []transactions.PlanItem) []neutralTransactionRow {
 	out := make([]neutralTransactionRow, 0, len(items))
 	for _, row := range items {
 		out = append(out, neutralTransactionRow{
-			AddPlayerName:           row.AddPlayerName,
-			AddPlayerTeam:           row.AddPlayerTeam,
-			AddStartDate:            row.AddStartDate,
-			AddStartOpponent:        row.AddStartOpponent,
-			DropPlayerName:          row.DropPlayerName,
-			DropPlayerTeam:          row.DropPlayerTeam,
-			DropBestStartDate:       row.DropBestStartDate,
-			DropBestStartOpponent:   row.DropBestStartOpponent,
-			DeltaPerStartFPTS:       row.DeltaFPTS,
-			AddTotalProjectedFPTS:   row.AddTotalProjectedFPTS,
-			DropTotalProjectedFPTS:  row.DropTotalProjectedFPTS,
-			AddProjectedStartCount:  row.AddProjectedStartCount,
-			DropProjectedStartCount: row.DropProjectedStartCount,
-			Flags:                   neutralFlags(row.Flags),
-			Notes:                   filterStrategicTransactionNotes(row.Notes),
+			AddPlayerName:     row.AddPlayerName,
+			AddPlayerTeam:     row.AddPlayerTeam,
+			AddStarts:         transactionStarts(row.Details, "add_starts"),
+			DropPlayerName:    row.DropPlayerName,
+			DropPlayerTeam:    row.DropPlayerTeam,
+			DropStarts:        transactionStarts(row.Details, "drop_starts"),
+			DeltaPerStartFPTS: row.DeltaFPTS,
+			Flags:             neutralFlags(row.Flags),
+			Notes:             filterStrategicTransactionNotes(row.Notes),
 		})
 	}
 	return out
+}
+
+func transactionStarts(details map[string]interface{}, key string) []projectionStartJSON {
+	if details == nil {
+		return []projectionStartJSON{}
+	}
+	return projectionStartsFromRaw(details[key])
 }
 
 func formatAdHocAction(addName, dropName string) string {

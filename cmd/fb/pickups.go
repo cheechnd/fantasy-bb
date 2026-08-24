@@ -56,15 +56,15 @@ func newPickupsPlanCmd(opts *cliOptions) *cobra.Command {
 			neutralRows := neutralPickupRows(result)
 			if opts.OutputJSON {
 				return writeJSON(cmd, map[string]any{
-					"projection_run_id":     result.RecommendationRunID,
-					"sync_run_id":           result.SyncRunID,
-					"import_run_id":         result.ImportRunID,
-					"candidate_run_id":      result.CandidateRunID,
-					"window_start":          result.WindowStart,
-					"window_end":            result.WindowEnd,
-					"availability_filter":   "FREEAGENT_AND_WAIVERS",
-					"count":                 len(neutralRows),
-					"rows":                  neutralRows,
+					"projection_run_id":   result.RecommendationRunID,
+					"sync_run_id":         result.SyncRunID,
+					"import_run_id":       result.ImportRunID,
+					"candidate_run_id":    result.CandidateRunID,
+					"window_start":        result.WindowStart,
+					"window_end":          result.WindowEnd,
+					"availability_filter": "FREEAGENT_AND_WAIVERS",
+					"count":               len(neutralRows),
+					"rows":                neutralRows,
 				})
 			}
 			printPickupRecommendation(cmd, result, neutralRows)
@@ -150,8 +150,7 @@ func withPickupsService(ctx context.Context, opts *cliOptions, fn func(context.C
 	pickRepo := pickrepo.New(store.DB())
 	pitchRepo := pitchrepo.New(store.DB())
 	pitchService := pitchsvc.New(foreRepo, pitchRepo)
-	svc := picksvc.New(foreRepo, espnRepo, pickRepo, pitchService, picksvc.Config{
-	})
+	svc := picksvc.New(foreRepo, espnRepo, pickRepo, pitchService, picksvc.Config{})
 	return fn(ctx, svc)
 }
 
@@ -214,16 +213,17 @@ func printPickupItemsTable(cmd *cobra.Command, rows []pickups.RecommendationItem
 }
 
 type neutralPickupRow struct {
-	PlayerName          string   `json:"player_name"`
-	MLBTeam             string   `json:"mlb_team,omitempty"`
-	ProjectedStartCount int      `json:"projected_start_count"`
-	Schedule            []string `json:"schedule,omitempty"`
-	TotalProjectedFPTS  *float64 `json:"total_projected_fpts,omitempty"`
-	BestStartFPTS       *float64 `json:"best_start_fpts,omitempty"`
-	ProjectionState     string   `json:"projection_state"`
-	AvailabilityState   string   `json:"availability_state"`
-	Flags               []string `json:"flags,omitempty"`
-	Notes               []string `json:"notes,omitempty"`
+	PlayerName          string                `json:"player_name"`
+	MLBTeam             string                `json:"mlb_team,omitempty"`
+	Starts              []projectionStartJSON `json:"starts"`
+	ProjectedStartCount int                   `json:"-"`
+	Schedule            []string              `json:"-"`
+	TotalProjectedFPTS  *float64              `json:"-"`
+	BestStartFPTS       *float64              `json:"-"`
+	ProjectionState     string                `json:"projection_state"`
+	AvailabilityState   string                `json:"availability_state"`
+	Flags               []string              `json:"flags,omitempty"`
+	Notes               []string              `json:"notes,omitempty"`
 }
 
 func neutralPickupRows(r pickups.RecommendResult) []neutralPickupRow {
@@ -286,6 +286,7 @@ func toNeutralPickupRow(item pickups.RecommendationItem) neutralPickupRow {
 	return neutralPickupRow{
 		PlayerName:          item.PlayerName,
 		MLBTeam:             item.MLBTeam,
+		Starts:              projectionStartsFromDetails(item.Details),
 		ProjectedStartCount: item.ProjectedStartCount,
 		Schedule:            starts,
 		TotalProjectedFPTS:  item.TotalProjectedFPTS,
@@ -318,34 +319,29 @@ func printNeutralPickupRowsTable(cmd *cobra.Command, rows []neutralPickupRow) {
 		return
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "PLAYER\tTEAM\tSTARTS\tSCHEDULE\tTOTAL_FPTS\tBEST_START_FPTS\tPROJECTION\tAVAILABILITY\tFLAGS\tNOTES")
+	fmt.Fprintln(w, "PLAYER\tTEAM\tDATE\tOPP\tHOME_AWAY\tFPTS\tSTATUS\tPROJECTION\tAVAILABILITY\tFLAGS\tNOTES")
 	for _, row := range rows {
-		total := "-"
-		if row.TotalProjectedFPTS != nil {
-			total = fmt.Sprintf("%.1f", *row.TotalProjectedFPTS)
+		starts := row.Starts
+		if len(starts) == 0 {
+			starts = []projectionStartJSON{{}}
 		}
-		best := "-"
-		if row.BestStartFPTS != nil {
-			best = fmt.Sprintf("%.1f", *row.BestStartFPTS)
+		for _, start := range starts {
+			fmt.Fprintf(
+				w,
+				"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				row.PlayerName,
+				firstNonEmpty(row.MLBTeam, "-"),
+				firstNonEmpty(start.GameDate, "-"),
+				firstNonEmpty(start.Opponent, "-"),
+				firstNonEmpty(start.HomeAway, "-"),
+				formatProjectionFPTS(start.ProjectedFPTS),
+				firstNonEmpty(start.Status, "-"),
+				row.ProjectionState,
+				row.AvailabilityState,
+				strings.Join(row.Flags, ","),
+				strings.Join(row.Notes, "; "),
+			)
 		}
-		sched := "-"
-		if len(row.Schedule) > 0 {
-			sched = strings.Join(row.Schedule, ", ")
-		}
-		fmt.Fprintf(
-			w,
-			"%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			row.PlayerName,
-			firstNonEmpty(row.MLBTeam, "-"),
-			row.ProjectedStartCount,
-			sched,
-			total,
-			best,
-			row.ProjectionState,
-			row.AvailabilityState,
-			strings.Join(row.Flags, ","),
-			strings.Join(row.Notes, "; "),
-		)
 	}
 	w.Flush()
 }

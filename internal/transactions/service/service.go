@@ -650,6 +650,8 @@ func buildMoveItem(add pickupCandidate, drop dropCandidate, cfg transactions.Ser
 		Details: map[string]interface{}{
 			"adjusted_delta_fpts":          adjusted,
 			"delta_basis":                  "single_start_opportunity",
+			"add_starts":                   detailStarts(add.Item.Details),
+			"drop_starts":                  detailStarts(drop.Item.Details),
 			"add_start_date":               add.OpportunityDate,
 			"add_start_opponent":           add.OpportunityOpp,
 			"add_start_fpts":               add.OpportunityFPTS,
@@ -829,6 +831,16 @@ func unique(values []string) []string {
 }
 
 func floatPtr(v float64) *float64 { return &v }
+
+func detailStarts(details map[string]interface{}) interface{} {
+	if details == nil {
+		return []interface{}{}
+	}
+	if raw, ok := details["starts"]; ok && raw != nil {
+		return raw
+	}
+	return []interface{}{}
+}
 
 func min(a, b int) int {
 	if a < b {
