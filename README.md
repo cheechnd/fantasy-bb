@@ -19,6 +19,7 @@ Design philosophy:
 ### Included
 - Forecaster probable-start ingestion and normalization
 - ESPN roster + free-agent snapshot sync
+- ESPN reliever depth chart sync
 - Factual rostered-pitcher projection views (`fb pitchers plan|last`)
 - Factual available-pitcher projection views (`fb pickups plan|last`)
 - Direct single-item transaction execution (`add/drop` and `add-only`)
@@ -143,6 +144,7 @@ Lineup planning/review commands were intentionally removed; lineup is now an exp
 - `fb espn show ...`
 - `fb espn status`
 - `fb mlb schedule`
+- `fb relievers sync|show|status`
 - `fb forecaster sync|show|status|clear`
 
 `fb espn show matchup` provides live weekly matchup facts:
@@ -189,12 +191,31 @@ Free-agent snapshots now include acquisition status:
 - `ACQ_STATUS=FREEAGENT` means immediately addable
 - `ACQ_STATUS=WAIVERS` means claim/waiver flow (not immediately addable)
 
+Reliever depth chart facts:
+
+```bash
+./fb relievers sync
+./fb relievers show
+./fb relievers status
+```
+
+`fb relievers sync` reads ESPN's editorial reliever depth chart and persists bullpen facts separately from ESPN fantasy eligibility. The generic ESPN player `role` field can remain `P` for dual-eligible pitchers, while reliever output and enriched ESPN roster/free-agent JSON can include:
+- `relief_role`
+- `relief_role_team`
+- `relief_role_source`
+- `relief_role_as_of`
+- `relief_role_match_status`
+- `relief_role_conflict_flag`
+
+This keeps bullpen role, scheduled starts, fantasy eligibility, waiver state, and roster slot as separate facts. The reliever parser records source date, fetch time, parse coverage, unmatched rows, ambiguous rows, and conflicts. If ESPN changes the article layout enough that parse coverage drops, the sync is recorded as failed instead of publishing incomplete data as current.
+
 ## Weekly Routine
 
 ```bash
 # 1) refresh source data
 ./fb espn sync roster
 ./fb espn sync free-agents pitchers --limit 100
+./fb relievers sync
 ./fb forecaster sync --url
 ./fb espn status
 ./fb espn show matchup

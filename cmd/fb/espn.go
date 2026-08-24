@@ -11,6 +11,7 @@ import (
 	"fantasy-baseball/internal/espn"
 	espnrepo "fantasy-baseball/internal/espn/repository"
 	espnsvc "fantasy-baseball/internal/espn/service"
+	"fantasy-baseball/internal/relievers"
 	"fantasy-baseball/internal/store/sqlite"
 
 	"github.com/spf13/cobra"
@@ -326,6 +327,7 @@ func newESPNShowRosterCmd(opts *cliOptions) *cobra.Command {
 			payload := v.(map[string]any)
 			rows := payload["rows"].([]espn.RosterSnapshot)
 			syncRun, _ := payload["sync_run"].(*espn.SyncRun)
+			enrichment := relieverEnrichmentForRosterRows(cmd.Context(), opts, rows)
 			if opts.OutputJSON {
 				enhanced := make([]map[string]any, 0, len(rows))
 				for _, row := range rows {
@@ -342,6 +344,9 @@ func newESPNShowRosterCmd(opts *cliOptions) *cobra.Command {
 						"status_tag":      row.StatusTag,
 						"raw_player_json": row.RawPlayerJSON,
 						"created_at":      row.CreatedAt,
+					}
+					if e, ok := enrichment[row.ID]; ok {
+						addRelieverEnrichmentFields(item, e)
 					}
 					if pct, ok := percentOwnedFromRaw(row.RawPlayerJSON); ok {
 						item["owned_percent"] = pct
@@ -366,7 +371,7 @@ func newESPNShowRosterCmd(opts *cliOptions) *cobra.Command {
 					fmt.Fprintln(cmd.OutOrStdout(), "Effective: next-day")
 				}
 			}
-			printESPNRosterTable(cmd, rows)
+			printESPNRosterTable(cmd, rows, enrichment)
 			return nil
 		},
 	}
@@ -454,6 +459,30 @@ func newESPNShowFreeAgentsCmd(opts *cliOptions) *cobra.Command {
 			}
 			payload := v.(map[string]any)
 			if opts.OutputJSON {
+				rows, _ := payload["rows"].([]espn.FreeAgentCandidate)
+				enrichment := relieverEnrichmentForCandidateRows(cmd.Context(), opts, rows)
+				enhanced := make([]map[string]any, 0, len(rows))
+				for _, row := range rows {
+					item := map[string]any{
+						"id":                 row.ID,
+						"candidate_run_id":   row.CandidateRunID,
+						"espn_player_id":     row.ESPNPlayerID,
+						"player_name":        row.PlayerName,
+						"normalized_name":    row.NormalizedName,
+						"mlb_team":           row.MLBTeam,
+						"is_pitcher":         row.IsPitcher,
+						"role":               row.Role,
+						"acquisition_status": row.AcquisitionStatus,
+						"status_tag":         row.StatusTag,
+						"raw_player_json":    row.RawPlayerJSON,
+						"created_at":         row.CreatedAt,
+					}
+					if e, ok := enrichment[row.ID]; ok {
+						addRelieverEnrichmentFields(item, e)
+					}
+					enhanced = append(enhanced, item)
+				}
+				payload["rows"] = enhanced
 				return writeJSON(cmd, payload)
 			}
 			run, _ := payload["run"].(*espn.CandidateRun)
@@ -467,7 +496,8 @@ func newESPNShowFreeAgentsCmd(opts *cliOptions) *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(), "Status: %s\n", run.Status)
 			fmt.Fprintf(cmd.OutOrStdout(), "Candidates: %d\n", run.CandidateCount)
 			fmt.Fprintf(cmd.OutOrStdout(), "Warnings: %d\n\n", run.WarningCount)
-			printESPNFreeAgentsTable(cmd, rows)
+			enrichment := relieverEnrichmentForCandidateRows(cmd.Context(), opts, rows)
+			printESPNFreeAgentsTable(cmd, rows, enrichment)
 			return nil
 		},
 	}
@@ -584,23 +614,27 @@ func withESPNService(ctx context.Context, opts *cliOptions, fn func(context.Cont
 	return fn(ctx, svc, loadedConfig{Config: cfg, Paths: paths})
 }
 
-func printESPNRosterTable(cmd *cobra.Command, rows []espn.RosterSnapshot) {
+func printESPNRosterTable(cmd *cobra.Command, rows []espn.RosterSnapshot, enrichment map[int64]relievers.Enrichment) {
 	if len(rows) == 0 {
 		fmt.Fprintln(cmd.OutOrStdout(), "No ESPN roster snapshot rows found.")
 		return
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "SYNC_RUN\tPLAYER\tTEAM\tSLOT\tROLE\tPITCHER\tSTATUS\tOWNED%")
+	fmt.Fprintln(w, "SYNC_RUN\tPLAYER\tTEAM\tSLOT\tROLE\tRELIEF_ROLE\tPITCHER\tSTATUS\tOWNED%")
 	for _, row := range rows {
 		pitcher := "no"
 		if row.IsPitcher {
 			pitcher = "yes"
 		}
+		reliefRole := "-"
+		if e, ok := enrichment[row.ID]; ok && e.ReliefRole != "" {
+			reliefRole = e.ReliefRole
+		}
 		owned := "-"
 		if pct, ok := percentOwnedFromRaw(row.RawPlayerJSON); ok {
 			owned = fmt.Sprintf("%.1f", pct)
 		}
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", row.SyncRunID, row.PlayerName, firstNonEmpty(row.MLBTeam, "-"), firstNonEmpty(row.RosterSlot, "-"), firstNonEmpty(row.Role, "-"), pitcher, firstNonEmpty(row.StatusTag, "-"), owned)
+		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", row.SyncRunID, row.PlayerName, firstNonEmpty(row.MLBTeam, "-"), firstNonEmpty(row.RosterSlot, "-"), firstNonEmpty(row.Role, "-"), reliefRole, pitcher, firstNonEmpty(row.StatusTag, "-"), owned)
 	}
 	w.Flush()
 }
@@ -644,29 +678,99 @@ func printESPNSyncRuns(cmd *cobra.Command, rows []espn.SyncRun) {
 	w.Flush()
 }
 
-func printESPNFreeAgentsTable(cmd *cobra.Command, rows []espn.FreeAgentCandidate) {
+func printESPNFreeAgentsTable(cmd *cobra.Command, rows []espn.FreeAgentCandidate, enrichment map[int64]relievers.Enrichment) {
 	if len(rows) == 0 {
 		fmt.Fprintln(cmd.OutOrStdout(), "No free-agent candidates found for this run.")
 		return
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "RUN\tPLAYER\tTEAM\tROLE\tPITCHER\tACQ_STATUS\tSTATUS")
+	fmt.Fprintln(w, "RUN\tPLAYER\tTEAM\tROLE\tRELIEF_ROLE\tPITCHER\tACQ_STATUS\tSTATUS")
 	for _, row := range rows {
 		pitcher := "no"
 		if row.IsPitcher {
 			pitcher = "yes"
 		}
+		reliefRole := "-"
+		if e, ok := enrichment[row.ID]; ok && e.ReliefRole != "" {
+			reliefRole = e.ReliefRole
+		}
 		fmt.Fprintf(
 			w,
-			"%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			"%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			row.CandidateRunID,
 			row.PlayerName,
 			firstNonEmpty(row.MLBTeam, "-"),
 			firstNonEmpty(row.Role, "-"),
+			reliefRole,
 			pitcher,
 			firstNonEmpty(row.AcquisitionStatus, "-"),
 			firstNonEmpty(row.StatusTag, "-"),
 		)
 	}
 	w.Flush()
+}
+
+func relieverEnrichmentForRosterRows(ctx context.Context, opts *cliOptions, rows []espn.RosterSnapshot) map[int64]relievers.Enrichment {
+	out := map[int64]relievers.Enrichment{}
+	repo, closeFn, err := openRelieverRepo(ctx, opts)
+	if err != nil {
+		return out
+	}
+	defer closeFn()
+	for _, row := range rows {
+		entry, run, err := repo.LatestEntryByPlayer(ctx, row.ESPNPlayerID, row.NormalizedName, row.MLBTeam)
+		if err != nil || entry == nil || run == nil || run.Status != "success" {
+			continue
+		}
+		out[row.ID] = relievers.EnrichmentForEntry(*entry, *run)
+	}
+	return out
+}
+
+func relieverEnrichmentForCandidateRows(ctx context.Context, opts *cliOptions, rows []espn.FreeAgentCandidate) map[int64]relievers.Enrichment {
+	out := map[int64]relievers.Enrichment{}
+	repo, closeFn, err := openRelieverRepo(ctx, opts)
+	if err != nil {
+		return out
+	}
+	defer closeFn()
+	for _, row := range rows {
+		entry, run, err := repo.LatestEntryByPlayer(ctx, row.ESPNPlayerID, row.NormalizedName, row.MLBTeam)
+		if err != nil || entry == nil || run == nil || run.Status != "success" {
+			continue
+		}
+		out[row.ID] = relievers.EnrichmentForEntry(*entry, *run)
+	}
+	return out
+}
+
+func openRelieverRepo(ctx context.Context, opts *cliOptions) (*relievers.Repository, func(), error) {
+	cfg, _, err := loadConfigWithOverrides(opts)
+	if err != nil {
+		return nil, func() {}, err
+	}
+	store, err := sqlite.Open(cfg.DBPath)
+	if err != nil {
+		return nil, func() {}, err
+	}
+	if _, err := store.Migrate(ctx); err != nil {
+		store.Close()
+		return nil, func() {}, err
+	}
+	return relievers.NewRepository(store.DB()), func() { _ = store.Close() }, nil
+}
+
+func addRelieverEnrichmentFields(item map[string]any, e relievers.Enrichment) {
+	if e.ReliefRole == "" {
+		return
+	}
+	item["relief_role"] = e.ReliefRole
+	item["relief_role_team"] = e.ReliefRoleTeam
+	item["relief_role_source"] = e.ReliefRoleSource
+	item["relief_role_as_of"] = e.ReliefRoleAsOf
+	item["relief_role_match_status"] = e.MatchStatus
+	if e.ConflictFlag {
+		item["relief_role_conflict_flag"] = true
+		item["relief_role_conflict_reason"] = e.ConflictReason
+	}
 }
