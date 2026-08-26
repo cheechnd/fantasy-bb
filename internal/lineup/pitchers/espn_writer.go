@@ -55,7 +55,7 @@ func (w *ESPNWriter) ExecuteLineupMove(ctx context.Context, cfg config.Config, r
 		return LineupWriteResult{}, fmt.Errorf("invalid target scoring period id: %d", targetScoringPeriodID)
 	}
 	transactionType := "ROSTER"
-	if meta.TransactionScoringPeriodID > 0 && targetScoringPeriodID > meta.TransactionScoringPeriodID {
+	if req.EffectiveNextDay || (meta.TransactionScoringPeriodID > 0 && targetScoringPeriodID > meta.TransactionScoringPeriodID) {
 		transactionType = "FUTURE_ROSTER"
 	}
 
